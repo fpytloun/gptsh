@@ -1,15 +1,21 @@
 import json
 import os
+import asyncio
 from typing import Any, Dict, List
 from gptsh.config.loader import _expand_env
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 
 def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     """
-    Load MCP server definitions from config and return placeholder tool lists.
-    TODO: Replace stub with real stdio/SSE/HTTP discovery logic.
+    Discover tools from configured MCP servers using Model Context Protocol Python SDK.
     """
+    return asyncio.run(_list_tools_async(config))
+
+async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
     servers_files = config.get("mcp", {}).get("servers_files", [])
-    servers = {}
+    servers: Dict[str, Any] = {}
     for path in servers_files:
         expanded = os.path.expanduser(path)
         try:
@@ -19,34 +25,29 @@ def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
             continue
-    import subprocess
-    import httpx
+
     results: Dict[str, List[str]] = {}
     for name, srv in servers.items():
         transport = srv.get("transport", {})
         if transport.get("type") == "stdio":
-            cmd = [srv.get("command")] + srv.get("args", [])
-            req = json.dumps({"jsonrpc":"2.0","id":1,"method":"list_tools","params":[]})
-            try:
-                proc = subprocess.run(cmd, input=req+"\n", capture_output=True, text=True, check=True)
-                resp = json.loads(proc.stdout)
-                results[name] = resp.get("result", [])
-            except Exception:
-                results[name] = []
+            params = StdioServerParameters(
+                command=srv.get("command"),
+                args=srv.get("args", []),
+                env=srv.get("env", {}),
+            )
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    resp = await session.list_tools()
+                    results[name] = [tool.name for tool in resp.tools]
         elif transport.get("type") in ("http", "sse"):
             url = transport.get("url")
             headers = srv.get("credentials", {}).get("headers", {})
-            try:
-                client = httpx.Client()
-                resp = client.post(
-                    url,
-                    json={"jsonrpc": "2.0", "id": 1, "method": "list_tools", "params": []},
-                    headers=headers,
-                )
-                data = resp.json()
-                results[name] = data.get("result", [])
-            except Exception:
-                results[name] = []
+            async with streamablehttp_client(url, headers=headers) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    resp = await session.list_tools()
+                    results[name] = [tool.name for tool in resp.tools]
         else:
             results[name] = []
     return results
