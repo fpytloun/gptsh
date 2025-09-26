@@ -15,9 +15,9 @@ from gptsh.core.mcp import list_tools
 @click.option("--stream/--no-stream", default=True)
 @click.option("--progress/--no-progress", default=True)
 @click.option("--debug", is_flag=True, default=False)
-@click.option("--list-tools", is_flag=True, default=False)
+@click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
 @click.argument("prompt", required=False)
-def main(model, agent, config_path, stream, progress, debug, list_tools, prompt):
+def main(model, agent, config_path, stream, progress, debug, list_tools_flag, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -29,7 +29,7 @@ def main(model, agent, config_path, stream, progress, debug, list_tools, prompt)
     log_fmt = config.get("logging", {}).get("format", "text")
     logger = setup_logging(log_level, log_fmt)
     
-    if list_tools:
+    if list_tools_flag:
         tools_map = list_tools(config)
         click.echo("Discovered tools:")
         for server, tools in tools_map.items():
