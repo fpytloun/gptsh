@@ -18,8 +18,9 @@ from gptsh.core.mcp import list_tools
 @click.option("--debug", is_flag=True, default=False)
 @click.option("--mcp-servers", "mcp_servers", default=None, help="Override path to MCP servers file")
 @click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
+@click.option("--list-providers", "list_providers_flag", is_flag=True, default=False, help="List configured providers")
 @click.argument("prompt", required=False)
-def main(provider, model, agent, config_path, stream, progress, debug, mcp_servers, list_tools_flag, prompt):
+def main(provider, model, agent, config_path, stream, progress, debug, mcp_servers, list_tools_flag, list_providers_flag, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -41,6 +42,13 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
             click.echo(f"{server}:")
             for tool in tools:
                 click.echo(f"  - {tool}")
+        sys.exit(0)
+
+    if list_providers_flag:
+        providers = config.get("providers", {})
+        click.echo("Configured providers:")
+        for name in providers:
+            click.echo(f"  - {name}")
         sys.exit(0)
     # Handle prompt or stdin
     stdin_input = None
@@ -81,14 +89,15 @@ async def run_llm(prompt, config, model, agent, stream, provider, logger):
             agent_model = None
         chosen_model = model or agent_model or config.get("model") or "gpt-4.1"
         params = {"model": chosen_model, "messages": [{"role": "user", "content": prompt}]}
-        # Apply provider settings from config if requested
+        # Apply provider override by prefixing model and custom endpoints
         if provider:
             providers_conf = config.get("providers", {})
             if provider not in providers_conf:
                 logger.error(f"Provider '{provider}' not found in config.")
                 sys.exit(2)
             provider_conf = providers_conf[provider]
-            params["provider"] = provider
+            chosen_model = f"{provider}/{chosen_model}"
+            params["model"] = chosen_model
             if provider_conf.get("base_url") is not None:
                 params["base_url"] = provider_conf["base_url"]
             if provider_conf.get("extra_headers") is not None:
