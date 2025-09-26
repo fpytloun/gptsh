@@ -89,9 +89,12 @@ async def run_llm(prompt, config, model, agent, stream, provider, logger):
             agent_model = None
         chosen_model = model or agent_model or config.get("model") or "gpt-4.1"
         params = {"model": chosen_model, "messages": [{"role": "user", "content": prompt}]}
+
         # Apply provider settings, by default litellm will try to guess based on API key availability in env
+        providers_conf = config.get("providers", {})
+        provider = provider or config.get("default_provider") or config.get("providers", [None])[0] or None
         if provider:
-            providers_conf = config.get("providers", {})
+            logger.debug(f"Using provider '{provider}' with config: {providers_conf[provider]}")
             if provider not in providers_conf:
                 logger.error(f"Provider '{provider}' not found in config.")
                 sys.exit(2)
