@@ -123,18 +123,6 @@ async def run_llm(prompt, provider_conf, agent_conf, cli_model_override, stream,
         ]
         params["model"] = chosen_model
 
-        # Apply provider settings, by default litellm will try to guess based on API key availability in env
-        providers_conf = config.get("providers", {})
-        provider = provider or config.get("default_provider") or None
-        if provider:
-            logger.info(f"Using provider '{provider}' with config: {providers_conf[provider]}")
-            if provider not in providers_conf:
-                logger.error(f"Provider '{provider}' not found in config.")
-                sys.exit(2)
-            params = {**params, **providers_conf[provider]}
-        else:
-            if providers_conf:
-                logger.warn("Providers are defined in config but default_provider is not set.")
         logger.info(f"Calling LLM model {chosen_model}")
         # Invoke litellm completion with optional streaming
         if stream:
