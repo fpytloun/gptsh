@@ -60,7 +60,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
     else:
         prompt_given = prompt or stdin_input or agent_prompt
     if prompt_given:
-        asyncio.run(run_llm(prompt_given, config, model, agent, stream, logger))
+        asyncio.run(run_llm(prompt_given, config, model, agent, stream, provider, logger))
     else:
         click.echo("Error: A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
         sys.exit(2)
