@@ -19,5 +19,19 @@ def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
             continue
-    # Placeholder: empty list for each server until transport is implemented
-    return {name: [] for name in servers}
+    import subprocess
+    results: Dict[str, List[str]] = {}
+    for name, srv in servers.items():
+        transport = srv.get("transport", {})
+        if transport.get("type") == "stdio":
+            cmd = [srv.get("command")] + srv.get("args", [])
+            req = json.dumps({"jsonrpc":"2.0","id":1,"method":"list_tools","params":[]})
+            try:
+                proc = subprocess.run(cmd, input=req+"\n", capture_output=True, text=True, check=True)
+                resp = json.loads(proc.stdout)
+                results[name] = resp.get("result", [])
+            except Exception:
+                results[name] = []
+        else:
+            results[name] = []
+    return results
