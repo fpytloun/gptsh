@@ -20,6 +20,7 @@ def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
         except FileNotFoundError:
             continue
     import subprocess
+    import httpx
     results: Dict[str, List[str]] = {}
     for name, srv in servers.items():
         transport = srv.get("transport", {})
@@ -30,6 +31,20 @@ def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
                 proc = subprocess.run(cmd, input=req+"\n", capture_output=True, text=True, check=True)
                 resp = json.loads(proc.stdout)
                 results[name] = resp.get("result", [])
+            except Exception:
+                results[name] = []
+        elif transport.get("type") in ("http", "sse"):
+            url = transport.get("url")
+            headers = srv.get("credentials", {}).get("headers", {})
+            try:
+                client = httpx.Client()
+                resp = client.post(
+                    url,
+                    json={"jsonrpc": "2.0", "id": 1, "method": "list_tools", "params": []},
+                    headers=headers,
+                )
+                data = resp.json()
+                results[name] = data.get("result", [])
             except Exception:
                 results[name] = []
         else:
