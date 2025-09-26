@@ -89,19 +89,13 @@ async def run_llm(prompt, config, model, agent, stream, provider, logger):
             agent_model = None
         chosen_model = model or agent_model or config.get("model") or "gpt-4.1"
         params = {"model": chosen_model, "messages": [{"role": "user", "content": prompt}]}
-        # Apply provider override by prefixing model and custom endpoints
+        # Apply provider settings, by default litellm will try to guess based on API key availability in env
         if provider:
             providers_conf = config.get("providers", {})
             if provider not in providers_conf:
                 logger.error(f"Provider '{provider}' not found in config.")
                 sys.exit(2)
-            provider_conf = providers_conf[provider]
-            chosen_model = f"{provider}/{chosen_model}"
-            params["model"] = chosen_model
-            if provider_conf.get("base_url") is not None:
-                params["base_url"] = provider_conf["base_url"]
-            if provider_conf.get("extra_headers") is not None:
-                params["extra_headers"] = provider_conf["extra_headers"]
+            params = {**params, **providers_conf[provider]}
         logger.info(f"Calling LLM model {chosen_model}")
         # Invoke litellm completion with optional streaming
         if stream:
