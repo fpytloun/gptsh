@@ -25,7 +25,7 @@ def main(model, agent, config_path, stream, progress, debug, list_tools_flag, pr
         config = load_config([config_path])
     else:
         config = load_config()
-    log_level = "DEBUG" if debug else config.get("logging", {}).get("level", "INFO")
+    log_level = "DEBUG" if debug else config.get("logging", {}).get("level", "WARNING")
     log_fmt = config.get("logging", {}).get("format", "text")
     logger = setup_logging(log_level, log_fmt)
     

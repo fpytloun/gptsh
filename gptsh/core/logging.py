@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-def setup_logging(level: str = "INFO", fmt: str = "text"):  # text|json
+def setup_logging(level: str = "WARNING", fmt: str = "text"):  # text|json
     level = level.upper()
     format_str = (
         '[%(asctime)s] %(levelname)s %(name)s %(message)s'
