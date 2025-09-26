@@ -1,0 +1,6 @@
+litellm
+click
+pyyaml
+rich
+httpx
+python-dotenv

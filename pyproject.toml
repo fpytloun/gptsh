@@ -1,0 +1,18 @@
+[project]
+name = "gptsh"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  "litellm",
+  "click",
+  "pyyaml",
+  "rich",
+  "httpx",
+  "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[project.scripts]
+gptsh = "gptsh.cli.entrypoint:main"
