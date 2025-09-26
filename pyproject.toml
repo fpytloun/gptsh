@@ -9,7 +9,7 @@ dependencies = [
   "rich",
   "httpx",
   "python-dotenv",
-  "mcp[client]>=1.15.0",
+  "mcp>=1.15.0",
 ]
 
 [project.optional-dependencies]

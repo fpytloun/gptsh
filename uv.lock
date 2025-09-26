@@ -465,7 +465,7 @@ requires-dist = [
     { name = "click" },
     { name = "httpx" },
     { name = "litellm" },
-    { name = "mcp", extras = ["client"], specifier = ">=1.15.0" },
+    { name = "mcp", specifier = ">=1.15.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "python-dotenv" },
