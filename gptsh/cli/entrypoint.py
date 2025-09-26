@@ -39,7 +39,7 @@ def main(model, agent, config_path, stream, progress, debug, list_tools_flag, pr
         sys.exit(0)
     # Handle prompt or stdin
     stdin_input = None
-    if not prompt and not sys.stdin.isatty():
+    if not sys.stdin.isatty():
         stdin_input = read_stdin()
     # Try to get prompt from agent config if agent is set
     agent_conf = None
