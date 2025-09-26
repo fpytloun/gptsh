@@ -1,0 +1,10 @@
+default_provider: litellm
+providers:
+  litellm:
+    model: openai/gpt-4.1
+    base_url: https://openai.domain.tld
+    api_key: ${MYCUSTOM_OPENAI_API_KEY}
+agents:
+  hello:
+    prompt:
+      user: "Hello, are you here?"
