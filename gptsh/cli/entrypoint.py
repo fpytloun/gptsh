@@ -105,18 +105,23 @@ async def run_llm(prompt, provider_conf, agent_conf, cli_model_override, stream,
     # Minimal async LLM call MVP (stub)
     try:
         from litellm import completion
-        # Determine model: CLI override > agent preset > config > default
-        if agent:
-            agents_conf = config.get("agents", {})
-            if agent not in agents_conf:
-                logger.error(f"Agent '{agent}' not found in config.")
-                sys.exit(2)
-            agent_conf = agents_conf[agent]
-            agent_model = agent_conf.get("model")
-        else:
-            agent_model = None
-        chosen_model = model or agent_model or config.get("model") or "gpt-4.1"
-        params = {"model": chosen_model, "messages": [{"role": "user", "content": prompt}]}
+        # Build base params from provider configuration
+        params = dict(provider_conf)
+        # Determine model: CLI override > agent config > provider default > fallback
+        chosen_model = (
+            cli_model_override
+            or agent_conf.get("model")
+            or provider_conf.get("default_model")
+            or "gpt-4.1"
+        )
+        # Build messages: system then user
+        system_prompt = agent_conf["prompt"]["system"]
+        user_prompt = agent_conf["prompt"].get("user") or prompt
+        params["messages"] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        params["model"] = chosen_model
 
         # Apply provider settings, by default litellm will try to guess based on API key availability in env
         providers_conf = config.get("providers", {})
