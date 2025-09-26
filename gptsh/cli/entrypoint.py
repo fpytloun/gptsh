@@ -15,9 +15,10 @@ from gptsh.core.mcp import list_tools
 @click.option("--stream/--no-stream", default=True)
 @click.option("--progress/--no-progress", default=True)
 @click.option("--debug", is_flag=True, default=False)
+@click.option("--mcp-servers", "mcp_servers", default=None, help="Override path to MCP servers file")
 @click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
 @click.argument("prompt", required=False)
-def main(model, agent, config_path, stream, progress, debug, list_tools_flag, prompt):
+def main(model, agent, config_path, stream, progress, debug, mcp_servers, list_tools_flag, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -25,6 +26,9 @@ def main(model, agent, config_path, stream, progress, debug, list_tools_flag, pr
         config = load_config([config_path])
     else:
         config = load_config()
+
+    if mcp_servers:
+        config.setdefault("mcp", {})["servers_files"] = [mcp_servers]
     log_level = "DEBUG" if debug else config.get("logging", {}).get("level", "WARNING")
     log_fmt = config.get("logging", {}).get("format", "text")
     logger = setup_logging(log_level, log_fmt)
