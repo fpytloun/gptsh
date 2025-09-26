@@ -225,6 +225,10 @@ uvx pytest --maxfail=1 --disable-warnings -q
  - [x] Stubbed MCP tool listing functionality
  - [x] Implemented asynchronous LLM calls via `litellm` with streaming and single-shot support
  - [x] Wrote pytest tests for config loader, stdin handler, and CLI flows
+ - [x] Added --mcp-servers CLI option to override path to MCP servers file
+ - [x] Added --provider option to select LiteLLM provider from config
+ - [x] Added --list-providers CLI option to list configured providers
+ - [x] Prefixed model with provider for custom endpoints
  
  ### Pending / Roadmap
 
