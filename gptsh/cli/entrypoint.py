@@ -76,10 +76,16 @@ async def run_llm(prompt, config, model, agent, stream, logger):
         # Invoke litellm completion with optional streaming
         if stream:
             # Stream tokens as they arrive
-            async for chunk in completion.stream(**params):
-                # chunk may contain partial text
-                text = getattr(chunk, 'text', chunk.get('choices', [{}])[0].get('delta', {}).get('content', ''))
-                click.echo(text, nl=False)
+            if hasattr(completion, "stream"):
+                async for chunk in completion.stream(**params):
+                    # chunk may contain partial text
+                    text = getattr(chunk, 'text', chunk.get('choices', [{}])[0].get('delta', {}).get('content', ''))
+                    click.echo(text, nl=False)
+            else:
+                async for chunk in completion(stream=True, **params):
+                    # chunk may contain partial text
+                    text = getattr(chunk, 'text', chunk.get('choices', [{}])[0].get('delta', {}).get('content', ''))
+                    click.echo(text, nl=False)
             click.echo()  # newline after stream
         else:
             resp = await completion(**params)
