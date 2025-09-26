@@ -35,6 +35,27 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
     log_fmt = config.get("logging", {}).get("format", "text")
     logger = setup_logging(log_level, log_fmt)
     
+    # Resolve provider and agent defaults
+    providers_conf = config.get("providers", {})
+    if not providers_conf:
+        logger.error("No providers defined in config.")
+        sys.exit(2)
+    provider = provider or config.get("default_provider") or next(iter(providers_conf))
+    if provider not in providers_conf:
+        logger.error(f"Unknown provider '{provider}'")
+        sys.exit(2)
+    provider_conf = providers_conf[provider]
+
+    agents_conf = config.get("agents", {})
+    if not agents_conf:
+        logger.error("No agents defined in config.")
+        sys.exit(2)
+    agent = agent or config.get("default_agent") or "default"
+    if agent not in agents_conf:
+        logger.error(f"Unknown agent '{agent}'")
+        sys.exit(2)
+    agent_conf = agents_conf[agent]
+
     if list_tools_flag:
         tools_map = list_tools(config)
         click.echo("Discovered tools:")
@@ -68,12 +89,19 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
     else:
         prompt_given = prompt or stdin_input or agent_prompt
     if prompt_given:
-        asyncio.run(run_llm(prompt_given, config, model, agent, stream, provider, logger))
+        asyncio.run(run_llm(
+            prompt=prompt_given,
+            provider_conf=provider_conf,
+            agent_conf=agent_conf,
+            cli_model_override=model,
+            stream=stream,
+            logger=logger,
+        ))
     else:
         click.echo("Error: A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
         sys.exit(2)
 
-async def run_llm(prompt, config, model, agent, stream, provider, logger):
+async def run_llm(prompt, provider_conf, agent_conf, cli_model_override, stream, logger):
     # Minimal async LLM call MVP (stub)
     try:
         from litellm import completion
