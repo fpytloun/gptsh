@@ -9,6 +9,7 @@ from gptsh.core.mcp import list_tools
 # --- CLI Entrypoint ---
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
+@click.option("--provider", default=None, help="Override LiteLLM provider from config")
 @click.option("--model", default=None, help="Override LLM model")
 @click.option("--agent", default=None, help="Named agent preset from config")
 @click.option("--config", "config_path", default=None, help="Specify alternate config path")
@@ -18,7 +19,7 @@ from gptsh.core.mcp import list_tools
 @click.option("--mcp-servers", "mcp_servers", default=None, help="Override path to MCP servers file")
 @click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
 @click.argument("prompt", required=False)
-def main(model, agent, config_path, stream, progress, debug, mcp_servers, list_tools_flag, prompt):
+def main(provider, model, agent, config_path, stream, progress, debug, mcp_servers, list_tools_flag, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -64,7 +65,7 @@ def main(model, agent, config_path, stream, progress, debug, mcp_servers, list_t
         click.echo("Error: A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
         sys.exit(2)
 
-async def run_llm(prompt, config, model, agent, stream, logger):
+async def run_llm(prompt, config, model, agent, stream, provider, logger):
     # Minimal async LLM call MVP (stub)
     try:
         from litellm import completion
@@ -80,6 +81,18 @@ async def run_llm(prompt, config, model, agent, stream, logger):
             agent_model = None
         chosen_model = model or agent_model or config.get("model") or "gpt-4.1"
         params = {"model": chosen_model, "messages": [{"role": "user", "content": prompt}]}
+        # Apply provider settings from config if requested
+        if provider:
+            providers_conf = config.get("providers", {})
+            if provider not in providers_conf:
+                logger.error(f"Provider '{provider}' not found in config.")
+                sys.exit(2)
+            provider_conf = providers_conf[provider]
+            params["provider"] = provider
+            if provider_conf.get("base_url") is not None:
+                params["base_url"] = provider_conf["base_url"]
+            if provider_conf.get("extra_headers") is not None:
+                params["extra_headers"] = provider_conf["extra_headers"]
         logger.info(f"Calling LLM model {chosen_model}")
         # Invoke litellm completion with optional streaming
         if stream:
