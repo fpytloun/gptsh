@@ -1,6 +1,7 @@
-litellm
 click
+httpx
+litellm
+mcp
+python-dotenv
 pyyaml
 rich
-httpx
-python-dotenv
