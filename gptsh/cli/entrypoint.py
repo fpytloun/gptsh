@@ -6,12 +6,16 @@ from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.core.mcp import list_tools
 
+DEFAULT_AGENTS = {
+    "default": {}
+}
+
 # --- CLI Entrypoint ---
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--provider", default=None, help="Override LiteLLM provider from config")
 @click.option("--model", default=None, help="Override LLM model")
-@click.option("--agent", default=None, help="Named agent preset from config")
+@click.option("--agent", default="default", help="Named agent preset from config")
 @click.option("--config", "config_path", default=None, help="Specify alternate config path")
 @click.option("--stream/--no-stream", default=True)
 @click.option("--progress/--no-progress", default=True)
@@ -46,11 +50,8 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
         sys.exit(2)
     provider_conf = providers_conf[provider]
 
-    agents_conf = config.get("agents", {})
-    if not agents_conf:
-        logger.error("No agents defined in config.")
-        sys.exit(2)
-    agent = agent or config.get("default_agent") or "default"
+    agents_conf = config.get("agents", DEFAULT_AGENTS)
+    agent = config.get("default_agent") or agent
     if agent not in agents_conf:
         logger.error(f"Unknown agent '{agent}'")
         sys.exit(2)
@@ -79,7 +80,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
     agent_conf = None
     agent_prompt = None
     if agent:
-        agents_conf = config.get("agents", {})
+        agents_conf = config.get("agents", DEFAULT_AGENTS)
         agent_conf = agents_conf.get(agent)
         if agent_conf:
             agent_prompt = agent_conf.get("prompt", {}).get("user")
@@ -115,12 +116,12 @@ async def run_llm(prompt, provider_conf, agent_conf, cli_model_override, stream,
             or "gpt-4.1"
         )
         # Build messages: system then user
-        system_prompt = agent_conf["prompt"]["system"]
-        user_prompt = agent_conf["prompt"].get("user") or prompt
-        params["messages"] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+        params["messages"] = []
+        system_prompt = agent_conf.get("prompt", {}).get("system")
+        if system_prompt:
+            params["messages"].append({"role": "system", "content": system_prompt})
+        params["messages"].append({"role": "user", "content": prompt})
+
         params["model"] = chosen_model
 
         logger.info(f"Calling LLM model {chosen_model}")
