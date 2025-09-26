@@ -12,6 +12,7 @@ A modular, extensible, and secure Python shell client that empowers developers a
 ## Tech Stack
 - **Python 3.10+**, fully typed
 - **litellm** for LLM APIs (OpenAI, Claude, Perplexity, Azure, etc.)
+- **mcp** Python SDK for Model Context Protocol (MCP) ([documentation](https://openai.github.io/openai-agents-python/mcp/))
 - **pyyaml** for config loading/merging
 - **rich** and **click** for interactive CLI and progress bars
 - **textual** (future, optional) for TUI
