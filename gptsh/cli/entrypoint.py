@@ -49,7 +49,11 @@ def main(model, agent, config_path, stream, progress, debug, list_tools_flag, pr
         agent_conf = agents_conf.get(agent)
         if agent_conf:
             agent_prompt = agent_conf.get("prompt", {}).get("user")
-    prompt_given = prompt or stdin_input or agent_prompt
+    # Combine prompt and piped stdin if both are provided
+    if prompt and stdin_input:
+        prompt_given = f"{prompt}\n\n{stdin_input}"
+    else:
+        prompt_given = prompt or stdin_input or agent_prompt
     if prompt_given:
         asyncio.run(run_llm(prompt_given, config, model, agent, stream, logger))
     else:
