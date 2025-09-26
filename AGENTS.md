@@ -254,7 +254,7 @@ uvx pytest --maxfail=1 --disable-warnings -q
 - Use a single `pyproject.toml` managed by `uv`.
 - Console entry point: `[project.scripts] gptsh = "gptsh.cli.entrypoint:main"`.
 - Editable install for development: `uv venv && uv pip install -e .[dev]`.
-- Run: `uvx gptsh "your prompt"` (ensures the right venv/tooling is used).
+- Run: `uv run gptsh "your prompt"` (ensures the right venv/tooling is used).
 - Testing: `uvx pytest -q`.
 - Optional: `uv lock` to pin resolutions and achieve reproducible builds.
 

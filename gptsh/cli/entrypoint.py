@@ -30,7 +30,7 @@ def main(model, agent, config_path, stream, progress, debug, list_tools, prompt)
     logger = setup_logging(log_level, log_fmt)
     
     if list_tools:
-        tools_map = list_tools_stub()
+        tools_map = list_tools(config)
         click.echo("Discovered tools:")
         for server, tools in tools_map.items():
             click.echo(f"{server}:")
