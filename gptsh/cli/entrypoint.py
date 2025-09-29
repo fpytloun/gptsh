@@ -170,13 +170,24 @@ async def run_llm(
     try:
         from litellm import acompletion
 
+
         # Build base params from provider configuration, excluding non-LiteLLM keys
         params: Dict[str, Any] = {
             k: v for k, v in dict(provider_conf).items() if k not in {"model", "name"}
         }
 
-        # Build MCP tools for the LLM
-        mcp_tools = await _build_mcp_tools_for_llm({"mcp": dict(provider_conf.get("mcp", {}), **(agent_conf.get("mcp", {}) if agent_conf else {})) , **(config := {})})
+        # Build MCP tools for the LLM (show progress while initializing MCP clients)
+        init_stop_event = None
+        init_spinner_task = None
+        if progress and sys.stderr.isatty():
+            init_stop_event = asyncio.Event()
+            init_spinner_task = asyncio.create_task(_spinner("Initializing MCP tools", init_stop_event))
+        try:
+            mcp_tools = await _build_mcp_tools_for_llm({"mcp": dict(provider_conf.get("mcp", {}), **(agent_conf.get("mcp", {}) if agent_conf else {})) , **(config := {})})
+        finally:
+            if init_spinner_task is not None and init_stop_event is not None and not init_stop_event.is_set():
+                init_stop_event.set()
+                await init_spinner_task
         # If no mcp section in provider/agent, fall back to global config already loaded in main()
         # The CLI stores resolved 'mcp.servers_files' in the global config; access through closure
         try:
@@ -186,7 +197,17 @@ async def run_llm(
         except Exception:
             global_conf = {}
         if not mcp_tools:
-            mcp_tools = await _build_mcp_tools_for_llm(global_conf)
+            init_stop_event2 = None
+            init_spinner_task2 = None
+            if progress and sys.stderr.isatty():
+                init_stop_event2 = asyncio.Event()
+                init_spinner_task2 = asyncio.create_task(_spinner("Initializing MCP tools", init_stop_event2))
+            try:
+                mcp_tools = await _build_mcp_tools_for_llm(global_conf)
+            finally:
+                if init_spinner_task2 is not None and init_stop_event2 is not None and not init_stop_event2.is_set():
+                    init_stop_event2.set()
+                    await init_spinner_task2
 
         # If MCP tools are present, we'll do a tool-execution loop; disable streaming for compatibility
         if mcp_tools:
