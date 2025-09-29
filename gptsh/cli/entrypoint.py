@@ -5,8 +5,7 @@ import click
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
-from gptsh.mcp import list_tools, get_auto_approved_tools, discover_tools_detailed_async, execute_tool_async
-from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
+from gptsh.mcp import list_tools, get_auto_approved_tools
 from gptsh.llm.session import (
     prepare_completion_params,
     stream_completion,
@@ -17,7 +16,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.console import Console
 from rich.markdown import Markdown
 
-from typing import Any, Dict, Optional, List, cast, Mapping
+from typing import Any, Dict, Optional, List
 
 DEFAULT_AGENTS = {
     "default": {}
@@ -171,8 +170,6 @@ async def run_llm(
     """Execute an LLM call using LiteLLM with optional streaming.
     Rendering and progress UI remain in CLI; core LLM/session logic lives in gptsh.llm.session.
     """
-    from typing import Mapping as _Mapping  # local alias to avoid accidental shadowing
-
     # Setup rich progress (spinner) if enabled
     progress_obj: Optional[Progress] = None
     progress_running: bool = False
