@@ -4,7 +4,7 @@ import click
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
-from gptsh.core.mcp import list_tools
+from gptsh.mcp import list_tools
 
 from typing import Any, Dict, Optional, List, cast, Mapping
 
