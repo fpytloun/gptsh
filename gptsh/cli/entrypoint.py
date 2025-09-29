@@ -192,12 +192,12 @@ async def run_llm(
         progress_running: bool = False
         console = Console()
         if progress and sys.stderr.isatty():
+            progress_console = Console(file=sys.stderr)
             progress_obj = Progress(
                 SpinnerColumn(),
                 TextColumn("{task.description}"),
                 transient=True,
-                redirect_stdout=True,
-                redirect_stderr=True,
+                console=progress_console,
             )
             progress_obj.start()
             progress_running = True
