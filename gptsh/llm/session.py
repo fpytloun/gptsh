@@ -181,10 +181,32 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
             except Exception:
                 args = {}
 
-            # Approval check: server wildcard '*', per-server '*', or specific tool name
-            server_approvals = set(approved_map.get(server, []))
-            global_approvals = set(approved_map.get("*", []))
-            is_approved = ("*" in server_approvals) or (toolname in server_approvals) or (toolname in global_approvals)
+            # Approval check with normalization:
+            # - accept wildcard '*' at server or global level
+            # - accept tool names with '-' or '_' interchangeably
+            # - accept fully-qualified 'server__tool' entries in approvals
+            raw_server_approvals = list(approved_map.get(server, []))
+            raw_global_approvals = list(approved_map.get("*", []))
+
+            def _canon(n: str) -> str:
+                try:
+                    return str(n).lower().replace("-", "_").strip()
+                except Exception:
+                    return str(n)
+
+            server_approvals = set(_canon(x) for x in raw_server_approvals)
+            global_approvals = set(_canon(x) for x in raw_global_approvals)
+            canon_tool = _canon(toolname)
+            canon_full = _canon(f"{server}__{toolname}")
+
+            is_approved = (
+                "*" in raw_server_approvals
+                or "*" in raw_global_approvals
+                or canon_tool in server_approvals
+                or canon_tool in global_approvals
+                or canon_full in server_approvals
+                or canon_full in global_approvals
+            )
 
             if not is_approved:
                 try:
