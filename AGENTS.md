@@ -15,8 +15,9 @@ A modular, extensible, and secure Python shell client that empowers developers a
 - **mcp** Python SDK for Model Context Protocol (MCP) ([documentation](https://openai.github.io/openai-agents-python/mcp/))
 - **pyyaml** for config loading/merging
 - **click** for interactive CLI
+- **rich** for progress UI and Markdown rendering
 - **textual** (future, optional) for TUI
-- **asyncio**, **httpx**, **requests** for async operations, especially for MCP/http/SSE
+- **asyncio**, **httpx** for async operations, especially for MCP/http/SSE
 - **uv/uvx** as the only accepted way to install/manage dependencies & run dev scripts
 - **pytest** for testing
 - **watchdog** for config reloads (optional)
@@ -222,18 +223,21 @@ uvx pytest --maxfail=1 --disable-warnings -q
  - [x] Built CLI entry point with Click, supporting prompt, agent, model, stream, progress, debug flags
  - [x] Integrated logging setup with configurable levels and formats
  - [x] Added stdin handler with truncation strategy for piped input
- - [x] Stubbed MCP tool listing functionality
+ - [x] MCP tool discovery and execution via official MCP SDK (stdio/HTTP/SSE)
  - [x] Implemented asynchronous LLM calls via `litellm` with streaming and single-shot support
  - [x] Wrote pytest tests for config loader, stdin handler, and CLI flows
  - [x] Added --mcp-servers CLI option to override path to MCP servers file
  - [x] Added --provider option to select LiteLLM provider from config
  - [x] Added --list-providers CLI option to list configured providers
  - [x] Prefixed model with provider for custom endpoints
+ - [x] Rich Progress UI rendered to stderr; clean teardown before output
+ - [x] Output format flag `-o/--output` (text|markdown) with Markdown rendering at end
+ - [x] `--no-tools` to disable MCP; `--tools` to whitelist allowed MCP servers
  
  ### Pending / Roadmap
 
  #### MCP Integration
- - [ ] Develop real MCP client for tool discovery and invocation (stdio/SSE/HTTP)
+ - [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)
  - [ ] Create integration and chaos tests for MCP lifecycle resilience
 
  #### User Experience
@@ -292,6 +296,7 @@ gptsh = "gptsh.cli.entrypoint:main"
 - `3`   MCP connection/spawn failure (after retries)
 - `4`   tool approval denied
 - `124` operation timeout
+- `130` interrupted (Ctrl-C)
 
 ---
 ## Token Budgeting and Rate Limiting
@@ -317,13 +322,20 @@ gptsh = "gptsh.cli.entrypoint:main"
 - `gptsh --list-tools`     — Lists all available MCP tools by server.
 
 **Global CLI Options:**
-- `--model MODEL`                  # Specify LLM model (overrides config)
-- `--agent NAME`                   # Select named agent from config (default agent if omitted)
+- `--provider NAME`                # Select provider from config (overrides default)
+- `--model MODEL`                  # Specify LLM model (overrides config/agent)
+- `--agent NAME`                   # Select named agent from config (default: "default")
 - `--config PATH`                  # Path to config file
 - `--stream/--no-stream`           # Stream LLM output (default: on)
-- `--progress/--no-progress`       # Show progress bars/spinners (default: on)
-- `--debug`                        # Extra debugging/logging
+- `--progress/--no-progress`       # Show progress spinners (default: on; rendered to stderr)
+- `--debug`                        # Enable DEBUG logging
+- `-v, --verbose`                  # Enable INFO logging
+- `--mcp-servers PATHS`            # Comma/space-separated path(s) to MCP servers JSON
 - `--list-tools`                   # Print all discovered MCP tools, grouped by server
+- `--list-providers`               # List configured providers
+- `-o, --output [text|markdown]`   # Output format (default: markdown)
+- `--no-tools`                     # Disable MCP (discovery and execution)
+- `--tools LABELS`                 # Comma/space-separated allow-list of MCP servers to load
 - `--version`
 - `-h, --help`
 
