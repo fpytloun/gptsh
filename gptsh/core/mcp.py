@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import asyncio
 import logging
 import re
@@ -50,8 +51,7 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
                     env=srv.get("env", {}),
                 )
                 async def _stdio_call() -> List[str]:
-                    stderr_target = None if logging.getLogger(__name__).getEffectiveLevel() <= logging.DEBUG else asyncio.subprocess.DEVNULL
-                    async with stdio_client(params, stderr=stderr_target) as (read, write):
+                    async with stdio_client(params, errlog=sys.stderr if logging.getLogger(__name__).getEffectiveLevel() <= logging.DEBUG else asyncio.subprocess.DEVNULL) as (read, write):
                         async with ClientSession(read, write) as session:
                             await session.initialize()
                             resp = await session.list_tools()
