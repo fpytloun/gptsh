@@ -128,14 +128,14 @@ async def run_llm(
 
         # Build base params from provider configuration, excluding non-LiteLLM keys
         params: Dict[str, Any] = {
-            k: v for k, v in dict(provider_conf).items() if k not in {"default_model", "name"}
+            k: v for k, v in dict(provider_conf).items() if k not in {"model", "name"}
         }
 
         # Determine model: CLI override > agent config > provider default > fallback
         chosen_model = (
             cli_model_override
             or (agent_conf or {}).get("model")
-            or provider_conf.get("default_model")
+            or provider_conf.get("model")
             or "gpt-4o"
         )
 
@@ -174,7 +174,7 @@ async def run_llm(
         if stream:
             if progress and sys.stderr.isatty():
                 stop_event = asyncio.Event()
-                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model}...", stop_event))
+                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}...", stop_event))
             try:
                 stream_iter = await acompletion(stream=True, **params)
                 async for chunk in stream_iter:
@@ -249,7 +249,7 @@ async def run_llm(
         else:
             if progress and sys.stderr.isatty():
                 stop_event = asyncio.Event()
-                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model}...", stop_event))
+                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}...", stop_event))
             try:
                 resp = cast(Dict[str, Any], await acompletion(**params))
             finally:
