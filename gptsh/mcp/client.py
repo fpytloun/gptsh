@@ -424,6 +424,10 @@ def get_auto_approved_tools(config: Dict[str, Any], agent_conf: Optional[Dict[st
             # If parse fails for a file, skip it
             continue
 
+    # Merge builtin in-process servers so agent-level entries like 'time' can match a server group
+    for _name, _def in (get_builtin_servers() or {}).items():
+        servers.setdefault(_name, _def)
+
     approved_map: Dict[str, List[str]] = {}
     for name, srv in servers.items():
         tools = srv.get("autoApprove") or []
