@@ -7,6 +7,8 @@ from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp import list_tools, get_auto_approved_tools, discover_tools_detailed_async, execute_tool_async
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.console import Console
+from rich.markdown import Markdown
 
 from typing import Any, Dict, Optional, List, cast, Mapping
 
@@ -28,8 +30,9 @@ DEFAULT_AGENTS = {
 @click.option("--mcp-servers", "mcp_servers", default=None, help="Override path to MCP servers file")
 @click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
 @click.option("--list-providers", "list_providers_flag", is_flag=True, default=False, help="List configured providers")
+@click.option("--output", "-o", type=click.Choice(["text", "markdown"]), default="markdown", help="Output format")
 @click.argument("prompt", required=False)
-def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, prompt):
+def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, output, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -110,6 +113,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             cli_model_override=model,
             stream=stream,
             progress=progress,
+            output_format=output,
             logger=logger,
         ))
     else:
@@ -165,6 +169,7 @@ async def run_llm(
       cli_model_override: Optional[str],
       stream: bool,
       progress: bool,
+      output_format: str,
       logger: Any,
   ) -> None:
     """Execute an LLM call using LiteLLM with optional streaming."""
@@ -178,6 +183,8 @@ async def run_llm(
 
         # Setup rich progress (spinner) if enabled
         progress_obj: Optional[Progress] = None
+        progress_running: bool = False
+        console = Console()
         if progress and sys.stderr.isatty():
             progress_obj = Progress(
                 SpinnerColumn(),
@@ -187,6 +194,7 @@ async def run_llm(
                 redirect_stderr=True,
             )
             progress_obj.start()
+            progress_running = True
 
         # Build MCP tools for the LLM (show progress while initializing MCP clients)
         if progress_obj is not None:
@@ -254,6 +262,8 @@ async def run_llm(
                 waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
             try:
                 stream_iter = await acompletion(stream=True, **params)
+                first_output_done = False
+                buffer_md: List[str] = [] if output_format == "markdown" else []
                 async for chunk in stream_iter:
                     # Robust extraction across providers; handle Mapping-like and object chunks
                     def _extract_text(c: Any) -> str:
@@ -312,14 +322,26 @@ async def run_llm(
 
                     text = _extract_text(chunk)
                     if text:
-                        if waiting_task_id is not None and progress_obj is not None:
-                            try:
-                                progress_obj.remove_task(waiting_task_id)
-                            except Exception:
-                                pass
-                            waiting_task_id = None
-                        sys.stdout.write(text)
-                        sys.stdout.flush()
+                        # Ensure spinner is ended before any output
+                        if not first_output_done:
+                            if waiting_task_id is not None and progress_obj is not None:
+                                try:
+                                    progress_obj.remove_task(waiting_task_id)
+                                except Exception:
+                                    pass
+                                waiting_task_id = None
+                            if progress_obj is not None and progress_running:
+                                try:
+                                    progress_obj.stop()
+                                except Exception:
+                                    pass
+                                progress_running = False
+                            first_output_done = True
+                        if output_format == "markdown":
+                            buffer_md.append(text)
+                        else:
+                            sys.stdout.write(text)
+                            sys.stdout.flush()
             finally:
                 if waiting_task_id is not None and progress_obj is not None:
                     try:
@@ -327,7 +349,16 @@ async def run_llm(
                     except Exception:
                         pass
                     waiting_task_id = None
-            click.echo()  # newline after stream
+                if progress_obj is not None and progress_running:
+                    try:
+                        progress_obj.stop()
+                    except Exception:
+                        pass
+                    progress_running = False
+            if output_format == "markdown":
+                console.print(Markdown("".join(buffer_md)))
+            else:
+                click.echo()  # newline after stream
         else:
             if progress_obj is not None:
                 waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
@@ -350,7 +381,16 @@ async def run_llm(
                                 except Exception:
                                     pass
                                 waiting_task_id = None
-                            click.echo(content or "")
+                            if progress_obj is not None and progress_running:
+                                try:
+                                    progress_obj.stop()
+                                except Exception:
+                                    pass
+                                progress_running = False
+                            if output_format == "markdown":
+                                console.print(Markdown(content or ""))
+                            else:
+                                click.echo(content or "")
                             break
                         # Append the assistant message that contains tool_calls (required by OpenAI format)
                         assistant_tool_calls: List[Dict[str, Any]] = []
@@ -436,7 +476,16 @@ async def run_llm(
                         except Exception:
                             pass
                         waiting_task_id = None
-                    click.echo(content)
+                    if progress_obj is not None and progress_running:
+                        try:
+                            progress_obj.stop()
+                        except Exception:
+                            pass
+                        progress_running = False
+                    if output_format == "markdown":
+                        console.print(Markdown(content or ""))
+                    else:
+                        click.echo(content or "")
             finally:
                 # Ensure waiting indicator is cleared
                 if waiting_task_id is not None and progress_obj is not None:
@@ -446,11 +495,12 @@ async def run_llm(
                         pass
                     waiting_task_id = None
                 # Stop progress display if it was started
-                if progress_obj is not None:
+                if progress_obj is not None and progress_running:
                     try:
                         progress_obj.stop()
                     except Exception:
                         pass
+                    progress_running = False
     except KeyboardInterrupt:
         click.echo("", err=True)
         sys.exit(130)
