@@ -22,11 +22,12 @@ DEFAULT_AGENTS = {
 @click.option("--stream/--no-stream", default=True)
 @click.option("--progress/--no-progress", default=True)
 @click.option("--debug", is_flag=True, default=False)
+@click.option("-v", "--verbose", is_flag=True, default=False, help="Enable verbose logging (INFO)")
 @click.option("--mcp-servers", "mcp_servers", default=None, help="Override path to MCP servers file")
 @click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
 @click.option("--list-providers", "list_providers_flag", is_flag=True, default=False, help="List configured providers")
 @click.argument("prompt", required=False)
-def main(provider, model, agent, config_path, stream, progress, debug, mcp_servers, list_tools_flag, list_providers_flag, prompt):
+def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -37,7 +38,8 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
 
     if mcp_servers:
         config.setdefault("mcp", {})["servers_files"] = [mcp_servers]
-    log_level = "DEBUG" if debug else config.get("logging", {}).get("level", "WARNING")
+    # Logging: default WARNING, -v/--verbose -> INFO, --debug -> DEBUG
+    log_level = "DEBUG" if debug else ("INFO" if verbose else "WARNING")
     log_fmt = config.get("logging", {}).get("format", "text")
     logger = setup_logging(log_level, log_fmt)
 
