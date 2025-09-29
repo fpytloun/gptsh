@@ -120,7 +120,7 @@ async def complete_simple(params: Dict[str, Any]) -> str:
     except Exception:
         return ""
 
-async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], approved_map: Dict[str, List[str]], pause_ui=None, resume_ui=None) -> str:
+async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], approved_map: Dict[str, List[str]], pause_ui=None, resume_ui=None, set_status=None, wait_label: Optional[str] = None) -> str:
     """
     Tool execution loop using MCP until the model returns a final message with no tool_calls.
     Returns final assistant content string.
@@ -251,10 +251,22 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
                     })
                     continue
 
+            # Update progress/status to reflect tool execution
+            if callable(set_status):
+                try:
+                    set_status(f"Executing {server}__{toolname}")
+                except Exception:
+                    pass
             try:
                 result = await execute_tool_async(server, toolname, args, config)
             except Exception as e:
                 result = f"Tool execution failed: {e}"
+            finally:
+                if callable(set_status) and wait_label:
+                    try:
+                        set_status(wait_label)
+                    except Exception:
+                        pass
             # Append tool result
             conversation.append({
                 "role": "tool",

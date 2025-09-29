@@ -228,8 +228,9 @@ async def run_llm(
     waiting_task_id: Optional[int] = None
     try:
         if stream:
+            wait_label = f"Waiting for {chosen_model.rsplit('/', 1)[-1]}"
             if progress_obj is not None:
-                waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
+                waiting_task_id = progress_obj.add_task(wait_label, total=None)
             md_buffer = "" if output_format == "markdown" else ""
             first_output_done = False
             async for text in stream_completion(params):
@@ -312,7 +313,23 @@ async def run_llm(
                         except Exception:
                             waiting_task_id = None
 
-                content = await complete_with_tools(params, config, approved_map, pause_ui=pause_ui, resume_ui=resume_ui)
+                def set_status(text: Optional[str]):
+                    nonlocal waiting_task_id, progress_obj
+                    if waiting_task_id is not None and progress_obj is not None and text:
+                        try:
+                            progress_obj.update(waiting_task_id, description=text)
+                        except Exception:
+                            pass
+
+                content = await complete_with_tools(
+                    params,
+                    config,
+                    approved_map,
+                    pause_ui=pause_ui,
+                    resume_ui=resume_ui,
+                    set_status=set_status,
+                    wait_label=wait_label,
+                )
             else:
                 content = await complete_simple(params)
             # Stop waiting indicator before printing final output
