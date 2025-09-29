@@ -38,10 +38,10 @@ Pipe input from stdin:
 git diff | uvx gptsh "Explain the changes and suggest a commit message"
 ```
 
-Streaming output (default on):
+Plain text output (default is markdown):
 
 ```bash
-uvx gptsh --stream "Write a haiku about shells and GPTs"
+uvx gptsh -o text --no-progress "Generate shell command to rename all files in directory and prefix them with xxx_"
 ```
 
 Markdown rendering (default): the model’s output is rendered at the end as rich Markdown.
