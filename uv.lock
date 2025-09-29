@@ -441,7 +441,7 @@ wheels = [
 ]
 
 [[package]]
-name = "gptsh"
+name = "gptsh-cli"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
