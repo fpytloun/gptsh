@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, AsyncIterator, Mapping
+import sys
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
 from gptsh.mcp import execute_tool_async
 
@@ -198,10 +199,25 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
                 question = f"Allow tool {server}__{toolname} with args {pretty_args}?"
                 allowed = False
                 if Confirm is not None:
+                    # Ensure we don't clash with an active progress spinner rendered on stderr:
+                    # write a newline to stderr before and after the prompt to separate outputs.
+                    if sys.stderr.isatty():
+                        try:
+                            sys.stderr.write("\n")
+                            sys.stderr.flush()
+                        except Exception:
+                            pass
                     try:
                         allowed = bool(Confirm.ask(question, default=False))
                     except Exception:
                         allowed = False
+                    finally:
+                        if sys.stderr.isatty():
+                            try:
+                                sys.stderr.write("\n")
+                                sys.stderr.flush()
+                            except Exception:
+                                pass
                 else:
                     # Fallback to deny if Rich is unavailable
                     allowed = False
