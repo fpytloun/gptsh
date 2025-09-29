@@ -27,7 +27,7 @@ DEFAULT_AGENTS = {
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--provider", default=None, help="Override LiteLLM provider from config")
 @click.option("--model", default=None, help="Override LLM model")
-@click.option("--agent", default="default", help="Named agent preset from config")
+@click.option("--agent", default=None, help="Named agent preset from config")
 @click.option("--config", "config_path", default=None, help="Specify alternate config path")
 @click.option("--stream/--no-stream", default=True)
 @click.option("--progress/--no-progress", default=True)
@@ -72,9 +72,14 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         agents_conf = config.get("agents") or {}
         selected_agent_conf = None
         if isinstance(agents_conf, dict):
-            selected_agent_conf = agents_conf.get(agent)
+            # Use CLI agent if provided; otherwise fall back to config default_agent or 'default'
+            if agent:
+                selected_agent_conf = agents_conf.get(agent)
+            if selected_agent_conf is None:
+                default_agent_name = config.get("default_agent") or "default"
+                selected_agent_conf = agents_conf.get(default_agent_name) or (DEFAULT_AGENTS.get(default_agent_name) if isinstance(DEFAULT_AGENTS, dict) else None)
         if selected_agent_conf is None:
-            # Fallback to built-in default agent mapping
+            # Fallback to built-in default agent mapping using CLI-provided name as last resort
             selected_agent_conf = (DEFAULT_AGENTS.get(agent) if isinstance(DEFAULT_AGENTS, dict) else None)
         approved_map = get_auto_approved_tools(config, agent_conf=selected_agent_conf)
         total_servers = len(tools_map)
