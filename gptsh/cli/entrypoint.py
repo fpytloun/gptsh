@@ -274,8 +274,9 @@ async def run_llm(
             else:
                 click.echo()  # newline
         else:
+            wait_label = f"Waiting for {chosen_model.rsplit('/', 1)[-1]}"
             if progress_obj is not None:
-                waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
+                waiting_task_id = progress_obj.add_task(wait_label, total=None)
             # Non-streaming paths
             if has_tools:
                 approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
@@ -309,7 +310,7 @@ async def run_llm(
                     # Recreate waiting task
                     if progress_obj is not None:
                         try:
-                            waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
+                            waiting_task_id = progress_obj.add_task(wait_label, total=None)
                         except Exception:
                             waiting_task_id = None
 
