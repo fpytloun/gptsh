@@ -172,7 +172,7 @@ async def run_llm(
         if stream:
             if progress and sys.stderr.isatty():
                 stop_event = asyncio.Event()
-                spinner_task = asyncio.create_task(_spinner("Progressing...", stop_event))
+                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model}...", stop_event))
             try:
                 stream_iter = await acompletion(stream=True, **params)
                 async for chunk in stream_iter:
@@ -247,7 +247,7 @@ async def run_llm(
         else:
             if progress and sys.stderr.isatty():
                 stop_event = asyncio.Event()
-                spinner_task = asyncio.create_task(_spinner("Progressing...", stop_event))
+                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model}...", stop_event))
             try:
                 resp = cast(Dict[str, Any], await acompletion(**params))
             finally:
