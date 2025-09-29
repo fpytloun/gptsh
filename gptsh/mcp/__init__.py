@@ -3,9 +3,15 @@ from .client import (
     get_auto_approved_tools,
     discover_tools_detailed,
     execute_tool,
-    _discover_tools_detailed_async as discover_tools_detailed_async,
-    _execute_tool_async as execute_tool_async,
+    _discover_tools_detailed_async,
+    _execute_tool_async,
 )
+
+async def discover_tools_detailed_async(config):
+    return await _discover_tools_detailed_async(config)
+
+async def execute_tool_async(server, tool, arguments, config):
+    return await _execute_tool_async(server, tool, arguments, config)
 
 __all__ = [
     "list_tools",
