@@ -1,6 +1,7 @@
 import os
 import yaml
 import re
+import glob
 from typing import Any, Dict, Optional
 
 CONFIG_PATHS = [
@@ -37,8 +38,22 @@ def merge_dicts(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
 
 def load_config(paths=CONFIG_PATHS) -> Dict[str, Any]:
     config: Dict[str, Any] = {}
+    # Determine standard global main config and optional config.d directory
+    global_main = os.path.expanduser("~/.config/gptsh/config.yml")
+    snippets_dir = os.path.expanduser("~/.config/gptsh/config.d")
+
     for path in paths:
         loaded = load_yaml(path)
         if loaded:
             config = merge_dicts(config, loaded)
+        # If this is the global main config, also merge any *.yml snippets from config.d
+        try:
+            if os.path.abspath(path) == os.path.abspath(global_main) and os.path.isdir(snippets_dir):
+                for snip in sorted(glob.glob(os.path.join(snippets_dir, "*.yml"))):
+                    snip_loaded = load_yaml(snip)
+                    if snip_loaded:
+                        config = merge_dicts(config, snip_loaded)
+        except Exception:
+            # Do not fail if directory reading/parsing fails
+            pass
     return config
