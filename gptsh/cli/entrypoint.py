@@ -127,8 +127,12 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         if not tools_filter:
             agent_tools = agent_conf.get("tools")
             if isinstance(agent_tools, list):
-                labels = [str(x) for x in agent_tools if x]
-                config.setdefault("mcp", {})["allowed_servers"] = labels if labels else []
+                if len(agent_tools) == 0:
+                    # Treat empty tools list as disabling tools entirely
+                    no_tools_effective = True
+                else:
+                    labels = [str(x) for x in agent_tools if x]
+                    config.setdefault("mcp", {})["allowed_servers"] = labels
 
         asyncio.run(run_llm(
             prompt=prompt_given,
