@@ -8,14 +8,14 @@
         "--network",
         "host",
         "-v",
-        "${PWD}:${PWD}",
+        "${env:PWD}:${env:PWD}",
         "ghcr.io/oraios/serena:latest",
         "serena",
         "start-mcp-server",
         "--transport",
         "stdio",
         "--project",
-        "${PWD}"
+        "${env:PWD}"
       ],
       "autoApprove": [
         "read_file",
@@ -46,7 +46,6 @@
         "prepare_for_new_conversation"
       ],
       "command": "docker",
-      "transport": { "type": "stdio" },
       "disabled": false
     }
   }
