@@ -41,7 +41,7 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
         transport = srv.get("transport", {})
         ttype = transport.get("type")
         if not ttype:
-            if transport.get("url"):
+            if transport.get("url") or srv.get("url"):
                 ttype = "http"
             elif srv.get("command"):
                 ttype = "stdio"
@@ -66,11 +66,16 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
                 return await asyncio.wait_for(_stdio_call(), timeout=timeout_seconds)
 
             elif ttype in ("http", "sse"):
-                url = transport.get("url")
+                url = transport.get("url") or srv.get("url")
                 if not url:
-                    logging.getLogger(__name__).warning("MCP server '%s' missing transport.url for '%s' transport", name, ttype)
+                    logging.getLogger(__name__).warning("MCP server '%s' missing transport.url/url for '%s' transport", name, ttype)
                     return []
-                headers = srv.get("credentials", {}).get("headers", {})
+                headers = (
+                    srv.get("credentials", {}).get("headers")
+                    or transport.get("headers")
+                    or srv.get("headers")
+                    or {}
+                )
                 async def _http_call() -> List[str]:
                     async with streamablehttp_client(url, headers=headers) as (read, write, _):
                         async with ClientSession(read, write) as session:
