@@ -328,6 +328,11 @@ async def run_llm(
                         if not calls:
                             # No tool calls; print final assistant message
                             content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            # Stop spinner before printing final output
+                            if spinner_task is not None and stop_event is not None and not stop_event.is_set():
+                                stop_event.set()
+                                await spinner_task
+                                spinner_task = None
                             click.echo(content or "")
                             break
                         # Append the assistant message that contains tool_calls (required by OpenAI format)
@@ -403,6 +408,11 @@ async def run_llm(
                 else:
                     resp = cast(Dict[str, Any], await acompletion(**params))
                     content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    # Stop spinner before printing final output
+                    if spinner_task is not None and stop_event is not None and not stop_event.is_set():
+                        stop_event.set()
+                        await spinner_task
+                        spinner_task = None
                     click.echo(content)
             finally:
                 if spinner_task is not None and stop_event is not None and not stop_event.is_set():
