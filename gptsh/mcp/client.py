@@ -21,7 +21,21 @@ def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
 
 async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
     # Load/merge MCP servers definitions from all configured files
-    servers_files = config.get("mcp", {}).get("servers_files", [])
+    # Resolve list of MCP servers files with precedence:
+    # 1) CLI-provided (already stored under mcp.servers_files by CLI)
+    # 2) Config key 'mcp.servers_files' or legacy 'mcp.mcp_servers'
+    # 3) Defaults
+    mcp_conf = config.get("mcp", {}) or {}
+    servers_files = mcp_conf.get("servers_files")
+    if not servers_files:
+        servers_files = mcp_conf.get("mcp_servers")
+    if isinstance(servers_files, str):
+        servers_files = [servers_files]
+    if not servers_files:
+        servers_files = [
+            os.path.expanduser("~/.config/gptsh/mcp_servers.json"),
+            os.path.abspath("./.gptsh/mcp_servers.json"),
+        ]
     servers: Dict[str, Any] = {}
     for path in servers_files:
         expanded = os.path.expanduser(path)

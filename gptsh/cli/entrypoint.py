@@ -37,7 +37,9 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         config = load_config()
 
     if mcp_servers:
-        config.setdefault("mcp", {})["servers_files"] = [mcp_servers]
+        # Allow comma or whitespace-separated list of paths
+        parts = [p for raw in mcp_servers.split(",") for p in raw.split() if p]
+        config.setdefault("mcp", {})["servers_files"] = parts if parts else []
     # Logging: default WARNING, -v/--verbose -> INFO, --debug -> DEBUG
     log_level = "DEBUG" if debug else ("INFO" if verbose else "WARNING")
     log_fmt = config.get("logging", {}).get("format", "text")
