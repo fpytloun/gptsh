@@ -39,7 +39,14 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
 
     async def _query_server(name: str, srv: Dict[str, Any]) -> List[str]:
         transport = srv.get("transport", {})
-        ttype = transport.get("type") or "stdio"
+        ttype = transport.get("type")
+        if not ttype:
+            if transport.get("url"):
+                ttype = "http"
+            elif srv.get("command"):
+                ttype = "stdio"
+            else:
+                ttype = None
         try:
             if ttype == "stdio":
                 if not srv.get("command"):
