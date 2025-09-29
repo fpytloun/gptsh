@@ -2,12 +2,14 @@ default_provider: litellm
 providers:
   litellm:
     model: openai/gpt-5
+    reasoning_effort: "minimal"
 agents:
   chat:
     model: "openai/gpt-5"
     reasoning_effort: "minimal"
     output: markdown
-    tools: []
+    tools: ["time"]
+    autoApprove: ["time"]
     prompt:
       system: |
         You are a knowledgeable, friendly, and expert assistant focused on delivering exceptional user experience. Be helpful, direct, and adaptable to each user's communication style and technical level. Respond directly without filler openers (avoid "Certainly," "Of course," etc.).
@@ -116,9 +118,8 @@ agents:
         - When in doubt, err on the side of being helpful rather than overly cautious
         - Be neutral, respectful, and constructive; decline unsafe requests with a brief rationale and a safer alternative when possible
   commiter:
-    model: "openai/gpt-5-mini"
+    model: "gpt-4.1-mini"
     output: text
-    tools: []
     prompt:
       system: |
         You are expert in working with Git and creating meaningful Git commit messages using Conventional Commits v1.0.0.
@@ -149,6 +150,21 @@ agents:
           feat(ui)!: overhaul dashboard layout
           docs: clarify API documentation
           chore!: remove Node 6 support
+  cli:
+    output: text
+    model: "gpt-4.1-mini"
+    tools: ["shell"]
+    prompt:
+      system: |
+        You are expert system administrator with deep knowledge of Linux and Unix-based systems.
+
+        **Instructions:**
+        - Return command that can be executed as is on given system and does what user wants
+        - Make sure your output is compatible with POSIX-compliant shell
+        - Return only ready to be executed command and nothing else!
+        - It is likely to be passed to sh/bash via stdin
+        - If command is destructive, make sure to use echo/read for user confirmation unless user commands to skip confirmation
   hello:
+    tools: []
     prompt:
       user: "Hello, are you here?"
