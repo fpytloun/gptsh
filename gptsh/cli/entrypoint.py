@@ -238,7 +238,8 @@ async def run_llm(
         if stream:
             if progress and sys.stderr.isatty():
                 stop_event = asyncio.Event()
-                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", stop_event))
+                original_spinner_msg = f"Waiting for {chosen_model.rsplit('/', 1)[-1]}"
+                spinner_task = asyncio.create_task(_spinner(original_spinner_msg, stop_event))
             try:
                 stream_iter = await acompletion(stream=True, **params)
                 async for chunk in stream_iter:
@@ -366,10 +367,27 @@ async def run_llm(
                                 args = json.loads(args_str) if isinstance(args_str, str) else dict(args_str)
                             except Exception:
                                 args = {}
+                            # Temporarily change spinner to show executing tool
+                            exec_stop_event = None
+                            exec_spinner_task = None
+                            if progress and sys.stderr.isatty():
+                                if spinner_task is not None and stop_event is not None and not stop_event.is_set():
+                                    stop_event.set()
+                                    await spinner_task
+                                exec_stop_event = asyncio.Event()
+                                exec_spinner_task = asyncio.create_task(_spinner(f"Executing {fullname}", exec_stop_event))
                             try:
                                 result = await execute_tool_async(server, toolname, args, global_conf)
                             except Exception as e:
                                 result = f"Tool execution failed: {e}"
+                            finally:
+                                if exec_spinner_task is not None and exec_stop_event is not None and not exec_stop_event.is_set():
+                                    exec_stop_event.set()
+                                    await exec_spinner_task
+                                # Restore original spinner
+                                if progress and sys.stderr.isatty():
+                                    stop_event = asyncio.Event()
+                                    spinner_task = asyncio.create_task(_spinner(original_spinner_msg, stop_event))
                             # Append tool result
                             conversation.append({
                                 "role": "tool",
