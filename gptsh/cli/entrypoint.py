@@ -219,7 +219,7 @@ async def run_llm(
             frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
             i = 0
             while not stop_event.is_set():
-                sys.stderr.write(f"\r{msg} {frames[i % len(frames)]}")
+                sys.stderr.write(f"\r{frames[i % len(frames)]} {msg}")
                 sys.stderr.flush()
                 i += 1
                 try:
@@ -237,7 +237,7 @@ async def run_llm(
         if stream:
             if progress and sys.stderr.isatty():
                 stop_event = asyncio.Event()
-                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}...", stop_event))
+                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", stop_event))
             try:
                 stream_iter = await acompletion(stream=True, **params)
                 async for chunk in stream_iter:
@@ -312,7 +312,7 @@ async def run_llm(
         else:
             if progress and sys.stderr.isatty():
                 stop_event = asyncio.Event()
-                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}...", stop_event))
+                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", stop_event))
             try:
                 # Tool execution loop when MCP tools are available
                 if params.get("tools"):
