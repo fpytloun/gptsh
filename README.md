@@ -9,6 +9,91 @@ A modern, modular shell assistant powered by LLMs with first-class Model Context
 
 See AGENTS.md for development standards and architecture details.
 
+## Goal
+
+There's already many CLI tools for interaction with LLMs. Some of them are
+designed for coding (eg. Aider, Opencode, Codex), some others are meant for
+sysadmin or generic use (eg. shell-gpt).
+Having a tool is no longer an issue, with LLMs almost anyone can vibe-code
+anything they like, even people without prior experience. We can argue about
+quality and security of resulting products but the fact is that over time, as
+LLMs are getting rapidly better as well as people are finding new approaches,
+it will become irrelevant.
+
+As this world evolves quickly, it is clear that it is not about tools; it is
+about **human creativity**, ideas, and building a modular architecture using
+blocks that can be replaced at any time.
+
+gptsh aims to be a versatile, simple, and extensible tool built around the idea of
+agents, where an agent is an LLM with a role-specific prompt that defines its behavior
+and an assigned set of tools (using MCP).
+
+It is meant to be simple—mostly plug-and-play—with examples and proven setups
+and usage patterns shared by others.
+
+You can easily use it with a single/default agent and a Claude-like
+`mcp_servers.json` as-is.
+
+Or you can define multiple agents with different roles and tools and use them as
+needed.
+
+Or you can set up a more complex environment with multiple agents (e.g.,
+Software Developer, QA Engineer) and one agent (Manager) that receives the user
+prompt, orchestrates work, and delegates tasks to these agents. Even an agent can be
+invoked as a tool from another agent.
+
+```mermaid
+flowchart TD
+  %% User interaction
+  U[User Prompt] --> M[Manager Agent]
+
+  %% Manager orchestrates tasks
+  M -->|Delegates task| Dev[Software Developer Agent]
+  M -->|Delegates task| QA[QA Engineer Agent]
+
+  %% Agents can call other agents as tools
+  Dev -.->|Calls as tool| QA
+  QA  -.->|Calls as tool| Dev
+  M   -.->|Calls as tool| Dev
+  M   -.->|Calls as tool| QA
+
+  %% Agents use LLM via LiteLLM
+  subgraph LLM_Stack[LLM Access]
+    direction TB
+    Lite[LiteLLM Provider Router]
+    Model[(LLM Model)]
+    Lite --> Model
+  end
+
+  Dev -->|Chat / Tool selection| Lite
+  QA  -->|Chat / Tool selection| Lite
+  M   -->|Coordination / Planning| Lite
+
+  %% MCP Servers and Tools
+  subgraph MCP[MCP Tooling Layer]
+    direction TB
+    subgraph Builtins[Builtin Tools]
+      T1[[time]]
+      T2[[shell]]
+    end
+    subgraph Ext[External MCP Servers]
+      FS[[filesystem]]
+      GIT[[git]]
+      WEB[[tavily/web]]
+      OTHER[[...]]
+    end
+  end
+
+  Dev -->|Invoke tool| MCP
+  QA  -->|Invoke tool| MCP
+  M   -->|Invoke tool| MCP
+
+  %% Results aggregation
+  Dev -->|Work output| M
+  QA  -->|Test results / feedback| M
+  M -->|Aggregated answer| U
+```
+
 ## Installation
 
 We use uv/uvx for environment management and running:
