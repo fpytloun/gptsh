@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import json
 import click
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
