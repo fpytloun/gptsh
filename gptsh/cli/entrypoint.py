@@ -5,7 +5,7 @@ import click
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
-from gptsh.mcp import list_tools, get_auto_approved_tools, discover_tools_detailed, execute_tool
+from gptsh.mcp import list_tools, get_auto_approved_tools, discover_tools_detailed_async, execute_tool_async
 
 from typing import Any, Dict, Optional, List, cast, Mapping
 
@@ -114,13 +114,13 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     else:
         raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
 
-def _build_mcp_tools_for_llm(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+async def _build_mcp_tools_for_llm(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Build OpenAI-style tool specs from MCP tool discovery.
     Tool names are prefixed with '<server>__' to route calls back.
     """
     tools: List[Dict[str, Any]] = []
-    detailed = discover_tools_detailed(config)
+    detailed = await discover_tools_detailed_async(config)
     for server, items in detailed.items():
         for t in items:
             name = f"{server}__{t['name']}"
@@ -176,7 +176,7 @@ async def run_llm(
         }
 
         # Build MCP tools for the LLM
-        mcp_tools = _build_mcp_tools_for_llm({"mcp": dict(provider_conf.get("mcp", {}), **(agent_conf.get("mcp", {}) if agent_conf else {})) , **(config := {})})
+        mcp_tools = await _build_mcp_tools_for_llm({"mcp": dict(provider_conf.get("mcp", {}), **(agent_conf.get("mcp", {}) if agent_conf else {})) , **(config := {})})
         # If no mcp section in provider/agent, fall back to global config already loaded in main()
         # The CLI stores resolved 'mcp.servers_files' in the global config; access through closure
         try:
@@ -186,7 +186,7 @@ async def run_llm(
         except Exception:
             global_conf = {}
         if not mcp_tools:
-            mcp_tools = _build_mcp_tools_for_llm(global_conf)
+            mcp_tools = await _build_mcp_tools_for_llm(global_conf)
 
         # If MCP tools are present, we'll do a tool-execution loop; disable streaming for compatibility
         if mcp_tools:
@@ -344,7 +344,7 @@ async def run_llm(
                             except Exception:
                                 args = {}
                             try:
-                                result = execute_tool(server, toolname, args, global_conf)
+                                result = await execute_tool_async(server, toolname, args, global_conf)
                             except Exception as e:
                                 result = f"Tool execution failed: {e}"
                             # Append tool result
