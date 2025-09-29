@@ -15,6 +15,37 @@ import httpx
 import importlib
 from gptsh.mcp.builtin import get_builtin_servers
 
+def _select_servers_file(config: Dict[str, Any]) -> Optional[str]:
+    """
+    Choose a single MCP servers JSON file based on precedence:
+      1) CLI-provided mcp.servers_files (first existing)
+      2) Local project ./.gptsh/mcp_servers.json
+      3) Global ~/.config/gptsh/mcp_servers.json
+    Returns the chosen absolute path, or None if none found.
+    """
+    mcp_conf = config.get("mcp", {}) or {}
+    candidates: List[str] = []
+
+    user_paths = mcp_conf.get("servers_files")
+    if isinstance(user_paths, str):
+        user_paths = [user_paths]
+    if isinstance(user_paths, list):
+        for p in user_paths:
+            if p:
+                candidates.append(os.path.expanduser(str(p)))
+
+    # Project-local then global defaults
+    candidates.append(os.path.abspath("./.gptsh/mcp_servers.json"))
+    candidates.append(os.path.expanduser("~/.config/gptsh/mcp_servers.json"))
+
+    for path in candidates:
+        try:
+            if os.path.isfile(path):
+                return path
+        except Exception:
+            continue
+    return None
+
 def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     """
     Discover tools from configured MCP servers using Model Context Protocol Python SDK.
@@ -23,27 +54,12 @@ def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     return asyncio.run(_list_tools_async(config))
 
 async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
-    # Load/merge MCP servers definitions from all configured files
-    # Resolve list of MCP servers files with precedence:
-    # 1) CLI-provided (already stored under mcp.servers_files by CLI)
-    # 2) Config key 'mcp.servers_files' or legacy 'mcp.mcp_servers'
-    # 3) Defaults
-    mcp_conf = config.get("mcp", {}) or {}
-    servers_files = mcp_conf.get("servers_files")
-    if not servers_files:
-        servers_files = mcp_conf.get("mcp_servers")
-    if isinstance(servers_files, str):
-        servers_files = [servers_files]
-    if not servers_files:
-        servers_files = [
-            os.path.expanduser("~/.config/gptsh/mcp_servers.json"),
-            os.path.abspath("./.gptsh/mcp_servers.json"),
-        ]
+    # Select a single MCP servers file based on precedence (CLI -> local -> global)
+    selected_file = _select_servers_file(config)
     servers: Dict[str, Any] = {}
-    for path in servers_files:
-        expanded = os.path.expanduser(path)
+    if selected_file:
         try:
-            with open(expanded, "r", encoding="utf-8") as f:
+            with open(selected_file, "r", encoding="utf-8") as f:
                 raw = f.read()
             # Normalize ${env:VAR} -> ${VAR} first, then expand using existing _expand_env
             content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
@@ -51,7 +67,9 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
             data = json.loads(content)
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
-            continue
+            servers = {}
+        except Exception:
+            servers = {}
     # Ensure builtin stdio-in-process servers are always present by default
     for _name, _def in (get_builtin_servers() or {}).items():
         servers.setdefault(_name, _def)
@@ -246,30 +264,21 @@ def discover_tools_detailed(config: Dict[str, Any]) -> Dict[str, List[Dict[str, 
     return asyncio.run(_discover_tools_detailed_async(config))
 
 async def _discover_tools_detailed_async(config: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
-    # Reuse servers loading logic
-    mcp_conf = config.get("mcp", {}) or {}
-    servers_files = mcp_conf.get("servers_files")
-    if not servers_files:
-        servers_files = mcp_conf.get("mcp_servers")
-    if isinstance(servers_files, str):
-        servers_files = [servers_files]
-    if not servers_files:
-        servers_files = [
-            os.path.expanduser("~/.config/gptsh/mcp_servers.json"),
-            os.path.abspath("./.gptsh/mcp_servers.json"),
-        ]
+    # Load from a single servers file selected by precedence (CLI -> local -> global)
+    selected_file = _select_servers_file(config)
     servers: Dict[str, Any] = {}
-    for path in servers_files:
-        expanded = os.path.expanduser(path)
+    if selected_file:
         try:
-            with open(expanded, "r", encoding="utf-8") as f:
+            with open(selected_file, "r", encoding="utf-8") as f:
                 raw = f.read()
             content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
             content = _expand_env(content)
             data = json.loads(content)
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
-            continue
+            servers = {}
+        except Exception:
+            servers = {}
     # Ensure builtin stdio-in-process servers are always present by default
     for _name, _def in (get_builtin_servers() or {}).items():
         servers.setdefault(_name, _def)
@@ -328,30 +337,21 @@ def execute_tool(server: str, tool: str, arguments: Dict[str, Any], config: Dict
     return asyncio.run(_execute_tool_async(server, tool, arguments, config))
 
 async def _execute_tool_async(server: str, tool: str, arguments: Dict[str, Any], config: Dict[str, Any]) -> str:
-    # Load servers
-    mcp_conf = config.get("mcp", {}) or {}
-    servers_files = mcp_conf.get("servers_files")
-    if not servers_files:
-        servers_files = mcp_conf.get("mcp_servers")
-    if isinstance(servers_files, str):
-        servers_files = [servers_files]
-    if not servers_files:
-        servers_files = [
-            os.path.expanduser("~/.config/gptsh/mcp_servers.json"),
-            os.path.abspath("./.gptsh/mcp_servers.json"),
-        ]
+    # Load servers from a single selected file
+    selected_file = _select_servers_file(config)
     servers: Dict[str, Any] = {}
-    for path in servers_files:
-        expanded = os.path.expanduser(path)
+    if selected_file:
         try:
-            with open(expanded, "r", encoding="utf-8") as f:
+            with open(selected_file, "r", encoding="utf-8") as f:
                 raw = f.read()
             content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
             content = _expand_env(content)
             data = json.loads(content)
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
-            continue
+            servers = {}
+        except Exception:
+            servers = {}
     # Ensure builtin stdio-in-process servers are always present by default
     for _name, _def in (get_builtin_servers() or {}).items():
         servers.setdefault(_name, _def)
@@ -407,22 +407,21 @@ def get_auto_approved_tools(config: Dict[str, Any], agent_conf: Optional[Dict[st
     Disabled servers are still included if present in config so the UI can display badges,
     but they will typically have no discovered tools.
     """
-    servers_files = config.get("mcp", {}).get("servers_files", [])
+    selected_file = _select_servers_file(config)
     servers: Dict[str, Any] = {}
-    for path in servers_files:
-        expanded = os.path.expanduser(path)
+    if selected_file:
         try:
-            with open(expanded, "r", encoding="utf-8") as f:
+            with open(selected_file, "r", encoding="utf-8") as f:
                 raw = f.read()
             content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
             content = _expand_env(content)
             data = json.loads(content)
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
-            continue
+            pass
         except Exception:
-            # If parse fails for a file, skip it
-            continue
+            # If parse fails for the file, ignore it
+            pass
 
     # Merge builtin in-process servers so agent-level entries like 'time' can match a server group
     for _name, _def in (get_builtin_servers() or {}).items():
