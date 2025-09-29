@@ -134,6 +134,12 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                     labels = [str(x) for x in agent_tools if x]
                     config.setdefault("mcp", {})["allowed_servers"] = labels
 
+        # Agent-level override for output format
+        output_effective = output
+        agent_output = agent_conf.get("output") if isinstance(agent_conf, dict) else None
+        if agent_output in ("text", "markdown"):
+            output_effective = agent_output
+
         asyncio.run(run_llm(
             prompt=prompt_given,
             provider_conf=provider_conf,
@@ -141,7 +147,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             cli_model_override=model,
             stream=stream,
             progress=progress,
-            output_format=output,
+            output_format=output_effective,
             no_tools=no_tools_effective,
             config=config,
             logger=logger,
