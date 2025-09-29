@@ -4,7 +4,7 @@ import click
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
-from gptsh.mcp import list_tools
+from gptsh.mcp import list_tools, get_auto_approved_tools
 
 from typing import Any, Dict, Optional, List, cast, Mapping
 
@@ -46,13 +46,16 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     # Handle immediate listing flags
     if list_tools_flag:
         tools_map = list_tools(config)
+        approved_map = get_auto_approved_tools(config)
         total_servers = len(tools_map)
         click.echo(f"Discovered tools ({total_servers} server{'s' if total_servers != 1 else ''}):")
         for server, tools in tools_map.items():
+            approved_set = set(approved_map.get(server, []))
             click.echo(f"{server} ({len(tools)}):")
             if tools:
                 for tool in tools:
-                    click.echo(f"  - {tool}")
+                    badge = " 󰁪" if tool in approved_set else ""
+                    click.echo(f"  - {tool}{badge}")
             else:
                 click.echo("  (no tools found or discovery failed)")
         sys.exit(0)

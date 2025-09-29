@@ -116,14 +116,59 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
             logging.getLogger(__name__).warning("MCP tool discovery failed for server '%s': %s", name, e, exc_info=True)
             return []
 
-    # Run all server queries concurrently
-    tasks = [asyncio.create_task(_query_server(name, srv)) for name, srv in servers.items()]
+    # Run all server queries concurrently, honoring 'disabled' servers
     results_map: Dict[str, List[str]] = {}
+    tasks: List[asyncio.Task] = []
+    task_names: List[str] = []
+    for name, srv in servers.items():
+        if srv.get("disabled"):
+            # Mark disabled servers with empty tool list and skip querying
+            results_map[name] = []
+            continue
+        tasks.append(asyncio.create_task(_query_server(name, srv)))
+        task_names.append(name)
+
     if tasks:
         gathered = await asyncio.gather(*tasks, return_exceptions=True)
-        for (name, _), res in zip(servers.items(), gathered):
+        for name, res in zip(task_names, gathered):
             if isinstance(res, Exception):
                 results_map[name] = []
             else:
                 results_map[name] = res
     return results_map
+
+def get_auto_approved_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
+    """
+    Load per-server autoApprove tool lists from configured MCP servers files.
+    Returns mapping: server_name -> list of tool names to auto-approve.
+    Disabled servers are still included if present in config so the UI can display badges,
+    but they will typically have no discovered tools.
+    """
+    servers_files = config.get("mcp", {}).get("servers_files", [])
+    servers: Dict[str, Any] = {}
+    for path in servers_files:
+        expanded = os.path.expanduser(path)
+        try:
+            with open(expanded, "r", encoding="utf-8") as f:
+                raw = f.read()
+            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
+            content = _expand_env(content)
+            data = json.loads(content)
+            servers.update(data.get("mcpServers", {}))
+        except FileNotFoundError:
+            continue
+        except Exception:
+            # If parse fails for a file, skip it
+            continue
+
+    approved_map: Dict[str, List[str]] = {}
+    for name, srv in servers.items():
+        tools = srv.get("autoApprove") or []
+        # Normalize to list[str]
+        if isinstance(tools, list):
+            approved_map[name] = [str(t) for t in tools]
+        elif isinstance(tools, str):
+            approved_map[name] = [tools]
+        else:
+            approved_map[name] = []
+    return approved_map
