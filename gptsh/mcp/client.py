@@ -9,6 +9,8 @@ from gptsh.config.loader import _expand_env
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.sse import sse_client
+import httpx
 
 def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     """
@@ -77,11 +79,32 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
                     or {}
                 )
                 async def _http_call() -> List[str]:
-                    async with streamablehttp_client(url, headers=headers) as (read, write, _):
-                        async with ClientSession(read, write) as session:
-                            await session.initialize()
-                            resp = await session.list_tools()
-                            return [tool.name for tool in resp.tools]
+                    async def via_streamable() -> List[str]:
+                        async with streamablehttp_client(url, headers=headers) as (read, write, _):
+                            async with ClientSession(read, write) as session:
+                                await session.initialize()
+                                resp = await session.list_tools()
+                                return [tool.name for tool in resp.tools]
+
+                    async def via_sse() -> List[str]:
+                        async with sse_client(url, headers=headers) as (read, write):
+                            async with ClientSession(read, write) as session:
+                                await session.initialize()
+                                resp = await session.list_tools()
+                                return [tool.name for tool in resp.tools]
+
+                    # Heuristic: URLs containing '/sse' use SSE; otherwise try streamable HTTP first,
+                    # and fall back to SSE on typical "method not allowed/not found/bad request" errors.
+                    if re.search(r"/sse(?:$|[/?])", url):
+                        return await via_sse()
+                    try:
+                        return await via_streamable()
+                    except httpx.HTTPStatusError as e:
+                        code = getattr(getattr(e, "response", None), "status_code", None)
+                        if code in (400, 404, 405):
+                            logging.getLogger(__name__).info("HTTP %s from %s; retrying with SSE", code, url)
+                            return await via_sse()
+                        raise
                 return await asyncio.wait_for(_http_call(), timeout=timeout_seconds)
 
             else:
