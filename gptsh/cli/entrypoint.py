@@ -2,6 +2,7 @@ import asyncio
 import sys
 import json
 import click
+from click.core import ParameterSource
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
@@ -148,11 +149,16 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                     labels = [str(x) for x in agent_tools if x]
                     config.setdefault("mcp", {})["allowed_servers"] = labels
 
-        # Agent-level override for output format
+        # Determine effective output format: CLI --output takes precedence over agent config.
         output_effective = output
-        agent_output = agent_conf.get("output") if isinstance(agent_conf, dict) else None
-        if agent_output in ("text", "markdown"):
-            output_effective = agent_output
+        try:
+            src = click.get_current_context().get_parameter_source("output")
+        except Exception:
+            src = None
+        if src != ParameterSource.COMMANDLINE:
+            agent_output = agent_conf.get("output") if isinstance(agent_conf, dict) else None
+            if agent_output in ("text", "markdown"):
+                output_effective = agent_output
 
         asyncio.run(run_llm(
             prompt=prompt_given,
