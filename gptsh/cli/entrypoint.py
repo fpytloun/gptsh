@@ -49,7 +49,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         total_servers = len(tools_map)
         click.echo(f"Discovered tools ({total_servers} server{'s' if total_servers != 1 else ''}):")
         for server, tools in tools_map.items():
-            click.echo(f"{server}:")
+            click.echo(f"{server} ({len(tools)}):")
             if tools:
                 for tool in tools:
                     click.echo(f"  - {tool}")
