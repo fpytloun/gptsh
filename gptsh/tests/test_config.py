@@ -1,5 +1,13 @@
 import os
 import tempfile
+import pytest
+
+# Skip config tests if 'pyyaml' is not available in this environment
+try:
+    import yaml  # noqa: F401
+except Exception:
+    pytest.skip("pyyaml not installed; skipping config tests", allow_module_level=True)
+
 from gptsh.config import loader
 
 def test_env_expansion_and_merge():
