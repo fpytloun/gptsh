@@ -12,6 +12,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.client.sse import sse_client
 import httpx
+import importlib
 
 def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     """
@@ -50,6 +51,11 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
             continue
+    # Ensure builtin stdio-in-process servers are always present by default
+    servers.setdefault("time", {
+        "transport": {"type": "stdio"},
+        "module": "gptsh.mcp.builtin.time",
+    })
 
     # Determine a per-request timeout (fallback to a sensible default)
     timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
@@ -60,12 +66,24 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
         if not ttype:
             if transport.get("url") or srv.get("url"):
                 ttype = "http"
-            elif srv.get("command"):
+            elif srv.get("command") or srv.get("module"):
                 ttype = "stdio"
             else:
                 ttype = None
         try:
             if ttype == "stdio":
+                module_path = srv.get("module")
+                if module_path:
+                    try:
+                        mod = importlib.import_module(module_path)
+                        if not hasattr(mod, "list_tools"):
+                            logging.getLogger(__name__).warning("Builtin stdio module '%s' missing list_tools()", module_path)
+                            return []
+                        tools_list = getattr(mod, "list_tools")() or []
+                        return list(tools_list)
+                    except Exception as e:
+                        logging.getLogger(__name__).warning("Failed loading builtin stdio module '%s': %s", module_path, e, exc_info=True)
+                        return []
                 if not srv.get("command"):
                     logging.getLogger(__name__).warning("MCP server '%s' uses stdio but has no 'command' configured", name)
                     return []
@@ -253,6 +271,16 @@ async def _discover_tools_detailed_async(config: Dict[str, Any]) -> Dict[str, Li
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
             continue
+    # Ensure builtin stdio-in-process servers are always present by default
+    servers.setdefault("time", {
+        "transport": {"type": "stdio"},
+        "module": "gptsh.mcp.builtin.time",
+    })
+    # Ensure builtin stdio-in-process servers are always present by default
+    servers.setdefault("time", {
+        "transport": {"type": "stdio"},
+        "module": "gptsh.mcp.builtin.time",
+    })
 
     timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
     results: Dict[str, List[Dict[str, Any]]] = {}
@@ -261,6 +289,20 @@ async def _discover_tools_detailed_async(config: Dict[str, Any]) -> Dict[str, Li
         if srv.get("disabled"):
             return name, []
         try:
+            transport = srv.get("transport", {})
+            ttype = transport.get("type")
+            if ttype == "stdio" and srv.get("module"):
+                module_path = srv.get("module")
+                try:
+                    mod = importlib.import_module(module_path)
+                    if not hasattr(mod, "list_tools_detailed"):
+                        logging.getLogger(__name__).warning("Builtin stdio module '%s' missing list_tools_detailed()", module_path)
+                        return name, []
+                    detailed = getattr(mod, "list_tools_detailed")() or []
+                    return name, list(detailed)
+                except Exception as e:
+                    logging.getLogger(__name__).warning("Failed loading builtin stdio module '%s': %s", module_path, e, exc_info=True)
+                    return name, []
             async with _open_session(name, srv, timeout_seconds) as session:  # type: ignore[attr-defined]
                 resp = await session.list_tools()
                 out: List[Dict[str, Any]] = []
@@ -327,6 +369,17 @@ async def _execute_tool_async(server: str, tool: str, arguments: Dict[str, Any],
     timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
     srv = servers[server]
     try:
+        # Execute via builtin stdio-in-process module if defined
+        if (srv.get("transport", {}) or {}).get("type") == "stdio" and srv.get("module"):
+            module_path = srv.get("module")
+            try:
+                mod = importlib.import_module(module_path)
+                if not hasattr(mod, "execute"):
+                    raise RuntimeError(f"Builtin stdio module '{module_path}' missing execute()")
+                return str(getattr(mod, "execute")(tool, arguments or {}))
+            except Exception as e:
+                logging.getLogger(__name__).warning("Builtin stdio execution failed for %s:%s via %s: %s", server, tool, module_path, e, exc_info=True)
+                raise
         async with _open_session(server, srv, timeout_seconds) as session:  # type: ignore[attr-defined]
             resp = await session.call_tool(tool, arguments or {})
             # resp.content is a list of content items; join text items
