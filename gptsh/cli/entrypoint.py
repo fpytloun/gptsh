@@ -6,6 +6,8 @@ from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.core.mcp import list_tools
 
+from typing import Any, Dict, Optional, List
+
 DEFAULT_AGENTS = {
     "default": {}
 }
@@ -38,25 +40,8 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
     log_level = "DEBUG" if debug else config.get("logging", {}).get("level", "WARNING")
     log_fmt = config.get("logging", {}).get("format", "text")
     logger = setup_logging(log_level, log_fmt)
-    
-    # Resolve provider and agent defaults
-    providers_conf = config.get("providers", {})
-    if not providers_conf:
-        logger.error("No providers defined in config.")
-        sys.exit(2)
-    provider = provider or config.get("default_provider") or next(iter(providers_conf))
-    if provider not in providers_conf:
-        logger.error(f"Unknown provider '{provider}'")
-        sys.exit(2)
-    provider_conf = providers_conf[provider]
 
-    agents_conf = config.get("agents", DEFAULT_AGENTS)
-    agent = config.get("default_agent") or agent
-    if agent not in agents_conf:
-        logger.error(f"Unknown agent '{agent}'")
-        sys.exit(2)
-    agent_conf = agents_conf[agent]
-
+    # Handle immediate listing flags
     if list_tools_flag:
         tools_map = list_tools(config)
         click.echo("Discovered tools:")
@@ -72,21 +57,36 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
         for name in providers:
             click.echo(f"  - {name}")
         sys.exit(0)
+
+    # Ensure a default agent always exists by merging built-ins into config
+    existing_agents = dict(config.get("agents") or {})
+    config["agents"] = {**DEFAULT_AGENTS, **existing_agents}
+
+    # Resolve provider and agent defaults
+    providers_conf = config.get("providers", {})
+    if not providers_conf:
+        raise click.ClickException("No providers defined in config.")
+    provider = provider or config.get("default_provider") or next(iter(providers_conf))
+    if provider not in providers_conf:
+        raise click.BadParameter(f"Unknown provider '{provider}'", param_hint="--provider")
+    provider_conf = providers_conf[provider]
+
+    agents_conf = config.get("agents", DEFAULT_AGENTS)
+    # CLI should take precedence over config default
+    agent = agent or config.get("default_agent") or "default"
+    if agent not in agents_conf:
+        raise click.BadParameter(f"Unknown agent '{agent}'", param_hint="--agent")
+    agent_conf = agents_conf[agent]
+
     # Handle prompt or stdin
     stdin_input = None
     if not sys.stdin.isatty():
         stdin_input = read_stdin()
-    # Try to get prompt from agent config if agent is set
-    agent_conf = None
-    agent_prompt = None
-    if agent:
-        agents_conf = config.get("agents", DEFAULT_AGENTS)
-        agent_conf = agents_conf.get(agent)
-        if agent_conf:
-            agent_prompt = agent_conf.get("prompt", {}).get("user")
+    # Try to get prompt from agent config
+    agent_prompt = agent_conf.get("prompt", {}).get("user") if agent_conf else None
     # Combine prompt and piped stdin if both are provided
     if prompt and stdin_input:
-        prompt_given = f"{prompt}\n\n{stdin_input}"
+        prompt_given = f"{prompt}\n\n---\nInput:\n{stdin_input}"
     else:
         prompt_given = prompt or stdin_input or agent_prompt
     if prompt_given:
@@ -96,55 +96,76 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
             agent_conf=agent_conf,
             cli_model_override=model,
             stream=stream,
+            progress=progress,
             logger=logger,
         ))
     else:
-        click.echo("Error: A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
-        sys.exit(2)
+        raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
 
-async def run_llm(prompt, provider_conf, agent_conf, cli_model_override, stream, logger):
-    # Minimal async LLM call MVP (stub)
-    try:
-        from litellm import completion
-        # Build base params from provider configuration
-        params = dict(provider_conf)
-        # Determine model: CLI override > agent config > provider default > fallback
-        chosen_model = (
-            cli_model_override
-            or agent_conf.get("model")
-            or provider_conf.get("default_model")
-            or "gpt-4.1"
-        )
-        # Build messages: system then user
-        params["messages"] = []
-        system_prompt = agent_conf.get("prompt", {}).get("system")
-        if system_prompt:
-            params["messages"].append({"role": "system", "content": system_prompt})
-        params["messages"].append({"role": "user", "content": prompt})
+async def run_llm(
+      prompt: str,
+      provider_conf: Dict[str, Any],
+      agent_conf: Optional[Dict[str, Any]],
+      cli_model_override: Optional[str],
+      stream: bool,
+      progress: bool,
+      logger: Any,
+  ) -> None:
+      """Execute an LLM call using LiteLLM with optional streaming."""
+      try:
+          from litellm import acompletion
 
-        params["model"] = chosen_model
+          # Build base params from provider configuration, excluding non-LiteLLM keys
+          params: Dict[str, Any] = {
+              k: v for k, v in dict(provider_conf).items() if k not in {"default_model", "name"}
+          }
 
-        logger.info(f"Calling LLM model {chosen_model}")
-        # Invoke litellm completion with optional streaming
-        if stream:
-            # Stream tokens as they arrive
-            if hasattr(completion, "stream"):
-                async for chunk in completion.stream(**params):
-                    # chunk may contain partial text
-                    text = getattr(chunk, 'text', chunk.get('choices', [{}])[0].get('delta', {}).get('content', ''))
-                    click.echo(text, nl=False)
-            else:
-                async for chunk in completion(stream=True, **params):
-                    # chunk may contain partial text
-                    text = getattr(chunk, 'text', chunk.get('choices', [{}])[0].get('delta', {}).get('content', ''))
-                    click.echo(text, nl=False)
-            click.echo()  # newline after stream
-        else:
-            resp = await completion(**params)
-            click.echo(resp["choices"][0]["message"]["content"])
-    except Exception as e:
-        logger.error(f"LLM call failed: {e}")
-        sys.exit(1)
+          # Determine model: CLI override > agent config > provider default > fallback
+          chosen_model = (
+              cli_model_override
+              or (agent_conf or {}).get("model")
+              or provider_conf.get("default_model")
+              or "gpt-4o"
+          )
+
+          # Build messages: system then user
+          messages: List[Dict[str, str]] = []
+          system_prompt = (agent_conf or {}).get("prompt", {}).get("system")
+          if system_prompt:
+              messages.append({"role": "system", "content": system_prompt})
+          messages.append({"role": "user", "content": prompt})
+
+          params["model"] = chosen_model
+          params["messages"] = messages
+
+          logger.info(f"Calling LLM model {chosen_model}")
+
+          if stream:
+              if progress:
+                  click.echo("Connecting to model...", err=True)
+              stream_iter = await acompletion(stream=True, **params)
+              async for chunk in stream_iter:
+                  # Robust extraction across providers
+                  text = (
+                      (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content")
+                      or chunk.get("content")
+                      or getattr(chunk, "text", "")
+                      or ""
+                  )
+                  if text:
+                      sys.stdout.write(text)
+                      sys.stdout.flush()
+              click.echo()  # newline after stream
+          else:
+              resp = await acompletion(**params)
+              content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+              click.echo(content)
+      except KeyboardInterrupt:
+          click.echo("", err=True)
+          sys.exit(130)
+      except Exception as e:
+          logger.error(f"LLM call failed: {e}")
+          sys.exit(1)
 
 if __name__ == "__main__":
     main()
