@@ -276,11 +276,6 @@ async def _discover_tools_detailed_async(config: Dict[str, Any]) -> Dict[str, Li
         "transport": {"type": "stdio"},
         "module": "gptsh.mcp.builtin.time",
     })
-    # Ensure builtin stdio-in-process servers are always present by default
-    servers.setdefault("time", {
-        "transport": {"type": "stdio"},
-        "module": "gptsh.mcp.builtin.time",
-    })
 
     timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
     results: Dict[str, List[Dict[str, Any]]] = {}
