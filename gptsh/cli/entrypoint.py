@@ -31,8 +31,9 @@ DEFAULT_AGENTS = {
 @click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
 @click.option("--list-providers", "list_providers_flag", is_flag=True, default=False, help="List configured providers")
 @click.option("--output", "-o", type=click.Choice(["text", "markdown"]), default="markdown", help="Output format")
+@click.option("--no-tools", is_flag=True, default=False, help="Disable MCP tools (discovery and execution)")
 @click.argument("prompt", required=False)
-def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, output, prompt):
+def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, output, no_tools, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -52,6 +53,9 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
 
     # Handle immediate listing flags
     if list_tools_flag:
+        if no_tools:
+            click.echo("MCP tools disabled by --no-tools")
+            sys.exit(0)
         tools_map = list_tools(config)
         approved_map = get_auto_approved_tools(config)
         total_servers = len(tools_map)
@@ -114,6 +118,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             stream=stream,
             progress=progress,
             output_format=output,
+            no_tools=no_tools,
             logger=logger,
         ))
     else:
@@ -170,6 +175,7 @@ async def run_llm(
       stream: bool,
       progress: bool,
       output_format: str,
+      no_tools: bool,
       logger: Any,
   ) -> None:
     """Execute an LLM call using LiteLLM with optional streaming."""
@@ -196,36 +202,41 @@ async def run_llm(
             progress_obj.start()
             progress_running = True
 
-        # Build MCP tools for the LLM (show progress while initializing MCP clients)
-        if progress_obj is not None:
-            init_task_id = progress_obj.add_task("Initializing MCP tools", total=None)
-        try:
-            mcp_tools = await _build_mcp_tools_for_llm({"mcp": dict(provider_conf.get("mcp", {}), **(agent_conf.get("mcp", {}) if agent_conf else {})) , **(config := {})})
-        finally:
-            if 'init_task_id' in locals() and progress_obj is not None:
-                try:
-                    progress_obj.remove_task(init_task_id)
-                except Exception:
-                    pass
-        # If no mcp section in provider/agent, fall back to global config already loaded in main()
-        # The CLI stores resolved 'mcp.servers_files' in the global config; access through closure
-        try:
-            from inspect import currentframe
-            outer_locals = currentframe().f_back.f_back.f_locals  # main()'s locals (contains 'config')
-            global_conf = outer_locals.get("config", {})
-        except Exception:
+        # Build MCP tools for the LLM unless disabled
+        if no_tools:
+            mcp_tools = []
+            # Establish a global_conf variable for later tool execution paths (kept empty here)
             global_conf = {}
-        if not mcp_tools:
+        else:
             if progress_obj is not None:
-                init_task_id2 = progress_obj.add_task("Initializing MCP tools", total=None)
+                init_task_id = progress_obj.add_task("Initializing MCP tools", total=None)
             try:
-                mcp_tools = await _build_mcp_tools_for_llm(global_conf)
+                mcp_tools = await _build_mcp_tools_for_llm({"mcp": dict(provider_conf.get("mcp", {}), **(agent_conf.get("mcp", {}) if agent_conf else {})) , **(config := {})})
             finally:
-                if 'init_task_id2' in locals() and progress_obj is not None:
+                if 'init_task_id' in locals() and progress_obj is not None:
                     try:
-                        progress_obj.remove_task(init_task_id2)
+                        progress_obj.remove_task(init_task_id)
                     except Exception:
                         pass
+            # If no mcp section in provider/agent, fall back to global config already loaded in main()
+            # The CLI stores resolved 'mcp.servers_files' in the global config; access through closure
+            try:
+                from inspect import currentframe
+                outer_locals = currentframe().f_back.f_back.f_locals  # main()'s locals (contains 'config')
+                global_conf = outer_locals.get("config", {})
+            except Exception:
+                global_conf = {}
+            if not mcp_tools:
+                if progress_obj is not None:
+                    init_task_id2 = progress_obj.add_task("Initializing MCP tools", total=None)
+                try:
+                    mcp_tools = await _build_mcp_tools_for_llm(global_conf)
+                finally:
+                    if 'init_task_id2' in locals() and progress_obj is not None:
+                        try:
+                            progress_obj.remove_task(init_task_id2)
+                        except Exception:
+                            pass
 
         # If MCP tools are present, we'll do a tool-execution loop; disable streaming for compatibility
         if mcp_tools:
