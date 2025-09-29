@@ -6,6 +6,7 @@ from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp import list_tools, get_auto_approved_tools, discover_tools_detailed_async, execute_tool_async
+from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.console import Console
 from rich.markdown import Markdown
@@ -129,48 +130,6 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     else:
         raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
 
-async def _build_mcp_tools_for_llm(config: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Build OpenAI-style tool specs from MCP tool discovery.
-    Tool names are prefixed with '<server>__' to route calls back.
-    """
-    tools: List[Dict[str, Any]] = []
-    detailed = await discover_tools_detailed_async(config)
-    for server, items in detailed.items():
-        for t in items:
-            name = f"{server}__{t['name']}"
-            description = t.get("description") or ""
-            params = t.get("input_schema") or {"type": "object", "properties": {}, "additionalProperties": True}
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": params,
-                },
-            })
-    return tools
-
-def _parse_tool_calls(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Extract tool_calls from a LiteLLM-normalized response.
-    """
-    calls: List[Dict[str, Any]] = []
-    try:
-        choice0 = (resp.get("choices") or [{}])[0]
-        msg = choice0.get("message") or {}
-        tcalls = msg.get("tool_calls") or []
-        # Normalize
-        for c in tcalls:
-            f = c.get("function") or {}
-            name = f.get("name")
-            arguments = f.get("arguments")
-            call_id = c.get("id")
-            if name:
-                calls.append({"id": call_id, "name": name, "arguments": arguments})
-    except Exception:
-        pass
-    return calls
 
 async def run_llm(
       prompt: str,
@@ -230,7 +189,7 @@ async def run_llm(
                         **(((agent_conf or {}).get("mcp", {})) or {}),
                     }
                 }
-                mcp_tools = await _build_mcp_tools_for_llm(merged_conf)
+                mcp_tools = await build_llm_tools(merged_conf)
             finally:
                 if 'init_task_id' in locals() and progress_obj is not None:
                     try:
@@ -249,7 +208,7 @@ async def run_llm(
                 if progress_obj is not None:
                     init_task_id2 = progress_obj.add_task("Initializing MCP tools", total=None)
                 try:
-                    mcp_tools = await _build_mcp_tools_for_llm(global_conf)
+                    mcp_tools = await build_llm_tools(global_conf)
                 finally:
                     if 'init_task_id2' in locals() and progress_obj is not None:
                         try:
@@ -407,7 +366,7 @@ async def run_llm(
                     for _ in range(max_iters):
                         params["messages"] = conversation
                         resp = cast(Dict[str, Any], await acompletion(**params))
-                        calls = _parse_tool_calls(resp)
+                        calls = parse_tool_calls(resp)
                         if not calls:
                             # No tool calls; print final assistant message
                             content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
