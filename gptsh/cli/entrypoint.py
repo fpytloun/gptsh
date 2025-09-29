@@ -314,7 +314,8 @@ async def run_llm(
         else:
             if progress and sys.stderr.isatty():
                 stop_event = asyncio.Event()
-                spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", stop_event))
+                original_spinner_msg = f"Waiting for {chosen_model.rsplit('/', 1)[-1]}"
+                spinner_task = asyncio.create_task(_spinner(original_spinner_msg, stop_event))
             try:
                 # Tool execution loop when MCP tools are available
                 if params.get("tools"):
