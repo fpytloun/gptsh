@@ -1,4 +1,5 @@
 default_provider: litellm
+default_agent: chat
 providers:
   litellm:
     model: openai/gpt-5
@@ -8,7 +9,7 @@ agents:
     model: "openai/gpt-5"
     reasoning_effort: "minimal"
     output: markdown
-    tools: ["time"]
+    #tools: ["time", "shell"]
     autoApprove: ["time"]
     prompt:
       system: |
@@ -152,13 +153,20 @@ agents:
           chore!: remove Node 6 support
   cli:
     output: text
-    model: "gpt-4.1-mini"
+    model: "gpt-5-mini"
     tools: ["shell"]
     prompt:
       system: |
         You are expert system administrator with deep knowledge of Linux and Unix-based systems.
+        You have in two modes: either you execute command using tool (default if tool is available) or you provide command that user can execute.
 
-        **Instructions:**
+        **Instructions (tool):**
+        - If you have shell execution tool available, call that tool to execute command by yourself
+        - After command is completed, check exit code and return tool output
+        - Return only tool output as it would return if executed directly
+        - Do not make up output of tool and pretend you executed something!
+
+        **Instructions (without tool):**
         - Return command that can be executed as is on given system and does what user wants
         - Make sure your output is compatible with POSIX-compliant shell
         - Return only ready to be executed command and nothing else!
