@@ -14,7 +14,7 @@ A modular, extensible, and secure Python shell client that empowers developers a
 - **litellm** for LLM APIs (OpenAI, Claude, Perplexity, Azure, etc.)
 - **mcp** Python SDK for Model Context Protocol (MCP) ([documentation](https://openai.github.io/openai-agents-python/mcp/))
 - **pyyaml** for config loading/merging
-- **rich** and **click** for interactive CLI and progress bars
+- **click** for interactive CLI
 - **textual** (future, optional) for TUI
 - **asyncio**, **httpx**, **requests** for async operations, especially for MCP/http/SSE
 - **uv/uvx** as the only accepted way to install/manage dependencies & run dev scripts
@@ -46,7 +46,7 @@ AGENTS.md      # (this file)
 - **MCP Support**: Connects to MCP servers (local or remote), managed/configured via `mcp_servers.json` (Claude-compatible). Auto-respawn/reconnect logic for local/remote MCP servers, with exponential backoff and progress feedback.
 - **CLI Only** (for now): All command, mode, config options via command-line interface. TUI reserved for later.
 - **Tool Discovery**: Implements a `--list-tools` CLI arg to enumerate all tools provided by configured MCP servers, grouped by server.
-- **Progress & Edge cases**: Use `rich.progress` when possible. Always show progress or status updates for long ops, handle broken pipes, terminations, or timeouts gracefully.
+- **Progress & Edge cases**: Use progress bar when possible. Always show progress or status updates for long ops, handle broken pipes, terminations, or timeouts gracefully.
  - **Agents**: Named presets defined in config (e.g., `default`, `code_reviewer`, `full_stack_developer`, `git_committer`) that specify a system prompt, model selection, and MCP tool policy. The `default` agent is used unless overridden by `--agent`.
 - **Security**: Never log or print secrets or API keys. Use least-privilege principle for subprocesses and I/O. All configuration can include secrets via env variable references only, not hard-coded.
 - **Error/Recovery**: Must auto-attempt reconnection if an MCP server is lost and auto-restart local ones if crashed.
@@ -150,7 +150,6 @@ Notes:
 - All long-running calls must accept a timeout (from config) and be cancellable.
 - Graceful shutdown: cancel tasks, close streams/clients, terminate child processes.
 - Streaming: prefer server-sent tokens; if disabled, buffer and print at end.
-- TTY detection: use rich progress when `sys.stdout.isatty()`; otherwise, use minimal text output.
 
 ---
 ## MCP Lifecycle and Resilience
@@ -238,7 +237,7 @@ uvx pytest --maxfail=1 --disable-warnings -q
  - [ ] Create integration and chaos tests for MCP lifecycle resilience
 
  #### User Experience
- - [ ] Add progress bars and status feedback using `rich` for long-running operations
+ - [x] Add progress bars and status feedback for long-running operations
  - [ ] Build interactive approval UX for destructive or privileged tool invocations
  - [ ] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
 
@@ -273,7 +272,6 @@ dependencies = [
   "litellm",
   "click",
   "pyyaml",
-  "rich",
   "httpx",
   "python-dotenv",
 ]
@@ -343,7 +341,6 @@ gptsh = "gptsh.cli.entrypoint:main"
 - [OpenAI Agents SDK MCP](https://openai.github.io/openai-agents-python/mcp/)
 - [Claude's MCP Tool Format](https://github.com/modelcontextprotocol/servers)
 - [Click (CLI)](https://click.palletsprojects.com/)
-- [Rich](https://rich.readthedocs.io/)
 - [pyyaml](https://pyyaml.org/)
 - [uv project](https://github.com/astral-sh/uv)
 
@@ -355,7 +352,6 @@ gptsh = "gptsh.cli.entrypoint:main"
 3. All MCP server lifecycle handling (spawn, respawn, reconnect) must be resilient — handle restarts and temporary unavailability.
 4. Always read config from both global and per-project sources; project overrides global.
 5. Secrets/API keys must only come from env vars, not static config.
-6. Use `rich` for all user-visible output unless redirected. On redirected output, degrade gracefully.
 7. Do not add other dependencies unless absolutely required and review for security/maintainability.
 8. All development, installation, and tests must use `uv`/`uvx` commands.
 
