@@ -4,7 +4,7 @@ import click
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
-from gptsh.mcp import list_tools, get_auto_approved_tools
+from gptsh.mcp import list_tools, get_auto_approved_tools, discover_tools_detailed, execute_tool
 
 from typing import Any, Dict, Optional, List, cast, Mapping
 
@@ -113,6 +113,49 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     else:
         raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
 
+def _build_mcp_tools_for_llm(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Build OpenAI-style tool specs from MCP tool discovery.
+    Tool names are prefixed with '<server>__' to route calls back.
+    """
+    tools: List[Dict[str, Any]] = []
+    detailed = discover_tools_detailed(config)
+    for server, items in detailed.items():
+        for t in items:
+            name = f"{server}__{t['name']}"
+            description = t.get("description") or ""
+            params = t.get("input_schema") or {"type": "object", "properties": {}, "additionalProperties": True}
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": params,
+                },
+            })
+    return tools
+
+def _parse_tool_calls(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Extract tool_calls from a LiteLLM-normalized response.
+    """
+    calls: List[Dict[str, Any]] = []
+    try:
+        choice0 = (resp.get("choices") or [{}])[0]
+        msg = choice0.get("message") or {}
+        tcalls = msg.get("tool_calls") or []
+        # Normalize
+        for c in tcalls:
+            f = c.get("function") or {}
+            name = f.get("name")
+            arguments = f.get("arguments")
+            call_id = c.get("id")
+            if name:
+                calls.append({"id": call_id, "name": name, "arguments": arguments})
+    except Exception:
+        pass
+    return calls
+
 async def run_llm(
       prompt: str,
       provider_conf: Dict[str, Any],
@@ -131,6 +174,23 @@ async def run_llm(
             k: v for k, v in dict(provider_conf).items() if k not in {"model", "name"}
         }
 
+        # Build MCP tools for the LLM
+        mcp_tools = _build_mcp_tools_for_llm({"mcp": dict(provider_conf.get("mcp", {}), **(agent_conf.get("mcp", {}) if agent_conf else {})) , **(config := {})})
+        # If no mcp section in provider/agent, fall back to global config already loaded in main()
+        # The CLI stores resolved 'mcp.servers_files' in the global config; access through closure
+        try:
+            from inspect import currentframe
+            outer_locals = currentframe().f_back.f_back.f_locals  # main()'s locals (contains 'config')
+            global_conf = outer_locals.get("config", {})
+        except Exception:
+            global_conf = {}
+        if not mcp_tools:
+            mcp_tools = _build_mcp_tools_for_llm(global_conf)
+
+        # If MCP tools are present, we'll do a tool-execution loop; disable streaming for compatibility
+        if mcp_tools:
+            stream = False
+
         # Determine model: CLI override > agent config > provider default > fallback
         chosen_model = (
             cli_model_override
@@ -140,7 +200,7 @@ async def run_llm(
         )
 
         # Build messages: system then user
-        messages: List[Dict[str, str]] = []
+        messages: List[Dict[str, Any]] = []
         system_prompt = (agent_conf or {}).get("prompt", {}).get("system")
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -148,6 +208,9 @@ async def run_llm(
 
         params["model"] = chosen_model
         params["messages"] = messages
+        if mcp_tools:
+            params["tools"] = mcp_tools
+            params["tool_choice"] = "auto"
 
         logger.info(f"Calling LLM model {chosen_model}")
 
@@ -251,13 +314,59 @@ async def run_llm(
                 stop_event = asyncio.Event()
                 spinner_task = asyncio.create_task(_spinner(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}...", stop_event))
             try:
-                resp = cast(Dict[str, Any], await acompletion(**params))
+                # Tool execution loop when MCP tools are available
+                if params.get("tools"):
+                    conversation: List[Dict[str, Any]] = list(messages)
+                    max_iters = 5
+                    for _ in range(max_iters):
+                        params["messages"] = conversation
+                        resp = cast(Dict[str, Any], await acompletion(**params))
+                        calls = _parse_tool_calls(resp)
+                        if not calls:
+                            # No tool calls; print final assistant message
+                            content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            click.echo(content or "")
+                            break
+                        # Execute each tool call and append tool results
+                        for call in calls:
+                            fullname = call["name"]
+                            # Split "server__tool"
+                            if "__" in fullname:
+                                server, toolname = fullname.split("__", 1)
+                            else:
+                                # If not prefixed, assume single server context not supported; skip gracefully
+                                continue
+                            # Parse arguments
+                            args_str = call.get("arguments") or "{}"
+                            try:
+                                args = json.loads(args_str) if isinstance(args_str, str) else dict(args_str)
+                            except Exception:
+                                args = {}
+                            try:
+                                result = execute_tool(server, toolname, args, global_conf)
+                            except Exception as e:
+                                result = f"Tool execution failed: {e}"
+                            # Append tool result
+                            conversation.append({
+                                "role": "tool",
+                                "tool_call_id": call.get("id"),
+                                "name": fullname,
+                                "content": result,
+                            })
+                        # Add an empty assistant turn to let model continue after tool results
+                        # (some providers expect assistant role with tool_calls already included; conversation already has it)
+                        # Continue loop for potential follow-up tool calls
+                    else:
+                        # Max iterations reached; stop
+                        pass
+                else:
+                    resp = cast(Dict[str, Any], await acompletion(**params))
+                    content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    click.echo(content)
             finally:
                 if spinner_task is not None and stop_event is not None and not stop_event.is_set():
                     stop_event.set()
                     await spinner_task
-            content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
-            click.echo(content)
     except KeyboardInterrupt:
         click.echo("", err=True)
         sys.exit(130)

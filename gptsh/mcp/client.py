@@ -4,7 +4,7 @@ import sys
 import asyncio
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from gptsh.config.loader import _expand_env
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -150,6 +150,192 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
             else:
                 results_map[name] = res
     return results_map
+
+async def _open_session(name: str, srv: Dict[str, Any], timeout_seconds: float):
+    """
+    Async context manager yielding an initialized ClientSession for given server.
+    Detects transport (stdio/http/sse) and opens appropriate client.
+    """
+    transport = srv.get("transport", {})
+    ttype = transport.get("type")
+    if not ttype:
+        if transport.get("url") or srv.get("url"):
+            ttype = "http"
+        elif srv.get("command"):
+            ttype = "stdio"
+        else:
+            ttype = None
+
+    if ttype == "stdio":
+        if not srv.get("command"):
+            raise RuntimeError(f"MCP server '{name}' uses stdio but has no 'command'")
+        params = StdioServerParameters(
+            command=srv.get("command"),
+            args=srv.get("args", []),
+            env=srv.get("env", {}),
+        )
+        cm = stdio_client(params, errlog=sys.stderr if logging.getLogger(__name__).getEffectiveLevel() <= logging.DEBUG else asyncio.subprocess.DEVNULL)
+        async def _ctx():
+            async with cm as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session
+        return _ctx()
+
+    elif ttype in ("http", "sse"):
+        url = transport.get("url") or srv.get("url")
+        if not url:
+            raise RuntimeError(f"MCP server '{name}' missing transport.url/url for '{ttype}' transport")
+        headers = (
+            srv.get("credentials", {}).get("headers")
+            or transport.get("headers")
+            or srv.get("headers")
+            or {}
+        )
+
+        async def _ctx_streamable():
+            async with streamablehttp_client(url, headers=headers) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session
+
+        async def _ctx_sse():
+            async with sse_client(url, headers=headers) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session
+
+        # Heuristic selection between streamable_http and sse, with fallback on typical errors
+        if re.search(r"/sse(?:$|[/?])", url):
+            return _ctx_sse()
+        try:
+            # Probe with streamable by opening and closing quickly to validate
+            return _ctx_streamable()
+        except Exception:
+            return _ctx_sse()
+    else:
+        raise RuntimeError(f"MCP server '{name}' has unknown transport type: {ttype!r}")
+
+def discover_tools_detailed(config: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Return detailed MCP tool definitions per server:
+      { server_name: [ {name, description, input_schema}, ... ] }
+    """
+    return asyncio.run(_discover_tools_detailed_async(config))
+
+async def _discover_tools_detailed_async(config: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    # Reuse servers loading logic
+    mcp_conf = config.get("mcp", {}) or {}
+    servers_files = mcp_conf.get("servers_files")
+    if not servers_files:
+        servers_files = mcp_conf.get("mcp_servers")
+    if isinstance(servers_files, str):
+        servers_files = [servers_files]
+    if not servers_files:
+        servers_files = [
+            os.path.expanduser("~/.config/gptsh/mcp_servers.json"),
+            os.path.abspath("./.gptsh/mcp_servers.json"),
+        ]
+    servers: Dict[str, Any] = {}
+    for path in servers_files:
+        expanded = os.path.expanduser(path)
+        try:
+            with open(expanded, "r", encoding="utf-8") as f:
+                raw = f.read()
+            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
+            content = _expand_env(content)
+            data = json.loads(content)
+            servers.update(data.get("mcpServers", {}))
+        except FileNotFoundError:
+            continue
+
+    timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
+    results: Dict[str, List[Dict[str, Any]]] = {}
+
+    async def _per_server(name: str, srv: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
+        if srv.get("disabled"):
+            return name, []
+        try:
+            async with _open_session(name, srv, timeout_seconds) as session:  # type: ignore[attr-defined]
+                resp = await session.list_tools()
+                out: List[Dict[str, Any]] = []
+                for tool in resp.tools:
+                    # tool.inputSchema may be None; default to open object
+                    schema = getattr(tool, "inputSchema", None) or {"type": "object", "properties": {}, "additionalProperties": True}
+                    desc = getattr(tool, "description", None) or ""
+                    out.append({
+                        "name": tool.name,
+                        "description": desc,
+                        "input_schema": schema,
+                    })
+                return name, out
+        except Exception as e:
+            logging.getLogger(__name__).warning("MCP detailed tool discovery failed for '%s': %s", name, e, exc_info=True)
+            return name, []
+
+    tasks = [asyncio.create_task(_per_server(n, s)) for n, s in servers.items()]
+    if tasks:
+        pairs = await asyncio.gather(*tasks, return_exceptions=False)
+        for name, tools in pairs:
+            results[name] = tools
+    return results
+
+def execute_tool(server: str, tool: str, arguments: Dict[str, Any], config: Dict[str, Any]) -> str:
+    """
+    Execute a single MCP tool call and return concatenated string content result.
+    """
+    return asyncio.run(_execute_tool_async(server, tool, arguments, config))
+
+async def _execute_tool_async(server: str, tool: str, arguments: Dict[str, Any], config: Dict[str, Any]) -> str:
+    # Load servers
+    mcp_conf = config.get("mcp", {}) or {}
+    servers_files = mcp_conf.get("servers_files")
+    if not servers_files:
+        servers_files = mcp_conf.get("mcp_servers")
+    if isinstance(servers_files, str):
+        servers_files = [servers_files]
+    if not servers_files:
+        servers_files = [
+            os.path.expanduser("~/.config/gptsh/mcp_servers.json"),
+            os.path.abspath("./.gptsh/mcp_servers.json"),
+        ]
+    servers: Dict[str, Any] = {}
+    for path in servers_files:
+        expanded = os.path.expanduser(path)
+        try:
+            with open(expanded, "r", encoding="utf-8") as f:
+                raw = f.read()
+            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
+            content = _expand_env(content)
+            data = json.loads(content)
+            servers.update(data.get("mcpServers", {}))
+        except FileNotFoundError:
+            continue
+    if server not in servers:
+        raise RuntimeError(f"MCP server '{server}' not configured")
+
+    timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
+    srv = servers[server]
+    try:
+        async with _open_session(server, srv, timeout_seconds) as session:  # type: ignore[attr-defined]
+            resp = await session.call_tool(tool, arguments or {})
+            # resp.content is a list of content items; join text items
+            texts: List[str] = []
+            for item in getattr(resp, "content", []) or []:
+                # Support multiple content types; prefer text
+                t = getattr(item, "text", None)
+                if t is not None:
+                    texts.append(str(t))
+                else:
+                    # Fallback to any stringifiable representation
+                    try:
+                        texts.append(str(item))
+                    except Exception:
+                        pass
+            return "\n".join(texts).strip()
+    except Exception as e:
+        logging.getLogger(__name__).warning("MCP tool execution failed for %s:%s: %s", server, tool, e, exc_info=True)
+        raise
 
 def get_auto_approved_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     """
