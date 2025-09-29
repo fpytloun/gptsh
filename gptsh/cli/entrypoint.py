@@ -328,6 +328,29 @@ async def run_llm(
                             content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
                             click.echo(content or "")
                             break
+                        # Append the assistant message that contains tool_calls (required by OpenAI format)
+                        assistant_tool_calls: List[Dict[str, Any]] = []
+                        for c in calls:
+                            fullname_c = c["name"]
+                            argstr_c = c.get("arguments")
+                            if not isinstance(argstr_c, str):
+                                try:
+                                    argstr_c = json.dumps(argstr_c or {})
+                                except Exception:
+                                    argstr_c = "{}"
+                            assistant_tool_calls.append({
+                                "id": c.get("id"),
+                                "type": "function",
+                                "function": {
+                                    "name": fullname_c,
+                                    "arguments": argstr_c,
+                                },
+                            })
+                        conversation.append({
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": assistant_tool_calls,
+                        })
                         # Execute each tool call and append tool results
                         for call in calls:
                             fullname = call["name"]
@@ -354,8 +377,6 @@ async def run_llm(
                                 "name": fullname,
                                 "content": result,
                             })
-                        # Add an empty assistant turn to let model continue after tool results
-                        # (some providers expect assistant role with tool_calls already included; conversation already has it)
                         # Continue loop for potential follow-up tool calls
                     else:
                         # Max iterations reached; stop
