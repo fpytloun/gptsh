@@ -1,0 +1,213 @@
+from typing import Any, Dict, List, Optional, AsyncIterator, Mapping
+from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
+from gptsh.mcp import execute_tool_async
+
+async def prepare_completion_params(
+    prompt: str,
+    provider_conf: Dict[str, Any],
+    agent_conf: Optional[Dict[str, Any]],
+    cli_model_override: Optional[str],
+    config: Dict[str, Any],
+    no_tools: bool,
+) -> tuple[Dict[str, Any], bool, str]:
+    """
+    Build LiteLLM acompletion params: messages, model, and tools (if enabled).
+    Returns: (params, has_tools, chosen_model)
+    """
+    # Base params from provider, excluding non-LiteLLM keys
+    params: Dict[str, Any] = {
+        k: v for k, v in dict(provider_conf).items() if k not in {"model", "name"}
+    }
+
+    # Determine model priority
+    chosen_model = (
+        cli_model_override
+        or (agent_conf or {}).get("model")
+        or provider_conf.get("model")
+        or "gpt-4o"
+    )
+
+    # Messages: system then user
+    messages: List[Dict[str, Any]] = []
+    system_prompt = (agent_conf or {}).get("prompt", {}).get("system")
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    params["model"] = chosen_model
+    params["messages"] = messages
+
+    has_tools = False
+    if not no_tools:
+        # Merge MCP settings from global + provider + agent
+        merged_conf = {
+            "mcp": {
+                **((config.get("mcp", {}) or {})),
+                **(provider_conf.get("mcp", {}) or {}),
+                **(((agent_conf or {}).get("mcp", {})) or {}),
+            }
+        }
+        tools = await build_llm_tools(merged_conf)
+        if not tools:
+            # fallback to global config only
+            tools = await build_llm_tools(config)
+        if tools:
+            params["tools"] = tools
+            params["tool_choice"] = "auto"
+            has_tools = True
+
+    return params, has_tools, chosen_model
+
+async def stream_completion(params: Dict[str, Any]) -> AsyncIterator[str]:
+    """
+    Yield text chunks from a streaming completion. UI/printing must be handled by the caller.
+    """
+    from litellm import acompletion
+
+    stream_iter = await acompletion(stream=True, **params)
+
+    async for chunk in stream_iter:
+        text = _extract_text(chunk)
+        if text:
+            yield text
+
+async def complete_simple(params: Dict[str, Any]) -> str:
+    """
+    Single, non-streaming completion without tool loop. Returns final assistant content string.
+    """
+    from litellm import acompletion
+
+    resp = await acompletion(**params)
+    try:
+        return str((resp.get("choices") or [{}])[0].get("message", {}).get("content", "") or "")
+    except Exception:
+        return ""
+
+async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any]) -> str:
+    """
+    Tool execution loop using MCP until the model returns a final message with no tool_calls.
+    Returns final assistant content string.
+    """
+    from litellm import acompletion
+
+    # Copy starting conversation from params
+    conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
+    max_iters = 5
+    for _ in range(max_iters):
+        params["messages"] = conversation
+        resp = await acompletion(**params)
+        calls = parse_tool_calls(resp)
+        if not calls:
+            try:
+                return str((resp.get("choices") or [{}])[0].get("message", {}).get("content", "") or "")
+            except Exception:
+                return ""
+        # Append assistant tool_calls message
+        assistant_tool_calls: List[Dict[str, Any]] = []
+        for c in calls:
+            fullname_c = c["name"]
+            argstr_c = c.get("arguments")
+            if not isinstance(argstr_c, str):
+                try:
+                    import json as _json
+                    argstr_c = _json.dumps(argstr_c or {})
+                except Exception:
+                    argstr_c = "{}"
+            assistant_tool_calls.append({
+                "id": c.get("id"),
+                "type": "function",
+                "function": {
+                    "name": fullname_c,
+                    "arguments": argstr_c,
+                },
+            })
+        conversation.append({
+            "role": "assistant",
+            "content": None,
+            "tool_calls": assistant_tool_calls,
+        })
+        # Execute each tool call and append results
+        for call in calls:
+            fullname = call["name"]
+            # Split "server__tool"
+            if "__" in fullname:
+                server, toolname = fullname.split("__", 1)
+            else:
+                continue
+            # Parse arguments
+            args_str = call.get("arguments") or "{}"
+            try:
+                import json as _json
+                args = _json.loads(args_str) if isinstance(args_str, str) else dict(args_str)
+            except Exception:
+                args = {}
+            try:
+                result = await execute_tool_async(server, toolname, args, config)
+            except Exception as e:
+                result = f"Tool execution failed: {e}"
+            # Append tool result
+            conversation.append({
+                "role": "tool",
+                "tool_call_id": call.get("id"),
+                "name": fullname,
+                "content": result,
+            })
+    # Max iterations reached
+    return ""
+
+def _extract_text(c: Any) -> str:
+    """
+    Robustly extract text from various provider stream chunk shapes.
+    """
+    # 0) Direct string/bytes
+    if isinstance(c, (str, bytes)):
+        return c.decode() if isinstance(c, bytes) else c
+    # 1) Mapping-like (dict or implements get)
+    if isinstance(c, Mapping) or hasattr(c, "get"):
+        try:
+            m = c  # type: ignore
+            # OpenAI-like
+            content = (
+                (m.get("choices", [{}])[0].get("delta", {}) or {}).get("content")
+            )
+            if content:
+                return str(content)
+            # Some providers put partial text under delta.text
+            delta = (m.get("choices", [{}])[0].get("delta", {}) or {})
+            text_val = delta.get("text") if isinstance(delta, Mapping) else None
+            if text_val:
+                return str(text_val)
+            # Fallbacks
+            message = (m.get("choices", [{}])[0].get("message", {}) or {})
+            content = message.get("content") if isinstance(message, Mapping) else None
+            if content:
+                return str(content)
+            if m.get("content"):
+                return str(m.get("content"))
+            if m.get("text"):
+                return str(m.get("text"))
+        except Exception:
+            pass
+    # 2) Attribute-based objects (e.g., litellm structured events)
+    try:
+        choices = getattr(c, "choices", None)
+        if choices:
+            first = choices[0] if len(choices) > 0 else None
+            if first is not None:
+                delta = getattr(first, "delta", None)
+                if delta is not None:
+                    content = getattr(delta, "content", None)
+                    if content:
+                        return str(content)
+                    text_val = getattr(delta, "text", None)
+                    if text_val:
+                        return str(text_val)
+        content_attr = getattr(c, "content", None)
+        if content_attr:
+            return str(content_attr)
+        text_attr = getattr(c, "text", None)
+        if text_attr:
+            return str(text_attr)
+    except Exception:
+        pass
+    return ""
