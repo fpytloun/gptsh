@@ -37,6 +37,38 @@ async def prepare_completion_params(
     params["model"] = chosen_model
     params["messages"] = messages
 
+    # Merge additional generation params from agent config.
+    # Support both agent_conf['params'] dict and selected top-level keys.
+    agent_params: Dict[str, Any] = {}
+    if agent_conf:
+        # From nested 'params' dictionary (preferred)
+        nested = agent_conf.get("params") or {}
+        if isinstance(nested, dict):
+            for k, v in nested.items():
+                if k not in {"model", "name", "prompt", "mcp", "provider"}:
+                    agent_params[k] = v
+        # Whitelist selected top-level keys commonly supported by providers
+        allowed_agent_keys = {
+            "temperature",
+            "top_p",
+            "top_k",
+            "max_tokens",
+            "presence_penalty",
+            "frequency_penalty",
+            "stop",
+            "seed",
+            "response_format",
+            "reasoning",
+            "reasoning_effort",
+            "tool_choice",
+        }
+        for k in allowed_agent_keys:
+            if k in agent_conf and agent_conf[k] is not None:
+                agent_params[k] = agent_conf[k]
+    # Apply into LiteLLM params (provider_conf already contributed earlier)
+    if agent_params:
+        params.update(agent_params)
+
     has_tools = False
     if not no_tools:
         # Merge MCP settings from global + provider + agent
@@ -53,7 +85,9 @@ async def prepare_completion_params(
             tools = await build_llm_tools(config)
         if tools:
             params["tools"] = tools
-            params["tool_choice"] = "auto"
+            # Respect any explicit tool_choice from agent params; default to "auto"
+            if "tool_choice" not in params:
+                params["tool_choice"] = "auto"
             has_tools = True
 
     return params, has_tools, chosen_model
