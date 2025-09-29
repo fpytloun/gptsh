@@ -35,9 +35,12 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
 
     async def _query_server(name: str, srv: Dict[str, Any]) -> List[str]:
         transport = srv.get("transport", {})
-        ttype = transport.get("type")
+        ttype = transport.get("type") or ("stdio" if srv.get("command") else None)
         try:
             if ttype == "stdio":
+                if not srv.get("command"):
+                    logging.getLogger(__name__).warning("MCP server '%s' uses stdio but has no 'command' configured", name)
+                    return []
                 params = StdioServerParameters(
                     command=srv.get("command"),
                     args=srv.get("args", []),
