@@ -119,10 +119,12 @@ async def complete_simple(params: Dict[str, Any]) -> str:
     except Exception:
         return ""
 
-async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any]) -> str:
+async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], approved_map: Dict[str, List[str]]) -> str:
     """
     Tool execution loop using MCP until the model returns a final message with no tool_calls.
     Returns final assistant content string.
+
+    Tools not in the auto-approved set will trigger an interactive approval prompt.
     """
     from litellm import acompletion
 
@@ -177,6 +179,42 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any]) ->
                 args = _json.loads(args_str) if isinstance(args_str, str) else dict(args_str)
             except Exception:
                 args = {}
+
+            # Approval check: server wildcard '*', per-server '*', or specific tool name
+            server_approvals = set(approved_map.get(server, []))
+            global_approvals = set(approved_map.get("*", []))
+            is_approved = ("*" in server_approvals) or (toolname in server_approvals) or (toolname in global_approvals)
+
+            if not is_approved:
+                try:
+                    from rich.prompt import Confirm
+                except Exception:
+                    Confirm = None  # type: ignore
+                pretty_args = "{}"
+                try:
+                    pretty_args = _json.dumps(args, ensure_ascii=False)
+                except Exception:
+                    pass
+                question = f"Allow tool {server}__{toolname} with args {pretty_args}?"
+                allowed = False
+                if Confirm is not None:
+                    try:
+                        allowed = bool(Confirm.ask(question, default=False))
+                    except Exception:
+                        allowed = False
+                else:
+                    # Fallback to deny if Rich is unavailable
+                    allowed = False
+                if not allowed:
+                    result = f"Denied by user: {server}__{toolname}"
+                    conversation.append({
+                        "role": "tool",
+                        "tool_call_id": call.get("id"),
+                        "name": fullname,
+                        "content": result,
+                    })
+                    continue
+
             try:
                 result = await execute_tool_async(server, toolname, args, config)
             except Exception as e:

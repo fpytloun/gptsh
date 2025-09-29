@@ -272,7 +272,8 @@ async def run_llm(
                 waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
             # Non-streaming paths
             if has_tools:
-                content = await complete_with_tools(params, config)
+                approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
+                content = await complete_with_tools(params, config, approved_map)
             else:
                 content = await complete_simple(params)
             # Stop waiting indicator before printing final output
