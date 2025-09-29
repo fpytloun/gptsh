@@ -215,7 +215,7 @@ async def run_llm(
         if stream:
             if progress_obj is not None:
                 waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
-            buffer_md: List[str] = [] if output_format == "markdown" else []
+            md_buffer = "" if output_format == "markdown" else ""
             first_output_done = False
             async for text in stream_completion(params):
                 if not text:
@@ -243,13 +243,18 @@ async def run_llm(
                             pass
                     first_output_done = True
                 if output_format == "markdown":
-                    buffer_md.append(text)
+                    md_buffer += text
+                    # Stream out complete lines as Markdown
+                    while "\n" in md_buffer:
+                        line, md_buffer = md_buffer.split("\n", 1)
+                        console.print(Markdown(line))
                 else:
                     sys.stdout.write(text)
                     sys.stdout.flush()
             # After stream ends
             if output_format == "markdown":
-                console.print(Markdown("".join(buffer_md)))
+                if md_buffer:
+                    console.print(Markdown(md_buffer))
             else:
                 click.echo()  # newline
         else:
