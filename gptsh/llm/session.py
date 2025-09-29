@@ -90,6 +90,8 @@ async def prepare_completion_params(
                 params["tool_choice"] = "auto"
             has_tools = True
 
+    # Ensure LiteLLM drops unsupported provider params gracefully
+    params["drop_params"] = True
     return params, has_tools, chosen_model
 
 async def stream_completion(params: Dict[str, Any]) -> AsyncIterator[str]:
