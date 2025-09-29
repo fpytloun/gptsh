@@ -290,13 +290,6 @@ async def run_llm(
                         except Exception:
                             pass
                         progress_running = False
-                    # Add a separating newline on stderr
-                    if sys.stderr.isatty():
-                        try:
-                            sys.stderr.write("\n")
-                            sys.stderr.flush()
-                        except Exception:
-                            pass
 
                 def resume_ui():
                     nonlocal waiting_task_id, progress_obj, progress_running, chosen_model
