@@ -68,15 +68,25 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             click.echo("MCP tools disabled by --no-tools")
             sys.exit(0)
         tools_map = list_tools(config)
-        approved_map = get_auto_approved_tools(config)
+        # Determine selected agent config for agent-level autoApprove
+        agents_conf = config.get("agents") or {}
+        selected_agent_conf = None
+        if isinstance(agents_conf, dict):
+            selected_agent_conf = agents_conf.get(agent)
+        if selected_agent_conf is None:
+            # Fallback to built-in default agent mapping
+            selected_agent_conf = (DEFAULT_AGENTS.get(agent) if isinstance(DEFAULT_AGENTS, dict) else None)
+        approved_map = get_auto_approved_tools(config, agent_conf=selected_agent_conf)
         total_servers = len(tools_map)
         click.echo(f"Discovered tools ({total_servers} server{'s' if total_servers != 1 else ''}):")
         for server, tools in tools_map.items():
             approved_set = set(approved_map.get(server, []))
+            global_tools = set(approved_map.get("*", []))
             click.echo(f"{server} ({len(tools)}):")
             if tools:
                 for tool in tools:
-                    badge = " 󰁪" if tool in approved_set else ""
+                    # Badge if tool is explicitly approved, globally approved by name, or server wildcard
+                    badge = " 󰁪" if ("*" in approved_set or tool in approved_set or tool in global_tools) else ""
                     click.echo(f"  - {tool}{badge}")
             else:
                 click.echo("  (no tools found or discovery failed)")

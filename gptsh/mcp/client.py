@@ -395,10 +395,15 @@ async def _execute_tool_async(server: str, tool: str, arguments: Dict[str, Any],
         logging.getLogger(__name__).warning("MCP tool execution failed for %s:%s: %s", server, tool, e, exc_info=True)
         raise
 
-def get_auto_approved_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
+def get_auto_approved_tools(config: Dict[str, Any], agent_conf: Optional[Dict[str, Any]] = None) -> Dict[str, List[str]]:
     """
-    Load per-server autoApprove tool lists from configured MCP servers files.
+    Load per-server autoApprove tool lists from configured MCP servers files and merge
+    optional agent-level autoApprove directives.
+
     Returns mapping: server_name -> list of tool names to auto-approve.
+    Special cases:
+      - If a server's list contains "*", it means all tools for that server are approved.
+      - The special server key "*" contains tool names approved across all servers by name.
     Disabled servers are still included if present in config so the UI can display badges,
     but they will typically have no discovered tools.
     """
@@ -429,4 +434,33 @@ def get_auto_approved_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
             approved_map[name] = [tools]
         else:
             approved_map[name] = []
+
+    # Merge agent-level auto approvals if provided
+    if agent_conf and isinstance(agent_conf, dict):
+        entries = agent_conf.get("autoApprove")
+        if isinstance(entries, (list, tuple)):
+            for entry in entries:
+                if not entry:
+                    continue
+                token = str(entry)
+                if "__" in token:
+                    # Format: "<server>__<tool>"
+                    srv_name, tool_name = token.split("__", 1)
+                    if srv_name:
+                        approved_map.setdefault(srv_name, [])
+                        if tool_name and tool_name not in approved_map[srv_name]:
+                            approved_map[srv_name].append(tool_name)
+                else:
+                    # Either a server name or a tool name across all servers
+                    if token in servers:
+                        # Approve all tools for this server
+                        approved_map.setdefault(token, [])
+                        if "*" not in approved_map[token]:
+                            approved_map[token].append("*")
+                    else:
+                        # Approve by tool name across all servers
+                        approved_map.setdefault("*", [])
+                        if token not in approved_map["*"]:
+                            approved_map["*"].append(token)
+
     return approved_map
