@@ -366,6 +366,13 @@ async def run_llm(
                                 except Exception:
                                     pass
                                 progress_running = False
+                            # Clear any potential leftover line from progress UI to avoid a leading blank line
+                            if sys.stderr.isatty():
+                                try:
+                                    sys.stderr.write("\x1b[1A\x1b[2K")
+                                    sys.stderr.flush()
+                                except Exception:
+                                    pass
                             first_output_done = True
                         if output_format == "markdown":
                             buffer_md.append(text)
@@ -417,6 +424,13 @@ async def run_llm(
                                 except Exception:
                                     pass
                                 progress_running = False
+                            # Clear any potential leftover line from progress UI to avoid a leading blank line
+                            if sys.stderr.isatty():
+                                try:
+                                    sys.stderr.write("\x1b[1A\x1b[2K")
+                                    sys.stderr.flush()
+                                except Exception:
+                                    pass
                             if output_format == "markdown":
                                 console.print(Markdown(content or ""))
                             else:
@@ -512,6 +526,13 @@ async def run_llm(
                         except Exception:
                             pass
                         progress_running = False
+                    # Clear any potential leftover line from progress UI to avoid a leading blank line
+                    if sys.stderr.isatty():
+                        try:
+                            sys.stderr.write("\x1b[1A\x1b[2K")
+                            sys.stderr.flush()
+                        except Exception:
+                            pass
                     if output_format == "markdown":
                         console.print(Markdown(content or ""))
                     else:
