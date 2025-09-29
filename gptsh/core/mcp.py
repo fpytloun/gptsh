@@ -1,6 +1,7 @@
 import json
 import os
 import asyncio
+import logging
 from typing import Any, Dict, List, Optional
 from gptsh.config.loader import _expand_env
 from mcp import ClientSession
@@ -52,6 +53,9 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
 
             elif ttype in ("http", "sse"):
                 url = transport.get("url")
+                if not url:
+                    logging.getLogger(__name__).warning("MCP server '%s' missing transport.url for '%s' transport", name, ttype)
+                    return []
                 headers = srv.get("credentials", {}).get("headers", {})
                 async def _http_call() -> List[str]:
                     async with streamablehttp_client(url, headers=headers) as (read, write, _):
@@ -63,14 +67,15 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
 
             else:
                 # Unknown transport type, return empty tool list
+                logging.getLogger(__name__).warning("MCP server '%s' has unknown transport type: %r", name, ttype)
                 return []
-        except Exception:
+        except Exception as e:
             # Any failure on a server should not crash the whole discovery
+            logging.getLogger(__name__).warning("MCP tool discovery failed for server '%s': %s", name, e, exc_info=True)
             return []
 
     # Run all server queries concurrently
     tasks = [asyncio.create_task(_query_server(name, srv)) for name, srv in servers.items()]
-    results_list: List[List[str]] = []
     results_map: Dict[str, List[str]] = {}
     if tasks:
         gathered = await asyncio.gather(*tasks, return_exceptions=True)
