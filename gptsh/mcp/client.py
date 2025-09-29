@@ -13,6 +13,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.client.sse import sse_client
 import httpx
 import importlib
+from gptsh.mcp.builtin import get_builtin_servers
 
 def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     """
@@ -52,10 +53,8 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
         except FileNotFoundError:
             continue
     # Ensure builtin stdio-in-process servers are always present by default
-    servers.setdefault("time", {
-        "transport": {"type": "stdio"},
-        "module": "gptsh.mcp.builtin.time",
-    })
+    for _name, _def in (get_builtin_servers() or {}).items():
+        servers.setdefault(_name, _def)
 
     # Determine a per-request timeout (fallback to a sensible default)
     timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
@@ -272,10 +271,8 @@ async def _discover_tools_detailed_async(config: Dict[str, Any]) -> Dict[str, Li
         except FileNotFoundError:
             continue
     # Ensure builtin stdio-in-process servers are always present by default
-    servers.setdefault("time", {
-        "transport": {"type": "stdio"},
-        "module": "gptsh.mcp.builtin.time",
-    })
+    for _name, _def in (get_builtin_servers() or {}).items():
+        servers.setdefault(_name, _def)
 
     timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
     results: Dict[str, List[Dict[str, Any]]] = {}
@@ -355,6 +352,9 @@ async def _execute_tool_async(server: str, tool: str, arguments: Dict[str, Any],
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
             continue
+    # Ensure builtin stdio-in-process servers are always present by default
+    for _name, _def in (get_builtin_servers() or {}).items():
+        servers.setdefault(_name, _def)
     allowed = set((config.get("mcp", {}) or {}).get("allowed_servers") or [])
     if server not in servers:
         raise RuntimeError(f"MCP server '{server}' not configured")
