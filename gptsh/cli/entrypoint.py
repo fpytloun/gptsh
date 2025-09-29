@@ -174,7 +174,8 @@ async def run_llm(
     init_task_id = None
     try:
         if progress_obj is not None:
-            init_task_id = progress_obj.add_task("Preparing request", total=None)
+            init_label = "Initializing MCP tools" if not no_tools else "Preparing request"
+            init_task_id = progress_obj.add_task(init_label, total=None)
         params, has_tools, chosen_model = await prepare_completion_params(
             prompt=prompt,
             provider_conf=provider_conf,
