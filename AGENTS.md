@@ -63,7 +63,8 @@ Environment variables can be referenced using `${VAR_NAME}` syntax. Secrets must
 
 Example global config:
 ```yaml
-agent: default
+default_agent: default
+default_provider: openai
 
 progress: true
 timeouts:
@@ -141,8 +142,9 @@ Example MCP servers file (Claude-compatible schema):
 ```
 
 Notes:
-- Multiple servers files can be specified; they are merged by label.
-- `${VAR}` inside servers JSON is expanded from the runtime environment.
+- A single servers file is selected by precedence: CLI mcp.servers_files (first existing), then ./.gptsh/mcp_servers.json, then ~/.config/gptsh/mcp_servers.json.
+- `${VAR}` inside servers JSON is expanded from the runtime environment (and `${env:VAR}` is normalized to `${VAR}`).
+- Built-in in-process servers `time` and `shell` are always available by default and can be referenced or disabled via mcp_servers.json.
 
 ---
 ## Async Execution Model
@@ -165,7 +167,7 @@ Notes:
 ---
 ## Logging and Telemetry
 
-- Use Python `logging` with levels configured via config; default `INFO`.
+- Use Python `logging` with levels configured via config; default `WARNING` (override with -v/--verbose or --debug).
 - Support `text` and `json` formats; prefer `json` when not attached to a TTY.
 - Never log secrets; redact known keys and header values.
 - Include request IDs and timestamps for correlation; do not enable telemetry without explicit opt-in.
@@ -174,14 +176,14 @@ Notes:
 ## Stdin Handling Strategy
 
 - If stdin is non-tty, read up to `stdin.max_bytes`.
-- If input exceeds limit and `overflow_strategy: summarize`, produce a local summary before sending to the model; else truncate with notice.
+- If input exceeds limit, truncate and append a notice to the text. A summarization strategy may be added in the future.
 - Treat binary input as bytes; attempt `utf-8` with `errors="replace"` and label garbled sections.
 
 ---
 ## Tool Discovery and Selection
 
 - `--list-tools` prints tools grouped by MCP server.
-- Tool invocation is guided by the LLM; configure `mcp.tool_choice` to `auto`, `required`, or `none`.
+- Tool invocation is guided by the LLM; default tool_choice is 'auto'. You can set the agent parameter 'tool_choice' to influence behavior.
 - Optional filtering via `approvals.allow_patterns`/`deny_patterns` to constrain accessible tools.
 
 ---
@@ -229,7 +231,6 @@ uvx pytest --maxfail=1 --disable-warnings -q
  - [x] Added --mcp-servers CLI option to override path to MCP servers file
  - [x] Added --provider option to select LiteLLM provider from config
  - [x] Added --list-providers CLI option to list configured providers
- - [x] Prefixed model with provider for custom endpoints
  - [x] Rich Progress UI rendered to stderr; clean teardown before output
  - [x] Output format flag `-o/--output` (text|markdown) with Markdown rendering at end
  - [x] `--no-tools` to disable MCP; `--tools` to whitelist allowed MCP servers
@@ -269,15 +270,17 @@ uvx pytest --maxfail=1 --disable-warnings -q
 Example pyproject excerpt:
 ```toml
 [project]
-name = "gptsh"
+name = "gptsh-cli"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
   "litellm",
   "click",
   "pyyaml",
+  "rich",
   "httpx",
   "python-dotenv",
+  "mcp>=1.15.0",
 ]
 
 [project.optional-dependencies]
@@ -336,7 +339,6 @@ gptsh = "gptsh.cli.entrypoint:main"
 - `-o, --output [text|markdown]`   # Output format (default: markdown)
 - `--no-tools`                     # Disable MCP (discovery and execution)
 - `--tools LABELS`                 # Comma/space-separated allow-list of MCP servers to load
-- `--version`
 - `-h, --help`
 
 ---
