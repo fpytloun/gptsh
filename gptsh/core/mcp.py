@@ -2,6 +2,7 @@ import json
 import os
 import asyncio
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from gptsh.config.loader import _expand_env
 from mcp import ClientSession
@@ -24,7 +25,9 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
         try:
             with open(expanded, "r", encoding="utf-8") as f:
                 raw = f.read()
-            content = _expand_env(raw)
+            # Normalize ${env:VAR} -> ${VAR} first, then expand using existing _expand_env
+            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
+            content = _expand_env(content)
             data = json.loads(content)
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
