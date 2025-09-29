@@ -273,7 +273,48 @@ async def run_llm(
             # Non-streaming paths
             if has_tools:
                 approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
-                content = await complete_with_tools(params, config, approved_map)
+
+                def pause_ui():
+                    nonlocal waiting_task_id, progress_obj, progress_running
+                    # Remove current waiting task
+                    if waiting_task_id is not None and progress_obj is not None:
+                        try:
+                            progress_obj.remove_task(waiting_task_id)
+                        except Exception:
+                            pass
+                        waiting_task_id = None
+                    # Stop spinner so prompt won't be overwritten
+                    if progress_obj is not None and progress_running:
+                        try:
+                            progress_obj.stop()
+                        except Exception:
+                            pass
+                        progress_running = False
+                    # Add a separating newline on stderr
+                    if sys.stderr.isatty():
+                        try:
+                            sys.stderr.write("\n")
+                            sys.stderr.flush()
+                        except Exception:
+                            pass
+
+                def resume_ui():
+                    nonlocal waiting_task_id, progress_obj, progress_running, chosen_model
+                    # Restart spinner if needed
+                    if progress_obj is not None and not progress_running:
+                        try:
+                            progress_obj.start()
+                        except Exception:
+                            pass
+                        progress_running = True
+                    # Recreate waiting task
+                    if progress_obj is not None:
+                        try:
+                            waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
+                        except Exception:
+                            waiting_task_id = None
+
+                content = await complete_with_tools(params, config, approved_map, pause_ui=pause_ui, resume_ui=resume_ui)
             else:
                 content = await complete_simple(params)
             # Stop waiting indicator before printing final output

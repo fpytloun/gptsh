@@ -120,7 +120,7 @@ async def complete_simple(params: Dict[str, Any]) -> str:
     except Exception:
         return ""
 
-async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], approved_map: Dict[str, List[str]]) -> str:
+async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], approved_map: Dict[str, List[str]], pause_ui=None, resume_ui=None) -> str:
     """
     Tool execution loop using MCP until the model returns a final message with no tool_calls.
     Returns final assistant content string.
@@ -199,25 +199,23 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
                 question = f"Allow tool {server}__{toolname} with args {pretty_args}?"
                 allowed = False
                 if Confirm is not None:
-                    # Ensure we don't clash with an active progress spinner rendered on stderr:
-                    # write a newline to stderr before and after the prompt to separate outputs.
-                    if sys.stderr.isatty():
-                        try:
-                            sys.stderr.write("\n")
-                            sys.stderr.flush()
-                        except Exception:
-                            pass
+                    # Pause running progress UI so the prompt is visible
+                    try:
+                        if callable(pause_ui):
+                            pause_ui()
+                    except Exception:
+                        pass
                     try:
                         allowed = bool(Confirm.ask(question, default=False))
                     except Exception:
                         allowed = False
                     finally:
-                        if sys.stderr.isatty():
-                            try:
-                                sys.stderr.write("\n")
-                                sys.stderr.flush()
-                            except Exception:
-                                pass
+                        # Resume progress UI after user interaction
+                        try:
+                            if callable(resume_ui):
+                                resume_ui()
+                        except Exception:
+                            pass
                 else:
                     # Fallback to deny if Rich is unavailable
                     allowed = False
