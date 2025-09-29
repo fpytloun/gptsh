@@ -5,6 +5,7 @@ import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
+from contextlib import asynccontextmanager
 from gptsh.config.loader import _expand_env
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -151,6 +152,7 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
                 results_map[name] = res
     return results_map
 
+@asynccontextmanager
 async def _open_session(name: str, srv: Dict[str, Any], timeout_seconds: float):
     """
     Async context manager yielding an initialized ClientSession for given server.
@@ -174,13 +176,13 @@ async def _open_session(name: str, srv: Dict[str, Any], timeout_seconds: float):
             args=srv.get("args", []),
             env=srv.get("env", {}),
         )
-        cm = stdio_client(params, errlog=sys.stderr if logging.getLogger(__name__).getEffectiveLevel() <= logging.DEBUG else asyncio.subprocess.DEVNULL)
-        async def _ctx():
-            async with cm as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    yield session
-        return _ctx()
+        async with stdio_client(
+            params,
+            errlog=sys.stderr if logging.getLogger(__name__).getEffectiveLevel() <= logging.DEBUG else asyncio.subprocess.DEVNULL,
+        ) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
 
     elif ttype in ("http", "sse"):
         url = transport.get("url") or srv.get("url")
@@ -193,26 +195,24 @@ async def _open_session(name: str, srv: Dict[str, Any], timeout_seconds: float):
             or {}
         )
 
-        async def _ctx_streamable():
-            async with streamablehttp_client(url, headers=headers) as (read, write, _):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    yield session
-
-        async def _ctx_sse():
+        # Heuristic selection: explicit SSE path or URL hint -> SSE; otherwise try streamable then fallback to SSE.
+        use_sse = (ttype == "sse") or bool(re.search(r"/sse(?:$|[/?])", url))
+        if use_sse:
             async with sse_client(url, headers=headers) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     yield session
-
-        # Heuristic selection between streamable_http and sse, with fallback on typical errors
-        if re.search(r"/sse(?:$|[/?])", url):
-            return _ctx_sse()
-        try:
-            # Probe with streamable by opening and closing quickly to validate
-            return _ctx_streamable()
-        except Exception:
-            return _ctx_sse()
+        else:
+            try:
+                async with streamablehttp_client(url, headers=headers) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        yield session
+            except Exception:
+                async with sse_client(url, headers=headers) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        yield session
     else:
         raise RuntimeError(f"MCP server '{name}' has unknown transport type: {ttype!r}")
 
