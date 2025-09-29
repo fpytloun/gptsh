@@ -44,11 +44,15 @@ def main(provider, model, agent, config_path, stream, progress, debug, mcp_serve
     # Handle immediate listing flags
     if list_tools_flag:
         tools_map = list_tools(config)
-        click.echo("Discovered tools:")
+        total_servers = len(tools_map)
+        click.echo(f"Discovered tools ({total_servers} server{'s' if total_servers != 1 else ''}):")
         for server, tools in tools_map.items():
             click.echo(f"{server}:")
-            for tool in tools:
-                click.echo(f"  - {tool}")
+            if tools:
+                for tool in tools:
+                    click.echo(f"  - {tool}")
+            else:
+                click.echo("  (no tools found or discovery failed)")
         sys.exit(0)
 
     if list_providers_flag:
