@@ -6,6 +6,7 @@ from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp import list_tools, get_auto_approved_tools, discover_tools_detailed_async, execute_tool_async
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from typing import Any, Dict, Optional, List, cast, Mapping
 
@@ -170,25 +171,34 @@ async def run_llm(
     try:
         from litellm import acompletion
 
-        # Spinner helper defined earlier
-
         # Build base params from provider configuration, excluding non-LiteLLM keys
         params: Dict[str, Any] = {
             k: v for k, v in dict(provider_conf).items() if k not in {"model", "name"}
         }
 
-        # Build MCP tools for the LLM (show progress while initializing MCP clients)
-        init_stop_event = None
-        init_spinner_task = None
+        # Setup rich progress (spinner) if enabled
+        progress_obj: Optional[Progress] = None
         if progress and sys.stderr.isatty():
-            init_stop_event = asyncio.Event()
-            init_spinner_task = asyncio.create_task(_spinner("Initializing MCP tools", init_stop_event))
+            progress_obj = Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                transient=True,
+                redirect_stdout=True,
+                redirect_stderr=True,
+            )
+            progress_obj.start()
+
+        # Build MCP tools for the LLM (show progress while initializing MCP clients)
+        if progress_obj is not None:
+            init_task_id = progress_obj.add_task("Initializing MCP tools", total=None)
         try:
             mcp_tools = await _build_mcp_tools_for_llm({"mcp": dict(provider_conf.get("mcp", {}), **(agent_conf.get("mcp", {}) if agent_conf else {})) , **(config := {})})
         finally:
-            if init_spinner_task is not None and init_stop_event is not None and not init_stop_event.is_set():
-                init_stop_event.set()
-                await init_spinner_task
+            if 'init_task_id' in locals() and progress_obj is not None:
+                try:
+                    progress_obj.remove_task(init_task_id)
+                except Exception:
+                    pass
         # If no mcp section in provider/agent, fall back to global config already loaded in main()
         # The CLI stores resolved 'mcp.servers_files' in the global config; access through closure
         try:
@@ -198,17 +208,16 @@ async def run_llm(
         except Exception:
             global_conf = {}
         if not mcp_tools:
-            init_stop_event2 = None
-            init_spinner_task2 = None
-            if progress and sys.stderr.isatty():
-                init_stop_event2 = asyncio.Event()
-                init_spinner_task2 = asyncio.create_task(_spinner("Initializing MCP tools", init_stop_event2))
+            if progress_obj is not None:
+                init_task_id2 = progress_obj.add_task("Initializing MCP tools", total=None)
             try:
                 mcp_tools = await _build_mcp_tools_for_llm(global_conf)
             finally:
-                if init_spinner_task2 is not None and init_stop_event2 is not None and not init_stop_event2.is_set():
-                    init_stop_event2.set()
-                    await init_spinner_task2
+                if 'init_task_id2' in locals() and progress_obj is not None:
+                    try:
+                        progress_obj.remove_task(init_task_id2)
+                    except Exception:
+                        pass
 
         # If MCP tools are present, we'll do a tool-execution loop; disable streaming for compatibility
         if mcp_tools:
@@ -237,31 +246,12 @@ async def run_llm(
 
         logger.info(f"Calling LLM model {chosen_model}")
 
-        # Spinner helper (stderr) for progress indication
-        async def _spinner(msg: str, stop_event: asyncio.Event) -> None:
-            frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-            i = 0
-            while not stop_event.is_set():
-                sys.stderr.write(f"\r{frames[i % len(frames)]} {msg}")
-                sys.stderr.flush()
-                i += 1
-                try:
-                    await asyncio.sleep(0.1)
-                except asyncio.CancelledError:
-                    break
-            # clear line
-            sys.stderr.write("\r" + " " * (len(msg) + 2) + "\r")
-            sys.stderr.flush()
-
-        # shared spinner state to avoid redeclaration across branches
-        spinner_task: Optional[asyncio.Task] = None
-        stop_event: Optional[asyncio.Event] = None
+        # Using rich Progress for progress display
+        waiting_task_id: Optional[int] = None
 
         if stream:
-            if progress and sys.stderr.isatty():
-                stop_event = asyncio.Event()
-                original_spinner_msg = f"Waiting for {chosen_model.rsplit('/', 1)[-1]}"
-                spinner_task = asyncio.create_task(_spinner(original_spinner_msg, stop_event))
+            if progress_obj is not None:
+                waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
             try:
                 stream_iter = await acompletion(stream=True, **params)
                 async for chunk in stream_iter:
@@ -322,22 +312,25 @@ async def run_llm(
 
                     text = _extract_text(chunk)
                     if text:
-                        if spinner_task is not None and stop_event is not None and not stop_event.is_set():
-                            stop_event.set()
-                            await spinner_task
-                            spinner_task = None
+                        if waiting_task_id is not None and progress_obj is not None:
+                            try:
+                                progress_obj.remove_task(waiting_task_id)
+                            except Exception:
+                                pass
+                            waiting_task_id = None
                         sys.stdout.write(text)
                         sys.stdout.flush()
             finally:
-                if spinner_task is not None and stop_event is not None and not stop_event.is_set():
-                    stop_event.set()
-                    await spinner_task
+                if waiting_task_id is not None and progress_obj is not None:
+                    try:
+                        progress_obj.remove_task(waiting_task_id)
+                    except Exception:
+                        pass
+                    waiting_task_id = None
             click.echo()  # newline after stream
         else:
-            if progress and sys.stderr.isatty():
-                stop_event = asyncio.Event()
-                original_spinner_msg = f"Waiting for {chosen_model.rsplit('/', 1)[-1]}"
-                spinner_task = asyncio.create_task(_spinner(original_spinner_msg, stop_event))
+            if progress_obj is not None:
+                waiting_task_id = progress_obj.add_task(f"Waiting for {chosen_model.rsplit('/', 1)[-1]}", total=None)
             try:
                 # Tool execution loop when MCP tools are available
                 if params.get("tools"):
@@ -350,11 +343,13 @@ async def run_llm(
                         if not calls:
                             # No tool calls; print final assistant message
                             content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
-                            # Stop spinner before printing final output
-                            if spinner_task is not None and stop_event is not None and not stop_event.is_set():
-                                stop_event.set()
-                                await spinner_task
-                                spinner_task = None
+                            # Stop waiting indicator before printing final output
+                            if waiting_task_id is not None and progress_obj is not None:
+                                try:
+                                    progress_obj.remove_task(waiting_task_id)
+                                except Exception:
+                                    pass
+                                waiting_task_id = None
                             click.echo(content or "")
                             break
                         # Append the assistant message that contains tool_calls (required by OpenAI format)
@@ -395,27 +390,31 @@ async def run_llm(
                                 args = json.loads(args_str) if isinstance(args_str, str) else dict(args_str)
                             except Exception:
                                 args = {}
-                            # Temporarily change spinner to show executing tool
-                            exec_stop_event = None
-                            exec_spinner_task = None
-                            if progress and sys.stderr.isatty():
-                                if spinner_task is not None and stop_event is not None and not stop_event.is_set():
-                                    stop_event.set()
-                                    await spinner_task
-                                exec_stop_event = asyncio.Event()
-                                exec_spinner_task = asyncio.create_task(_spinner(f"Executing {fullname}", exec_stop_event))
+                            # Temporarily change progress message to show executing tool
+                            exec_task_id = None
+                            if progress_obj is not None:
+                                if waiting_task_id is not None:
+                                    try:
+                                        progress_obj.update(waiting_task_id, visible=False)
+                                    except Exception:
+                                        pass
+                                exec_task_id = progress_obj.add_task(f"Executing {fullname}", total=None)
                             try:
                                 result = await execute_tool_async(server, toolname, args, global_conf)
                             except Exception as e:
                                 result = f"Tool execution failed: {e}"
                             finally:
-                                if exec_spinner_task is not None and exec_stop_event is not None and not exec_stop_event.is_set():
-                                    exec_stop_event.set()
-                                    await exec_spinner_task
-                                # Restore original spinner
-                                if progress and sys.stderr.isatty():
-                                    stop_event = asyncio.Event()
-                                    spinner_task = asyncio.create_task(_spinner(original_spinner_msg, stop_event))
+                                if exec_task_id is not None and progress_obj is not None:
+                                    try:
+                                        progress_obj.remove_task(exec_task_id)
+                                    except Exception:
+                                        pass
+                                # Restore waiting indicator
+                                if progress_obj is not None and waiting_task_id is not None:
+                                    try:
+                                        progress_obj.update(waiting_task_id, visible=True)
+                                    except Exception:
+                                        pass
                             # Append tool result
                             conversation.append({
                                 "role": "tool",
@@ -430,16 +429,28 @@ async def run_llm(
                 else:
                     resp = cast(Dict[str, Any], await acompletion(**params))
                     content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    # Stop spinner before printing final output
-                    if spinner_task is not None and stop_event is not None and not stop_event.is_set():
-                        stop_event.set()
-                        await spinner_task
-                        spinner_task = None
+                    # Stop waiting indicator before printing final output
+                    if waiting_task_id is not None and progress_obj is not None:
+                        try:
+                            progress_obj.remove_task(waiting_task_id)
+                        except Exception:
+                            pass
+                        waiting_task_id = None
                     click.echo(content)
             finally:
-                if spinner_task is not None and stop_event is not None and not stop_event.is_set():
-                    stop_event.set()
-                    await spinner_task
+                # Ensure waiting indicator is cleared
+                if waiting_task_id is not None and progress_obj is not None:
+                    try:
+                        progress_obj.remove_task(waiting_task_id)
+                    except Exception:
+                        pass
+                    waiting_task_id = None
+                # Stop progress display if it was started
+                if progress_obj is not None:
+                    try:
+                        progress_obj.stop()
+                    except Exception:
+                        pass
     except KeyboardInterrupt:
         click.echo("", err=True)
         sys.exit(130)
