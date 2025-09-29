@@ -170,7 +170,7 @@ async def run_llm(
     try:
         from litellm import acompletion
 
-        # Spinner helper defined above
+        # Spinner helper defined earlier
 
         # Build base params from provider configuration, excluding non-LiteLLM keys
         params: Dict[str, Any] = {
