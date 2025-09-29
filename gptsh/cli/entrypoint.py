@@ -32,8 +32,9 @@ DEFAULT_AGENTS = {
 @click.option("--list-providers", "list_providers_flag", is_flag=True, default=False, help="List configured providers")
 @click.option("--output", "-o", type=click.Choice(["text", "markdown"]), default="markdown", help="Output format")
 @click.option("--no-tools", is_flag=True, default=False, help="Disable MCP tools (discovery and execution)")
+@click.option("--tools", "tools_filter", default=None, help="Comma/space-separated MCP server labels to allow (others skipped)")
 @click.argument("prompt", required=False)
-def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, output, no_tools, prompt):
+def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, output, no_tools, tools_filter, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -46,6 +47,10 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         # Allow comma or whitespace-separated list of paths
         parts = [p for raw in mcp_servers.split(",") for p in raw.split() if p]
         config.setdefault("mcp", {})["servers_files"] = parts if parts else []
+    if tools_filter:
+        # Allow comma or whitespace-separated list of server labels
+        labels = [p for raw in tools_filter.split(",") for p in raw.split() if p]
+        config.setdefault("mcp", {})["allowed_servers"] = labels if labels else []
     # Logging: default WARNING, -v/--verbose -> INFO, --debug -> DEBUG
     log_level = "DEBUG" if debug else ("INFO" if verbose else "WARNING")
     log_fmt = config.get("logging", {}).get("format", "text")
@@ -211,7 +216,21 @@ async def run_llm(
             if progress_obj is not None:
                 init_task_id = progress_obj.add_task("Initializing MCP tools", total=None)
             try:
-                mcp_tools = await _build_mcp_tools_for_llm({"mcp": dict(provider_conf.get("mcp", {}), **(agent_conf.get("mcp", {}) if agent_conf else {})) , **(config := {})})
+                # Merge global MCP config (including allowed_servers) with provider/agent overrides
+                try:
+                    from inspect import currentframe
+                    outer_locals = currentframe().f_back.f_back.f_locals  # main()'s locals (contains 'config')
+                    global_conf0 = outer_locals.get("config", {}) or {}
+                except Exception:
+                    global_conf0 = {}
+                merged_conf = {
+                    "mcp": {
+                        **(global_conf0.get("mcp", {}) or {}),
+                        **(provider_conf.get("mcp", {}) or {}),
+                        **(((agent_conf or {}).get("mcp", {})) or {}),
+                    }
+                }
+                mcp_tools = await _build_mcp_tools_for_llm(merged_conf)
             finally:
                 if 'init_task_id' in locals() and progress_obj is not None:
                     try:

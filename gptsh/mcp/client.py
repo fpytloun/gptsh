@@ -131,13 +131,18 @@ async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
             logging.getLogger(__name__).warning("MCP tool discovery failed for server '%s': %s", name, e, exc_info=True)
             return []
 
-    # Run all server queries concurrently, honoring 'disabled' servers
+    # Run all server queries concurrently, honoring 'disabled' servers and allowed filter
+    allowed = set((config.get("mcp", {}) or {}).get("allowed_servers") or [])
     results_map: Dict[str, List[str]] = {}
     tasks: List[asyncio.Task] = []
     task_names: List[str] = []
     for name, srv in servers.items():
         if srv.get("disabled"):
             # Mark disabled servers with empty tool list and skip querying
+            results_map[name] = []
+            continue
+        if allowed and name not in allowed:
+            # Skip servers not explicitly allowed
             results_map[name] = []
             continue
         tasks.append(asyncio.create_task(_query_server(name, srv)))
@@ -273,7 +278,9 @@ async def _discover_tools_detailed_async(config: Dict[str, Any]) -> Dict[str, Li
             logging.getLogger(__name__).warning("MCP detailed tool discovery failed for '%s': %s", name, e, exc_info=True)
             return name, []
 
-    tasks = [asyncio.create_task(_per_server(n, s)) for n, s in servers.items()]
+    # Honor allow-list of servers if provided
+    allowed = set((config.get("mcp", {}) or {}).get("allowed_servers") or [])
+    tasks = [asyncio.create_task(_per_server(n, s)) for n, s in servers.items() if (not allowed or n in allowed)]
     if tasks:
         pairs = await asyncio.gather(*tasks, return_exceptions=False)
         for name, tools in pairs:
@@ -311,8 +318,11 @@ async def _execute_tool_async(server: str, tool: str, arguments: Dict[str, Any],
             servers.update(data.get("mcpServers", {}))
         except FileNotFoundError:
             continue
+    allowed = set((config.get("mcp", {}) or {}).get("allowed_servers") or [])
     if server not in servers:
         raise RuntimeError(f"MCP server '{server}' not configured")
+    if allowed and server not in allowed:
+        raise RuntimeError(f"MCP server '{server}' is not allowed by --tools filter")
 
     timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
     srv = servers[server]
