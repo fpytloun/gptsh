@@ -6,7 +6,7 @@ from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.core.mcp import list_tools
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, cast, Mapping
 
 DEFAULT_AGENTS = {
     "default": {}
@@ -111,61 +111,148 @@ async def run_llm(
       progress: bool,
       logger: Any,
   ) -> None:
-      """Execute an LLM call using LiteLLM with optional streaming."""
-      try:
-          from litellm import acompletion
+    """Execute an LLM call using LiteLLM with optional streaming."""
+    try:
+        from litellm import acompletion
 
-          # Build base params from provider configuration, excluding non-LiteLLM keys
-          params: Dict[str, Any] = {
-              k: v for k, v in dict(provider_conf).items() if k not in {"default_model", "name"}
-          }
+        # Build base params from provider configuration, excluding non-LiteLLM keys
+        params: Dict[str, Any] = {
+            k: v for k, v in dict(provider_conf).items() if k not in {"default_model", "name"}
+        }
 
-          # Determine model: CLI override > agent config > provider default > fallback
-          chosen_model = (
-              cli_model_override
-              or (agent_conf or {}).get("model")
-              or provider_conf.get("default_model")
-              or "gpt-4o"
-          )
+        # Determine model: CLI override > agent config > provider default > fallback
+        chosen_model = (
+            cli_model_override
+            or (agent_conf or {}).get("model")
+            or provider_conf.get("default_model")
+            or "gpt-4o"
+        )
 
-          # Build messages: system then user
-          messages: List[Dict[str, str]] = []
-          system_prompt = (agent_conf or {}).get("prompt", {}).get("system")
-          if system_prompt:
-              messages.append({"role": "system", "content": system_prompt})
-          messages.append({"role": "user", "content": prompt})
+        # Build messages: system then user
+        messages: List[Dict[str, str]] = []
+        system_prompt = (agent_conf or {}).get("prompt", {}).get("system")
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
 
-          params["model"] = chosen_model
-          params["messages"] = messages
+        params["model"] = chosen_model
+        params["messages"] = messages
 
-          logger.info(f"Calling LLM model {chosen_model}")
+        logger.info(f"Calling LLM model {chosen_model}")
 
-          if stream:
-              if progress:
-                  click.echo("Connecting to model...", err=True)
-              stream_iter = await acompletion(stream=True, **params)
-              async for chunk in stream_iter:
-                  # Robust extraction across providers
-                  text = (
-                      (chunk.get("choices", [{}])[0].get("delta", {}) or {}).get("content")
-                      or chunk.get("content")
-                      or getattr(chunk, "text", "")
-                      or ""
-                  )
-                  if text:
-                      sys.stdout.write(text)
-                      sys.stdout.flush()
-              click.echo()  # newline after stream
-          else:
-              resp = await acompletion(**params)
-              content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
-              click.echo(content)
-      except KeyboardInterrupt:
-          click.echo("", err=True)
-          sys.exit(130)
-      except Exception as e:
-          logger.error(f"LLM call failed: {e}")
-          sys.exit(1)
+        # Spinner helper (stderr) for progress indication
+        async def _spinner(msg: str, stop_event: asyncio.Event) -> None:
+            frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+            i = 0
+            while not stop_event.is_set():
+                sys.stderr.write(f"\r{msg} {frames[i % len(frames)]}")
+                sys.stderr.flush()
+                i += 1
+                try:
+                    await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    break
+            # clear line
+            sys.stderr.write("\r" + " " * (len(msg) + 2) + "\r")
+            sys.stderr.flush()
+
+        # shared spinner state to avoid redeclaration across branches
+        spinner_task: Optional[asyncio.Task] = None
+        stop_event: Optional[asyncio.Event] = None
+
+        if stream:
+            if progress and sys.stderr.isatty():
+                stop_event = asyncio.Event()
+                spinner_task = asyncio.create_task(_spinner("Progressing...", stop_event))
+            try:
+                stream_iter = await acompletion(stream=True, **params)
+                async for chunk in stream_iter:
+                    # Robust extraction across providers; handle Mapping-like and object chunks
+                    def _extract_text(c: Any) -> str:
+                        # 0) Direct string/bytes
+                        if isinstance(c, (str, bytes)):
+                            return c.decode() if isinstance(c, bytes) else c
+                        # 1) Mapping-like (dict or implements get)
+                        if isinstance(c, Mapping) or hasattr(c, "get"):
+                            try:
+                                m = c  # type: ignore[assignment]
+                                # OpenAI-like
+                                content = (
+                                    (m.get("choices", [{}])[0].get("delta", {}) or {}).get("content")
+                                )
+                                if content:
+                                    return str(content)
+                                # Some providers put partial text under delta.text
+                                delta = (m.get("choices", [{}])[0].get("delta", {}) or {})
+                                text_val = delta.get("text") if isinstance(delta, Mapping) else None
+                                if text_val:
+                                    return str(text_val)
+                                # Fallbacks
+                                message = (m.get("choices", [{}])[0].get("message", {}) or {})
+                                content = message.get("content") if isinstance(message, Mapping) else None
+                                if content:
+                                    return str(content)
+                                if m.get("content"):
+                                    return str(m.get("content"))
+                                if m.get("text"):
+                                    return str(m.get("text"))
+                            except Exception:
+                                pass
+                        # 2) Attribute-based objects (e.g., litellm structured events)
+                        try:
+                            choices = getattr(c, "choices", None)
+                            if choices:
+                                first = choices[0] if len(choices) > 0 else None
+                                if first is not None:
+                                    delta = getattr(first, "delta", None)
+                                    if delta is not None:
+                                        content = getattr(delta, "content", None)
+                                        if content:
+                                            return str(content)
+                                        text_val = getattr(delta, "text", None)
+                                        if text_val:
+                                            return str(text_val)
+                            content_attr = getattr(c, "content", None)
+                            if content_attr:
+                                return str(content_attr)
+                            text_attr = getattr(c, "text", None)
+                            if text_attr:
+                                return str(text_attr)
+                        except Exception:
+                            pass
+                        return ""
+
+                    text = _extract_text(chunk)
+                    if text:
+                        if spinner_task is not None and stop_event is not None and not stop_event.is_set():
+                            stop_event.set()
+                            await spinner_task
+                            spinner_task = None
+                        sys.stdout.write(text)
+                        sys.stdout.flush()
+            finally:
+                if spinner_task is not None and stop_event is not None and not stop_event.is_set():
+                    stop_event.set()
+                    await spinner_task
+            click.echo()  # newline after stream
+        else:
+            if progress and sys.stderr.isatty():
+                stop_event = asyncio.Event()
+                spinner_task = asyncio.create_task(_spinner("Progressing...", stop_event))
+            try:
+                resp = cast(Dict[str, Any], await acompletion(**params))
+            finally:
+                if spinner_task is not None and stop_event is not None and not stop_event.is_set():
+                    stop_event.set()
+                    await spinner_task
+            content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+            click.echo(content)
+    except KeyboardInterrupt:
+        click.echo("", err=True)
+        sys.exit(130)
+    except Exception as e:
+        logger.error(f"LLM call failed: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
