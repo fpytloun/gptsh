@@ -250,6 +250,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             no_tools=no_tools_effective,
             config=config,
             logger=logger,
+            agent_name=agent,
         )
         sys.exit(0)
     # Handle prompt or stdin
@@ -556,6 +557,7 @@ def repl_loop(
     no_tools: bool,
     config: Dict[str, Any],
     logger: Any,
+    agent_name: Optional[str],
 ) -> None:
     """
     Simple interactive REPL using GNU readline when available.
@@ -620,7 +622,18 @@ def repl_loop(
     except Exception:
         _readline = None
 
-    prompt_str = "gptsh> "
+    # Build a nice, colored prompt: "<agent>|<model>> "
+    chosen_model = (
+        cli_model_override
+        or (agent_conf or {}).get("model")
+        or provider_conf.get("model")
+        or "?"
+    )
+    model_label = str(chosen_model).rsplit("/", 1)[-1]
+    agent_label = agent_name or "default"
+    agent_col = click.style(agent_label, fg="cyan", bold=True)
+    model_col = click.style(model_label, fg="magenta")
+    prompt_str = f"{agent_col}|{model_col}> "
     last_interrupt = 0.0
     while True:
         try:
