@@ -235,6 +235,10 @@ uvx pytest --maxfail=1 --disable-warnings -q
  - [x] Rich Progress UI rendered to stderr; clean teardown before output
  - [x] Output format flag `-o/--output` (text|markdown) with Markdown rendering at end
  - [x] `--no-tools` to disable MCP; `--tools` to whitelist allowed MCP servers
+ - [x] Interactive REPL mode with colored "<agent>|<model>>" prompt
+ - [x] Maintain per-REPL session chat history (messages threaded through LLM calls)
+ - [x] Interactive mode accepts initial prompt from stdin or positional arg and continues after response
+ - [x] Persistent MCP sessions across the entire REPL; initialized once and cleaned up on exit; LiteLLM async client cleanup and warning suppression
  
  ### Pending / Roadmap
 
@@ -257,6 +261,10 @@ uvx pytest --maxfail=1 --disable-warnings -q
 
  #### Packaging & Workflow
  - [ ] Add `uv lock` workflow and packaging pipelines for releases
+ - [ ] Add more full tests coverage
+
+ #### Code quality & Optimization & Performance
+ - [ ] Cleanup code, deduplicate some parts (loading agents, etc.), use objects
  
  ---
  ## Packaging and uv Workflow
