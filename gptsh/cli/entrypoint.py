@@ -37,11 +37,12 @@ DEFAULT_AGENTS = {
 @click.option("--mcp-servers", "mcp_servers", default=None, help="Override path to MCP servers file")
 @click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
 @click.option("--list-providers", "list_providers_flag", is_flag=True, default=False, help="List configured providers")
+@click.option("--list-agents", "list_agents_flag", is_flag=True, default=False, help="List configured agents and their tools")
 @click.option("--output", "-o", type=click.Choice(["text", "markdown"]), default="markdown", help="Output format")
 @click.option("--no-tools", is_flag=True, default=False, help="Disable MCP tools (discovery and execution)")
 @click.option("--tools", "tools_filter", default=None, help="Comma/space-separated MCP server labels to allow (others skipped)")
 @click.argument("prompt", required=False)
-def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, output, no_tools, tools_filter, prompt):
+def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, list_agents_flag, output, no_tools, tools_filter, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -103,6 +104,77 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         click.echo("Configured providers:")
         for name in providers:
             click.echo(f"  - {name}")
+        sys.exit(0)
+
+    if list_agents_flag:
+        # Merge default agent so it's always listed
+        existing_agents = dict(config.get("agents") or {})
+        agents_conf = {**DEFAULT_AGENTS, **existing_agents}
+        if not agents_conf:
+            click.echo("No agents configured.")
+            sys.exit(0)
+
+        providers_conf = config.get("providers", {}) or {}
+        default_provider_name = config.get("default_provider") or (next(iter(providers_conf)) if providers_conf else None)
+
+        # Discover tools once (unless tools disabled)
+        tools_map = {}
+        if not no_tools:
+            try:
+                tools_map = list_tools(config)
+            except Exception:
+                tools_map = {}
+
+        click.echo("Configured agents:")
+        for agent_name, aconf in agents_conf.items():
+            if not isinstance(aconf, dict):
+                aconf = {}
+            # Determine effective provider and model for this agent
+            agent_provider = aconf.get("provider") or default_provider_name
+            chosen_model = aconf.get("model") or ((providers_conf.get(agent_provider) or {}).get("model")) or "?"
+            click.echo(f"- {agent_name}")
+            click.echo(f"  model: {chosen_model}")
+
+            # Determine allowed servers per agent (None = all)
+            tools_field = aconf.get("tools")
+            allowed_servers: Optional[List[str]] = None
+            if isinstance(tools_field, list):
+                allowed_servers = [str(x) for x in tools_field if x is not None]
+                if len(allowed_servers) == 0:
+                    click.echo(f"  tools: (disabled)")
+                    continue
+
+            # Compute auto-approved map for this agent
+            try:
+                approved_map = get_auto_approved_tools(config, agent_conf=aconf)
+            except Exception:
+                approved_map = {}
+
+            if no_tools:
+                click.echo("  tools: (disabled by --no-tools)")
+                continue
+
+            # Collect servers to display
+            server_names = list(tools_map.keys())
+            if allowed_servers is not None:
+                server_names = [s for s in server_names if s in allowed_servers]
+
+            if not server_names:
+                click.echo("  tools: (none discovered)")
+                continue
+
+            click.echo("  tools:")
+            for server in server_names:
+                names = tools_map.get(server, []) or []
+                click.echo(f"    {server} ({len(names)}):")
+                if names:
+                    approved_set = set(approved_map.get(server, []) or [])
+                    global_set = set(approved_map.get("*", []) or [])
+                    for t in names:
+                        badge = " 󰁪" if ("*" in approved_set or t in approved_set or t in global_set) else ""
+                        click.echo(f"      - {t}{badge}")
+                else:
+                    click.echo("      (no tools found or discovery failed)")
         sys.exit(0)
 
     # Ensure a default agent always exists by merging built-ins into config
