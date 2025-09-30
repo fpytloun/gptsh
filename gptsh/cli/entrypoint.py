@@ -6,7 +6,7 @@ from click.core import ParameterSource
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
-from gptsh.mcp import list_tools, get_auto_approved_tools
+from gptsh.mcp import list_tools, get_auto_approved_tools, ensure_sessions_started_async
 from gptsh.llm.session import (
     prepare_completion_params,
     stream_completion,
@@ -287,6 +287,13 @@ async def run_llm(
         if progress_obj is not None:
             init_label = "Initializing MCP tools" if not no_tools else "Preparing request"
             init_task_id = progress_obj.add_task(init_label, total=None)
+        # Ensure MCP servers are started once and kept for the duration of the run
+        if not no_tools:
+            try:
+                await ensure_sessions_started_async(config)
+            except Exception:
+                # Do not fail request if MCP init fails; discovery/execution will handle per-server errors
+                pass
         params, has_tools, chosen_model = await prepare_completion_params(
             prompt=prompt,
             provider_conf=provider_conf,

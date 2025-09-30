@@ -46,6 +46,340 @@ def _select_servers_file(config: Dict[str, Any]) -> Optional[str]:
             continue
     return None
 
+# Per-event-loop MCP session manager to spawn/connect servers once and reuse them
+_MANAGERS: Dict[int, "_MCPManager"] = {}
+
+class _MCPManager:
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
+        spawn_conf = (config.get("mcp", {}) or {}).get("spawn", {}) or {}
+        hc_conf = (spawn_conf.get("healthcheck", {}) or {})
+        self._hc_type: str = str(hc_conf.get("type") or "initialize")
+        try:
+            self._hc_timeout: float = float(hc_conf.get("timeout")) if "timeout" in hc_conf else self.timeout_seconds
+        except Exception:
+            self._hc_timeout = self.timeout_seconds
+        self.servers: Dict[str, Any] = {}
+        # name -> ("module", module_path) or ("session", ClientSession) or None if disabled/unavailable/filtered
+        self.sessions: Dict[str, Optional[Tuple[str, Any]]] = {}
+        self._server_tasks: Dict[str, asyncio.Task] = {}
+        self._ready_events: Dict[str, asyncio.Event] = {}
+        self._stop_events: Dict[str, asyncio.Event] = {}
+        self.started: bool = False
+
+    async def start(self) -> None:
+        if self.started:
+            return
+        logger = logging.getLogger(__name__)
+        logger.debug("Starting MCP manager (timeout=%.1fs)", self.timeout_seconds)
+        # Build servers dict using single selected servers file and merge builtins
+        selected_file = _select_servers_file(self.config)
+        servers: Dict[str, Any] = {}
+        if selected_file:
+            try:
+                with open(selected_file, "r", encoding="utf-8") as f:
+                    raw = f.read()
+                content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
+                content = _expand_env(content)
+                data = json.loads(content)
+                servers.update(data.get("mcpServers", {}))
+                logger.debug("Selected MCP servers file: %s", selected_file)
+            except Exception as e:
+                logger.warning("Failed to parse MCP servers file %s: %s", selected_file, e, exc_info=True)
+                servers = {}
+        for _name, _def in (get_builtin_servers() or {}).items():
+            servers.setdefault(_name, _def)
+
+        self.servers = servers
+        allowed = set((self.config.get("mcp", {}) or {}).get("allowed_servers") or [])
+        if allowed:
+            logger.debug("Allowed MCP servers filter: %s", ", ".join(sorted(allowed)))
+        logger.debug("Discovered MCP servers: %s", ", ".join(sorted(self.servers.keys())) or "(none)")
+
+        async def _runner(name: str, srv: Dict[str, Any], stop_event: asyncio.Event, ready_event: asyncio.Event) -> None:
+            try:
+                if srv.get("disabled") or (allowed and name not in allowed):
+                    logging.getLogger(__name__).debug("Server '%s' is disabled or filtered; skipping", name)
+                    self.sessions[name] = None
+                    ready_event.set()
+                    await stop_event.wait()
+                    return
+                transport = srv.get("transport", {})
+                ttype = transport.get("type")
+                if not ttype:
+                    if transport.get("url") or srv.get("url"):
+                        ttype = "http"
+                    elif srv.get("command") or srv.get("module"):
+                        ttype = "stdio"
+                    else:
+                        ttype = None
+                logging.getLogger(__name__).debug("Server '%s' transport resolved to %r", name, ttype)
+                # Builtin in-process module server
+                if ttype == "stdio" and srv.get("module"):
+                    module_path = srv.get("module")
+                    try:
+                        importlib.import_module(module_path)
+                        self.sessions[name] = ("module", module_path)
+                    except Exception as e:
+                        logging.getLogger(__name__).warning("Failed loading builtin stdio module '%s': %s", module_path, e, exc_info=True)
+                        self.sessions[name] = None
+                    finally:
+                        logging.getLogger(__name__).debug("Server '%s' ready (module=%s)", name, "ok" if self.sessions.get(name) else "failed")
+                        ready_event.set()
+                    await stop_event.wait()
+                    return
+                if ttype == "stdio":
+                    params = StdioServerParameters(
+                        command=srv.get("command"),
+                        args=srv.get("args", []),
+                        env=srv.get("env", {}),
+                    )
+                    logging.getLogger(__name__).debug("Connecting MCP stdio server '%s' (command=%r)", name, params.command)
+                    async with stdio_client(
+                        params,
+                        errlog=sys.stderr if logging.getLogger(__name__).getEffectiveLevel() <= logging.DEBUG else asyncio.subprocess.DEVNULL,
+                    ) as (read, write):
+                        async with ClientSession(read, write) as session:
+                            try:
+                                await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                if self._hc_type == "list_tools":
+                                    try:
+                                        await asyncio.wait_for(session.list_tools(), timeout=self._hc_timeout)
+                                    except Exception as e:
+                                        logging.getLogger(__name__).warning("Healthcheck list_tools failed for '%s': %s", name, e, exc_info=True)
+                            except Exception as e:
+                                logging.getLogger(__name__).warning("Initialization failed for MCP stdio server '%s' after %.1fs: %s", name, self._hc_timeout, e, exc_info=True)
+                                self.sessions[name] = None
+                                ready_event.set()
+                                return
+                            self.sessions[name] = ("session", session)
+                            logging.getLogger(__name__).debug("Server '%s' ready (stdio)", name)
+                            ready_event.set()
+                            await stop_event.wait()
+                            return
+                elif ttype in ("http", "sse"):
+                    url = transport.get("url") or srv.get("url")
+                    if not url:
+                        self.sessions[name] = None
+                        ready_event.set()
+                        await stop_event.wait()
+                        return
+                    headers = (
+                        srv.get("credentials", {}).get("headers")
+                        or transport.get("headers")
+                        or srv.get("headers")
+                        or {}
+                    )
+                    use_sse = (ttype == "sse") or bool(re.search(r"/sse(?:$|[/?])", url))
+                    if use_sse:
+                        logging.getLogger(__name__).debug("Connecting MCP SSE server '%s'", name)
+                        async with sse_client(url, headers=headers) as (read, write):
+                            async with ClientSession(read, write) as session:
+                                try:
+                                    await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                    if self._hc_type == "list_tools":
+                                        try:
+                                            await asyncio.wait_for(session.list_tools(), timeout=self._hc_timeout)
+                                        except Exception as e:
+                                            logging.getLogger(__name__).warning("Healthcheck list_tools failed for '%s': %s", name, e, exc_info=True)
+                                except Exception as e:
+                                    logging.getLogger(__name__).warning("Initialization failed for MCP SSE server '%s' after %.1fs: %s", name, self._hc_timeout, e, exc_info=True)
+                                    self.sessions[name] = None
+                                    ready_event.set()
+                                    return
+                                    self.sessions[name] = ("session", session)
+                                    logging.getLogger(__name__).debug("Server '%s' ready (sse)", name)
+                                    ready_event.set()
+                                    await stop_event.wait()
+                                    return
+                    else:
+                        try:
+                            logging.getLogger(__name__).debug("Connecting MCP HTTP server '%s'", name)
+                            async with streamablehttp_client(url, headers=headers) as (read, write, _):
+                                async with ClientSession(read, write) as session:
+                                    try:
+                                        await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                        if self._hc_type == "list_tools":
+                                            try:
+                                                await asyncio.wait_for(session.list_tools(), timeout=self._hc_timeout)
+                                            except Exception as e:
+                                                logging.getLogger(__name__).warning("Healthcheck list_tools failed for '%s': %s", name, e, exc_info=True)
+                                    except Exception as e:
+                                        logging.getLogger(__name__).warning("Initialization failed for MCP HTTP server '%s' after %.1fs: %s", name, self._hc_timeout, e, exc_info=True)
+                                        self.sessions[name] = None
+                                        ready_event.set()
+                                        return
+                                    self.sessions[name] = ("session", session)
+                                    logging.getLogger(__name__).debug("Server '%s' ready (http)", name)
+                                    ready_event.set()
+                                    await stop_event.wait()
+                                    return
+                        except Exception:
+                            logging.getLogger(__name__).debug("HTTP connect failed; falling back to SSE for '%s'", name)
+                            async with sse_client(url, headers=headers) as (read, write):
+                                async with ClientSession(read, write) as session:
+                                    try:
+                                        await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                        if self._hc_type == "list_tools":
+                                            try:
+                                                await asyncio.wait_for(session.list_tools(), timeout=self._hc_timeout)
+                                            except Exception as e:
+                                                logging.getLogger(__name__).warning("Healthcheck list_tools failed for '%s': %s", name, e, exc_info=True)
+                                    except Exception as e:
+                                        logging.getLogger(__name__).warning("Initialization failed for MCP SSE server '%s' after %.1fs: %s", name, self._hc_timeout, e, exc_info=True)
+                                        self.sessions[name] = None
+                                        ready_event.set()
+                                        return
+                                    self.sessions[name] = ("session", session)
+                                    logging.getLogger(__name__).debug("Server '%s' ready (sse)", name)
+                                    ready_event.set()
+                                    await stop_event.wait()
+                                    return
+                else:
+                    self.sessions[name] = None
+                    ready_event.set()
+                    await stop_event.wait()
+            except Exception as e:
+                logging.getLogger(__name__).warning("Failed to connect to MCP server '%s': %s", name, e, exc_info=True)
+                self.sessions[name] = None
+                ready_event.set()
+                try:
+                    await stop_event.wait()
+                except Exception:
+                    pass
+
+        # Spawn runners in parallel and wait until each signals ready or times out
+        for name, srv in servers.items():
+            stop_event = asyncio.Event()
+            ready_event = asyncio.Event()
+            self._stop_events[name] = stop_event
+            self._ready_events[name] = ready_event
+            task = asyncio.create_task(_runner(name, srv, stop_event, ready_event))
+            self._server_tasks[name] = task
+
+        # Wait for readiness for all servers; block until each signals ready or times out
+        waiters: List[asyncio.Task] = []
+        order: List[str] = []
+        for name, ev in self._ready_events.items():
+            order.append(name)
+            waiters.append(asyncio.create_task(asyncio.wait_for(ev.wait(), timeout=self.timeout_seconds)))
+        if waiters:
+            results = await asyncio.gather(*waiters, return_exceptions=True)
+            for name, res in zip(order, results):
+                if isinstance(res, Exception):
+                    logger.warning("MCP server '%s' readiness timed out after %.1fs", name, self._hc_timeout)
+                else:
+                    logger.debug("MCP server '%s' signaled ready", name)
+
+        self.started = True
+        logger.debug("MCP manager start complete")
+
+    async def stop(self) -> None:
+        # Signal all server runners to stop and wait for them
+        for ev in self._stop_events.values():
+            try:
+                ev.set()
+            except Exception:
+                pass
+        tasks = list(self._server_tasks.values())
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._server_tasks.clear()
+        self._ready_events.clear()
+        self._stop_events.clear()
+        self.sessions.clear()
+        self.started = False
+
+    async def list_tools(self) -> Dict[str, List[str]]:
+        result: Dict[str, List[str]] = {}
+        for name, srv in self.servers.items():
+            if srv.get("disabled"):
+                result[name] = []
+                continue
+            handle = self.sessions.get(name)
+            try:
+                if handle and handle[0] == "module":
+                    mod = importlib.import_module(handle[1])
+                    tools_list = getattr(mod, "list_tools")() or []
+                    result[name] = list(tools_list)
+                elif handle and handle[0] == "session":
+                    session = handle[1]
+                    resp = await session.list_tools()
+                    result[name] = [tool.name for tool in resp.tools]
+                else:
+                    result[name] = []
+            except Exception as e:
+                logging.getLogger(__name__).warning("MCP list_tools failed for '%s': %s", name, e, exc_info=True)
+                result[name] = []
+        return result
+
+    async def list_tools_detailed(self) -> Dict[str, List[Dict[str, Any]]]:
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for name, srv in self.servers.items():
+            if srv.get("disabled"):
+                result[name] = []
+                continue
+            handle = self.sessions.get(name)
+            try:
+                if handle and handle[0] == "module":
+                    mod = importlib.import_module(handle[1])
+                    detailed = getattr(mod, "list_tools_detailed")() or []
+                    result[name] = list(detailed)
+                elif handle and handle[0] == "session":
+                    session = handle[1]
+                    resp = await session.list_tools()
+                    out: List[Dict[str, Any]] = []
+                    for tool in resp.tools:
+                        schema = getattr(tool, "inputSchema", None) or {"type": "object", "properties": {}, "additionalProperties": True}
+                        desc = getattr(tool, "description", None) or ""
+                        out.append({
+                            "name": tool.name,
+                            "description": desc,
+                            "input_schema": schema,
+                        })
+                    result[name] = out
+                else:
+                    result[name] = []
+            except Exception as e:
+                logging.getLogger(__name__).warning("MCP list_tools_detailed failed for '%s': %s", name, e, exc_info=True)
+                result[name] = []
+        return result
+
+    async def call_tool(self, server: str, tool: str, arguments: Dict[str, Any]) -> str:
+        srv = self.servers.get(server) or {}
+        if srv.get("disabled"):
+            raise RuntimeError(f"MCP server '{server}' is disabled")
+        handle = self.sessions.get(server)
+        if handle and handle[0] == "module":
+            mod = importlib.import_module(handle[1])
+            return str(getattr(mod, "execute")(tool, arguments or {}))
+        if handle and handle[0] == "session":
+            session = handle[1]
+            resp = await session.call_tool(tool, arguments or {})
+            texts: List[str] = []
+            for item in getattr(resp, "content", []) or []:
+                t = getattr(item, "text", None)
+                if t is not None:
+                    texts.append(str(t))
+                else:
+                    try:
+                        texts.append(str(item))
+                    except Exception:
+                        pass
+            return "\n".join(texts).strip()
+        raise RuntimeError(f"MCP server '{server}' not configured or not connected")
+
+async def ensure_sessions_started_async(config: Dict[str, Any]) -> _MCPManager:
+    loop_id = id(asyncio.get_running_loop())
+    mgr = _MANAGERS.get(loop_id)
+    if mgr is None:
+        mgr = _MCPManager(config)
+        _MANAGERS[loop_id] = mgr
+    if not mgr.started:
+        await mgr.start()
+    return mgr
+
 def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     """
     Discover tools from configured MCP servers using Model Context Protocol Python SDK.
@@ -54,143 +388,9 @@ def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     return asyncio.run(_list_tools_async(config))
 
 async def _list_tools_async(config: Dict[str, Any]) -> Dict[str, List[str]]:
-    # Select a single MCP servers file based on precedence (CLI -> local -> global)
-    selected_file = _select_servers_file(config)
-    servers: Dict[str, Any] = {}
-    if selected_file:
-        try:
-            with open(selected_file, "r", encoding="utf-8") as f:
-                raw = f.read()
-            # Normalize ${env:VAR} -> ${VAR} first, then expand using existing _expand_env
-            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
-            content = _expand_env(content)
-            data = json.loads(content)
-            servers.update(data.get("mcpServers", {}))
-        except FileNotFoundError:
-            servers = {}
-        except Exception:
-            servers = {}
-    # Ensure builtin stdio-in-process servers are always present by default
-    for _name, _def in (get_builtin_servers() or {}).items():
-        servers.setdefault(_name, _def)
-
-    # Determine a per-request timeout (fallback to a sensible default)
-    timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
-
-    async def _query_server(name: str, srv: Dict[str, Any]) -> List[str]:
-        transport = srv.get("transport", {})
-        ttype = transport.get("type")
-        if not ttype:
-            if transport.get("url") or srv.get("url"):
-                ttype = "http"
-            elif srv.get("command") or srv.get("module"):
-                ttype = "stdio"
-            else:
-                ttype = None
-        try:
-            if ttype == "stdio":
-                module_path = srv.get("module")
-                if module_path:
-                    try:
-                        mod = importlib.import_module(module_path)
-                        if not hasattr(mod, "list_tools"):
-                            logging.getLogger(__name__).warning("Builtin stdio module '%s' missing list_tools()", module_path)
-                            return []
-                        tools_list = getattr(mod, "list_tools")() or []
-                        return list(tools_list)
-                    except Exception as e:
-                        logging.getLogger(__name__).warning("Failed loading builtin stdio module '%s': %s", module_path, e, exc_info=True)
-                        return []
-                if not srv.get("command"):
-                    logging.getLogger(__name__).warning("MCP server '%s' uses stdio but has no 'command' configured", name)
-                    return []
-                params = StdioServerParameters(
-                    command=srv.get("command"),
-                    args=srv.get("args", []),
-                    env=srv.get("env", {}),
-                )
-                async def _stdio_call() -> List[str]:
-                    async with stdio_client(params, errlog=sys.stderr if logging.getLogger(__name__).getEffectiveLevel() <= logging.DEBUG else asyncio.subprocess.DEVNULL) as (read, write):
-                        async with ClientSession(read, write) as session:
-                            await session.initialize()
-                            resp = await session.list_tools()
-                            return [tool.name for tool in resp.tools]
-                return await asyncio.wait_for(_stdio_call(), timeout=timeout_seconds)
-
-            elif ttype in ("http", "sse"):
-                url = transport.get("url") or srv.get("url")
-                if not url:
-                    logging.getLogger(__name__).warning("MCP server '%s' missing transport.url/url for '%s' transport", name, ttype)
-                    return []
-                headers = (
-                    srv.get("credentials", {}).get("headers")
-                    or transport.get("headers")
-                    or srv.get("headers")
-                    or {}
-                )
-                async def _http_call() -> List[str]:
-                    async def via_streamable() -> List[str]:
-                        async with streamablehttp_client(url, headers=headers) as (read, write, _):
-                            async with ClientSession(read, write) as session:
-                                await session.initialize()
-                                resp = await session.list_tools()
-                                return [tool.name for tool in resp.tools]
-
-                    async def via_sse() -> List[str]:
-                        async with sse_client(url, headers=headers) as (read, write):
-                            async with ClientSession(read, write) as session:
-                                await session.initialize()
-                                resp = await session.list_tools()
-                                return [tool.name for tool in resp.tools]
-
-                    # Heuristic: URLs containing '/sse' use SSE; otherwise try streamable HTTP first,
-                    # and fall back to SSE on typical "method not allowed/not found/bad request" errors.
-                    if re.search(r"/sse(?:$|[/?])", url):
-                        return await via_sse()
-                    try:
-                        return await via_streamable()
-                    except httpx.HTTPStatusError as e:
-                        code = getattr(getattr(e, "response", None), "status_code", None)
-                        if code in (400, 404, 405):
-                            logging.getLogger(__name__).info("HTTP %s from %s; retrying with SSE", code, url)
-                            return await via_sse()
-                        raise
-                return await asyncio.wait_for(_http_call(), timeout=timeout_seconds)
-
-            else:
-                # Unknown transport type, return empty tool list
-                logging.getLogger(__name__).warning("MCP server '%s' has unknown transport type: %r", name, ttype)
-                return []
-        except Exception as e:
-            # Any failure on a server should not crash the whole discovery
-            logging.getLogger(__name__).warning("MCP tool discovery failed for server '%s': %s", name, e, exc_info=True)
-            return []
-
-    # Run all server queries concurrently, honoring 'disabled' servers and allowed filter
-    allowed = set((config.get("mcp", {}) or {}).get("allowed_servers") or [])
-    results_map: Dict[str, List[str]] = {}
-    tasks: List[asyncio.Task] = []
-    task_names: List[str] = []
-    for name, srv in servers.items():
-        if srv.get("disabled"):
-            # Mark disabled servers with empty tool list and skip querying
-            results_map[name] = []
-            continue
-        if allowed and name not in allowed:
-            # Skip servers not explicitly allowed
-            results_map[name] = []
-            continue
-        tasks.append(asyncio.create_task(_query_server(name, srv)))
-        task_names.append(name)
-
-    if tasks:
-        gathered = await asyncio.gather(*tasks, return_exceptions=True)
-        for name, res in zip(task_names, gathered):
-            if isinstance(res, Exception):
-                results_map[name] = []
-            else:
-                results_map[name] = res
-    return results_map
+    # Ensure servers are spawned once and reused; query via persistent sessions
+    mgr = await ensure_sessions_started_async(config)
+    return await mgr.list_tools()
 
 @asynccontextmanager
 async def _open_session(name: str, srv: Dict[str, Any], timeout_seconds: float):
@@ -264,71 +464,9 @@ def discover_tools_detailed(config: Dict[str, Any]) -> Dict[str, List[Dict[str, 
     return asyncio.run(_discover_tools_detailed_async(config))
 
 async def _discover_tools_detailed_async(config: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
-    # Load from a single servers file selected by precedence (CLI -> local -> global)
-    selected_file = _select_servers_file(config)
-    servers: Dict[str, Any] = {}
-    if selected_file:
-        try:
-            with open(selected_file, "r", encoding="utf-8") as f:
-                raw = f.read()
-            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
-            content = _expand_env(content)
-            data = json.loads(content)
-            servers.update(data.get("mcpServers", {}))
-        except FileNotFoundError:
-            servers = {}
-        except Exception:
-            servers = {}
-    # Ensure builtin stdio-in-process servers are always present by default
-    for _name, _def in (get_builtin_servers() or {}).items():
-        servers.setdefault(_name, _def)
-
-    timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
-    results: Dict[str, List[Dict[str, Any]]] = {}
-
-    async def _per_server(name: str, srv: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
-        if srv.get("disabled"):
-            return name, []
-        try:
-            transport = srv.get("transport", {})
-            ttype = transport.get("type")
-            if ttype == "stdio" and srv.get("module"):
-                module_path = srv.get("module")
-                try:
-                    mod = importlib.import_module(module_path)
-                    if not hasattr(mod, "list_tools_detailed"):
-                        logging.getLogger(__name__).warning("Builtin stdio module '%s' missing list_tools_detailed()", module_path)
-                        return name, []
-                    detailed = getattr(mod, "list_tools_detailed")() or []
-                    return name, list(detailed)
-                except Exception as e:
-                    logging.getLogger(__name__).warning("Failed loading builtin stdio module '%s': %s", module_path, e, exc_info=True)
-                    return name, []
-            async with _open_session(name, srv, timeout_seconds) as session:  # type: ignore[attr-defined]
-                resp = await session.list_tools()
-                out: List[Dict[str, Any]] = []
-                for tool in resp.tools:
-                    # tool.inputSchema may be None; default to open object
-                    schema = getattr(tool, "inputSchema", None) or {"type": "object", "properties": {}, "additionalProperties": True}
-                    desc = getattr(tool, "description", None) or ""
-                    out.append({
-                        "name": tool.name,
-                        "description": desc,
-                        "input_schema": schema,
-                    })
-                return name, out
-        except Exception as e:
-            logging.getLogger(__name__).warning("MCP detailed tool discovery failed for '%s': %s", name, e, exc_info=True)
-            return name, []
-
-    # Honor allow-list of servers if provided
-    allowed = set((config.get("mcp", {}) or {}).get("allowed_servers") or [])
-    tasks = [asyncio.create_task(_per_server(n, s)) for n, s in servers.items() if (not allowed or n in allowed)]
-    if tasks:
-        pairs = await asyncio.gather(*tasks, return_exceptions=False)
-        for name, tools in pairs:
-            results[name] = tools
-    return results
+    # Use persistent sessions; servers are connected in parallel on first call
+    mgr = await ensure_sessions_started_async(config)
+    return await mgr.list_tools_detailed()
 
 def execute_tool(server: str, tool: str, arguments: Dict[str, Any], config: Dict[str, Any]) -> str:
     """
@@ -337,63 +475,9 @@ def execute_tool(server: str, tool: str, arguments: Dict[str, Any], config: Dict
     return asyncio.run(_execute_tool_async(server, tool, arguments, config))
 
 async def _execute_tool_async(server: str, tool: str, arguments: Dict[str, Any], config: Dict[str, Any]) -> str:
-    # Load servers from a single selected file
-    selected_file = _select_servers_file(config)
-    servers: Dict[str, Any] = {}
-    if selected_file:
-        try:
-            with open(selected_file, "r", encoding="utf-8") as f:
-                raw = f.read()
-            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
-            content = _expand_env(content)
-            data = json.loads(content)
-            servers.update(data.get("mcpServers", {}))
-        except FileNotFoundError:
-            servers = {}
-        except Exception:
-            servers = {}
-    # Ensure builtin stdio-in-process servers are always present by default
-    for _name, _def in (get_builtin_servers() or {}).items():
-        servers.setdefault(_name, _def)
-    allowed = set((config.get("mcp", {}) or {}).get("allowed_servers") or [])
-    if server not in servers:
-        raise RuntimeError(f"MCP server '{server}' not configured")
-    if allowed and server not in allowed:
-        raise RuntimeError(f"MCP server '{server}' is not allowed by --tools filter")
-
-    timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
-    srv = servers[server]
-    try:
-        # Execute via builtin stdio-in-process module if defined
-        if (srv.get("transport", {}) or {}).get("type") == "stdio" and srv.get("module"):
-            module_path = srv.get("module")
-            try:
-                mod = importlib.import_module(module_path)
-                if not hasattr(mod, "execute"):
-                    raise RuntimeError(f"Builtin stdio module '{module_path}' missing execute()")
-                return str(getattr(mod, "execute")(tool, arguments or {}))
-            except Exception as e:
-                logging.getLogger(__name__).warning("Builtin stdio execution failed for %s:%s via %s: %s", server, tool, module_path, e, exc_info=True)
-                raise
-        async with _open_session(server, srv, timeout_seconds) as session:  # type: ignore[attr-defined]
-            resp = await session.call_tool(tool, arguments or {})
-            # resp.content is a list of content items; join text items
-            texts: List[str] = []
-            for item in getattr(resp, "content", []) or []:
-                # Support multiple content types; prefer text
-                t = getattr(item, "text", None)
-                if t is not None:
-                    texts.append(str(t))
-                else:
-                    # Fallback to any stringifiable representation
-                    try:
-                        texts.append(str(item))
-                    except Exception:
-                        pass
-            return "\n".join(texts).strip()
-    except Exception as e:
-        logging.getLogger(__name__).warning("MCP tool execution failed for %s:%s: %s", server, tool, e, exc_info=True)
-        raise
+    # Execute using persistent session for the given server
+    mgr = await ensure_sessions_started_async(config)
+    return await mgr.call_tool(server, tool, arguments)
 
 def get_auto_approved_tools(config: Dict[str, Any], agent_conf: Optional[Dict[str, Any]] = None) -> Dict[str, List[str]]:
     """
