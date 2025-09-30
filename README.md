@@ -5,6 +5,8 @@ A modern, modular shell assistant powered by LLMs with first-class Model Context
 - Async-first core
 - Configurable providers via LiteLLM (OpenAI, Claude, Perplexity, Azure, etc.)
 - MCP tools discovery and invocation with resilient lifecycle
+- Interactive REPL with persistent MCP sessions and per-session chat history
+- Colored REPL prompt showing "<agent>|<model>>" and support for initial prompt via stdin or arg
 - Clean CLI UX with progress spinners and Markdown rendering
 
 See AGENTS.md for development standards and architecture details.
@@ -145,7 +147,7 @@ gptsh -o text --no-progress "Generate shell command to rename all files in direc
 ## CLI Usage
 
 ```text
-Usage: gptsh [OPTIONS] [PROMPT] COMMAND [ARGS]...
+Usage: gptsh [OPTIONS] [PROMPT]
 
   gptsh: Modular shell/LLM agent client.
 
@@ -161,10 +163,12 @@ Options:
   --mcp-servers TEXT            Override path to MCP servers file
   --list-tools
   --list-providers              List configured providers
+  --list-agents                 List configured agents and their tools
   -o, --output [text|markdown]  Output format
   --no-tools                    Disable MCP tools (discovery and execution)
   --tools TEXT                  Comma/space-separated MCP server labels to
                                 allow (others skipped)
+  -i, --interactive             Run in interactive REPL mode
   -h, --help                    Show this message and exit.
 ```
 
@@ -371,6 +375,23 @@ Use a different provider/model:
 
 ```bash
 gptsh --provider openai --model gpt-4o-mini "Explain MCP in a paragraph"
+```
+
+Interactive REPL:
+
+- Start a REPL:
+```bash
+gptsh -i
+```
+
+- Provide an initial prompt and continue in REPL:
+```bash
+gptsh -i "Say hello"
+```
+
+- Pipe stdin as the initial prompt and continue in REPL:
+```bash
+echo "Summarize this input" | gptsh -i
 ```
 
 Disable progress UI:
