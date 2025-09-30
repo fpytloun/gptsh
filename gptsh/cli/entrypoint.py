@@ -317,6 +317,8 @@ async def run_llm(
       logger: Any,
       exit_on_interrupt: bool = True,
       preinitialized_mcp: bool = False,
+      history_messages: Optional[List[Dict[str, Any]]] = None,
+      result_sink: Optional[List[str]] = None,
   ) -> None:
     """Execute an LLM call using LiteLLM with optional streaming.
     Rendering and progress UI remain in CLI; core LLM/session logic lives in gptsh.llm.session.
@@ -356,6 +358,7 @@ async def run_llm(
             cli_model_override=cli_model_override,
             config=config,
             no_tools=no_tools,
+            history_messages=history_messages,
         )
     finally:
         if init_task_id is not None and progress_obj is not None:
@@ -376,6 +379,7 @@ async def run_llm(
                 waiting_task_id = progress_obj.add_task(wait_label, total=None)
             md_buffer = "" if output_format == "markdown" else ""
             first_output_done = False
+            full_output = ""
             async for text in stream_completion(params):
                 if not text:
                     continue
@@ -410,12 +414,19 @@ async def run_llm(
                 else:
                     sys.stdout.write(text)
                     sys.stdout.flush()
+                full_output += text
             # After stream ends
             if output_format == "markdown":
                 if md_buffer:
                     console.print(Markdown(md_buffer))
             else:
                 click.echo()  # newline
+            # Capture full output for history if requested
+            if result_sink is not None:
+                try:
+                    result_sink.append(full_output)
+                except Exception:
+                    pass
         else:
             wait_label = f"Waiting for {chosen_model.rsplit('/', 1)[-1]}"
             if progress_obj is not None:
@@ -499,6 +510,12 @@ async def run_llm(
                 )
             else:
                 content = await complete_simple(params)
+            # Capture output for history if requested
+            if result_sink is not None:
+                try:
+                    result_sink.append(content or "")
+                except Exception:
+                    pass
             # Stop waiting indicator before printing final output
             if waiting_task_id is not None and progress_obj is not None:
                 try:
@@ -634,6 +651,7 @@ def repl_loop(
     agent_col = click.style(agent_label, fg="cyan", bold=True)
     model_col = click.style(model_label, fg="magenta")
     prompt_str = f"{agent_col}|{model_col}> "
+    history_messages: List[Dict[str, Any]] = []
     last_interrupt = 0.0
     while True:
         try:
@@ -662,6 +680,9 @@ def repl_loop(
                 pass
 
         try:
+            # Prepare to capture assistant reply to maintain conversation history
+            result_holder: List[str] = []
+            user_msg: Dict[str, Any] = {"role": "user", "content": line}
             loop.run_until_complete(
                 run_llm(
                     prompt=line,
@@ -676,8 +697,13 @@ def repl_loop(
                     logger=logger,
                     exit_on_interrupt=False,
                     preinitialized_mcp=True,
+                    history_messages=history_messages,
+                    result_sink=result_holder,
                 )
             )
+            # Update history with user and assistant messages
+            assistant_content = result_holder[0] if result_holder else ""
+            history_messages.extend([user_msg, {"role": "assistant", "content": assistant_content}])
         except KeyboardInterrupt:
             last_interrupt = time.monotonic()
             click.echo("Cancelled.", err=True)

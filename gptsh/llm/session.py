@@ -10,6 +10,7 @@ async def prepare_completion_params(
     cli_model_override: Optional[str],
     config: Dict[str, Any],
     no_tools: bool,
+    history_messages: Optional[List[Dict[str, Any]]] = None,
 ) -> tuple[Dict[str, Any], bool, str]:
     """
     Build LiteLLM acompletion params: messages, model, and tools (if enabled).
@@ -28,11 +29,19 @@ async def prepare_completion_params(
         or "gpt-4o"
     )
 
-    # Messages: system then user
+    # Messages: system, then prior conversation history (if any), then current user message
     messages: List[Dict[str, Any]] = []
     system_prompt = (agent_conf or {}).get("prompt", {}).get("system")
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
+    if history_messages:
+        try:
+            for m in history_messages:
+                # Only include well-formed prior messages
+                if isinstance(m, dict) and m.get("role") in {"user", "assistant", "tool", "system"}:
+                    messages.append(m)
+        except Exception:
+            pass
     messages.append({"role": "user", "content": prompt})
 
     params["model"] = chosen_model
