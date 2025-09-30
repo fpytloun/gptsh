@@ -257,6 +257,12 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
                     set_status(f"Executing {server}__{toolname}")
                 except Exception:
                     pass
+                else:
+                    try:
+                        import asyncio as _asyncio
+                        await _asyncio.sleep(0)
+                    except Exception:
+                        pass
             try:
                 result = await execute_tool_async(server, toolname, args, config)
             except Exception as e:

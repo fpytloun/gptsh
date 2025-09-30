@@ -425,7 +425,11 @@ async def run_llm(
                         return
                     # Update existing task description
                     try:
-                        progress_obj.update(waiting_task_id, description=text)
+                        progress_obj.update(waiting_task_id, description=text, refresh=True)
+                        try:
+                            progress_obj.refresh()
+                        except Exception:
+                            pass
                     except Exception:
                         pass
 
