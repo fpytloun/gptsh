@@ -1,6 +1,14 @@
 import asyncio
 import sys
 import json
+import time
+import warnings
+# Suppress known LiteLLM RuntimeWarning about un-awaited coroutine on loop close.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*coroutine 'close_litellm_async_clients' was never awaited.*",
+    category=RuntimeWarning,
+)
 import click
 from click.core import ParameterSource
 from gptsh.config.loader import load_config
@@ -16,6 +24,12 @@ from gptsh.llm.session import (
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.console import Console
 from rich.markdown import Markdown
+
+# Ensure LiteLLM async HTTPX clients are closed cleanly on loop shutdown
+try:
+    from litellm.llms.custom_httpx.async_client_cleanup import close_litellm_async_clients  # type: ignore
+except Exception:
+    close_litellm_async_clients = None  # type: ignore
 
 from typing import Any, Dict, Optional, List
 
@@ -41,8 +55,9 @@ DEFAULT_AGENTS = {
 @click.option("--output", "-o", type=click.Choice(["text", "markdown"]), default="markdown", help="Output format")
 @click.option("--no-tools", is_flag=True, default=False, help="Disable MCP tools (discovery and execution)")
 @click.option("--tools", "tools_filter", default=None, help="Comma/space-separated MCP server labels to allow (others skipped)")
+@click.option("--interactive", "-i", is_flag=True, default=False, help="Run in interactive REPL mode")
 @click.argument("prompt", required=False)
-def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, list_agents_flag, output, no_tools, tools_filter, prompt):
+def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, list_agents_flag, output, no_tools, tools_filter, interactive, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -200,6 +215,43 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         raise click.BadParameter(f"Unknown provider '{selected_provider}'", param_hint="--provider")
     provider_conf = providers_conf[selected_provider]
 
+    # Interactive REPL mode
+    if interactive:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise click.ClickException("Interactive mode requires a TTY.")
+        # Agent-level overrides for tools if CLI flags not provided
+        no_tools_effective = no_tools or bool(agent_conf.get("no_tools"))
+        if not tools_filter:
+            agent_tools = agent_conf.get("tools")
+            if isinstance(agent_tools, list):
+                if len(agent_tools) == 0:
+                    # Treat empty tools list as disabling tools entirely
+                    no_tools_effective = True
+                else:
+                    labels = [str(x) for x in agent_tools if x]
+                    config.setdefault("mcp", {})["allowed_servers"] = labels
+        # Determine effective output format: CLI --output takes precedence over agent config.
+        output_effective = output
+        try:
+            src = click.get_current_context().get_parameter_source("output")
+        except Exception:
+            src = None
+        if src != ParameterSource.COMMANDLINE:
+            agent_output = agent_conf.get("output") if isinstance(agent_conf, dict) else None
+            if agent_output in ("text", "markdown"):
+                output_effective = agent_output
+        repl_loop(
+            provider_conf=provider_conf,
+            agent_conf=agent_conf,
+            cli_model_override=model,
+            stream=stream,
+            progress=progress,
+            output_format=output_effective,
+            no_tools=no_tools_effective,
+            config=config,
+            logger=logger,
+        )
+        sys.exit(0)
     # Handle prompt or stdin
     stdin_input = None
     if not sys.stdin.isatty():
@@ -262,6 +314,8 @@ async def run_llm(
       no_tools: bool,
       config: Dict[str, Any],
       logger: Any,
+      exit_on_interrupt: bool = True,
+      preinitialized_mcp: bool = False,
   ) -> None:
     """Execute an LLM call using LiteLLM with optional streaming.
     Rendering and progress UI remain in CLI; core LLM/session logic lives in gptsh.llm.session.
@@ -284,11 +338,11 @@ async def run_llm(
     # Prepare LiteLLM params (build messages/model/tools) via session
     init_task_id = None
     try:
-        if progress_obj is not None:
-            init_label = "Initializing MCP tools" if not no_tools else "Preparing request"
-            init_task_id = progress_obj.add_task(init_label, total=None)
         # Ensure MCP servers are started once and kept for the duration of the run
-        if not no_tools:
+        if not no_tools and not preinitialized_mcp:
+            if progress_obj is not None:
+                init_label = "Initializing MCP tools"
+                init_task_id = progress_obj.add_task(init_label, total=None)
             try:
                 await ensure_sessions_started_async(config)
             except Exception:
@@ -469,8 +523,11 @@ async def run_llm(
             else:
                 click.echo(content or "")
     except KeyboardInterrupt:
-        click.echo("", err=True)
-        sys.exit(130)
+        if exit_on_interrupt:
+            click.echo("", err=True)
+            sys.exit(130)
+        else:
+            raise
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
         sys.exit(1)
@@ -488,6 +545,154 @@ async def run_llm(
             except Exception:
                 pass
             progress_running = False
+
+def repl_loop(
+    provider_conf: Dict[str, Any],
+    agent_conf: Optional[Dict[str, Any]],
+    cli_model_override: Optional[str],
+    stream: bool,
+    progress: bool,
+    output_format: str,
+    no_tools: bool,
+    config: Dict[str, Any],
+    logger: Any,
+) -> None:
+    """
+    Simple interactive REPL using GNU readline when available.
+    - Up/Down for history navigation
+    - Ctrl+R for reverse history search (readline-provided)
+    - Ctrl+C cancels in-flight request; press twice quickly to exit
+    - Ctrl+D (EOF) exits
+    """
+    # Create a persistent event loop for the entire REPL session so MCP sessions persist
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    mgr = None
+    # Initialize MCP sessions before entering REPL so first command is fast
+    if not no_tools:
+        progress_obj = None
+        init_task_id = None
+        progress_running = False
+        try:
+            if sys.stderr.isatty():
+                progress_console = Console(file=sys.stderr)
+                progress_obj = Progress(
+                    SpinnerColumn(),
+                    TextColumn("{task.description}"),
+                    transient=True,
+                    console=progress_console,
+                )
+                progress_obj.start()
+                progress_running = True
+                init_task_id = progress_obj.add_task("Initializing MCP tools", total=None)
+            mgr = loop.run_until_complete(ensure_sessions_started_async(config))
+        except Exception:
+            pass
+        finally:
+            if init_task_id is not None and progress_obj is not None:
+                try:
+                    progress_obj.remove_task(init_task_id)
+                except Exception:
+                    pass
+                init_task_id = None
+            if progress_obj is not None and progress_running:
+                try:
+                    progress_obj.stop()
+                except Exception:
+                    pass
+                progress_running = False
+            # Clear any potential leftover line from progress UI to avoid a leading blank line
+            if sys.stderr.isatty():
+                try:
+                    sys.stderr.write("\x1b[1A\x1b[2K")
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+    # Best-effort enable readline features
+    _readline = None
+    try:
+        import readline as _readline  # type: ignore
+        try:
+            _readline.parse_and_bind("tab: complete")
+            # Default emacs bindings include Ctrl+R reverse-search-history
+        except Exception:
+            pass
+    except Exception:
+        _readline = None
+
+    prompt_str = "gptsh> "
+    last_interrupt = 0.0
+    while True:
+        try:
+            line = input(prompt_str)
+        except KeyboardInterrupt:
+            now = time.monotonic()
+            # Double Ctrl-C within 1.5s exits
+            if now - last_interrupt <= 1.5:
+                click.echo("", err=True)
+                break
+            last_interrupt = now
+            click.echo("(^C) Press Ctrl-C again to exit", err=True)
+            continue
+        except EOFError:
+            click.echo("", err=True)
+            break
+
+        if not line.strip():
+            continue
+
+        # Add to session history if readline is available
+        if _readline is not None:
+            try:
+                _readline.add_history(line)
+            except Exception:
+                pass
+
+        try:
+            loop.run_until_complete(
+                run_llm(
+                    prompt=line,
+                    provider_conf=provider_conf,
+                    agent_conf=agent_conf,
+                    cli_model_override=cli_model_override,
+                    stream=stream,
+                    progress=progress,
+                    output_format=output_format,
+                    no_tools=no_tools,
+                    config=config,
+                    logger=logger,
+                    exit_on_interrupt=False,
+                    preinitialized_mcp=True,
+                )
+            )
+        except KeyboardInterrupt:
+            last_interrupt = time.monotonic()
+            click.echo("Cancelled.", err=True)
+            continue
+
+    # Clean up MCP sessions and close the persistent event loop
+    try:
+        if not no_tools and mgr is not None:
+            loop.run_until_complete(mgr.stop())
+    except Exception:
+        pass
+    # Cleanup LiteLLM async clients to avoid un-awaited coroutine warnings
+    try:
+        if close_litellm_async_clients is not None:
+            loop.run_until_complete(close_litellm_async_clients())
+    except Exception:
+        pass
+    try:
+        # Suppress known RuntimeWarning from litellm's async_client_cleanup when closing loop
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                category=RuntimeWarning,
+                module=r"litellm\.llms\.custom_httpx\.async_client_cleanup",
+            )
+            loop.close()
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()
