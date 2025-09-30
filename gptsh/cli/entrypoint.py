@@ -403,12 +403,31 @@ async def run_llm(
                             waiting_task_id = None
 
                 def set_status(text: Optional[str]):
-                    nonlocal waiting_task_id, progress_obj
-                    if waiting_task_id is not None and progress_obj is not None and text:
+                    nonlocal waiting_task_id, progress_obj, progress_running
+                    # If no progress UI or no text, nothing to do
+                    if progress_obj is None or not text:
+                        return
+                    # Ensure a waiting task exists; if not, create one with the given description
+                    if waiting_task_id is None:
                         try:
-                            progress_obj.update(waiting_task_id, description=text)
+                            waiting_task_id = progress_obj.add_task(text, total=None)
                         except Exception:
-                            pass
+                            waiting_task_id = None
+                            return
+                        # Make sure the spinner is running
+                        if not progress_running:
+                            try:
+                                progress_obj.start()
+                            except Exception:
+                                pass
+                            else:
+                                progress_running = True
+                        return
+                    # Update existing task description
+                    try:
+                        progress_obj.update(waiting_task_id, description=text)
+                    except Exception:
+                        pass
 
                 content = await complete_with_tools(
                     params,
