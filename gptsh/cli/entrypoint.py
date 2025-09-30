@@ -133,6 +133,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             agent_provider = aconf.get("provider") or default_provider_name
             chosen_model = aconf.get("model") or ((providers_conf.get(agent_provider) or {}).get("model")) or "?"
             click.echo(f"- {agent_name}")
+            click.echo(f"  provider: {agent_provider or '?'}")
             click.echo(f"  model: {chosen_model}")
 
             # Determine allowed servers per agent (None = all)
