@@ -185,10 +185,6 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     providers_conf = config.get("providers", {})
     if not providers_conf:
         raise click.ClickException("No providers defined in config.")
-    provider = provider or config.get("default_provider") or next(iter(providers_conf))
-    if provider not in providers_conf:
-        raise click.BadParameter(f"Unknown provider '{provider}'", param_hint="--provider")
-    provider_conf = providers_conf[provider]
 
     agents_conf = config.get("agents", DEFAULT_AGENTS)
     # CLI should take precedence over config default
@@ -196,6 +192,12 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     if agent not in agents_conf:
         raise click.BadParameter(f"Unknown agent '{agent}'", param_hint="--agent")
     agent_conf = agents_conf[agent]
+
+    # Determine effective provider: CLI --provider > agent.provider > config default_provider > first configured
+    selected_provider = provider or (agent_conf.get("provider") if isinstance(agent_conf, dict) else None) or config.get("default_provider") or next(iter(providers_conf))
+    if selected_provider not in providers_conf:
+        raise click.BadParameter(f"Unknown provider '{selected_provider}'", param_hint="--provider")
+    provider_conf = providers_conf[selected_provider]
 
     # Handle prompt or stdin
     stdin_input = None
