@@ -15,7 +15,9 @@
         "--transport",
         "stdio",
         "--project",
-        "${env:PWD}"
+        "${env:PWD}",
+        "--context",
+        "agent"
       ],
       "autoApprove": [
         "read_file",
@@ -34,7 +36,6 @@
         "read_memory",
         "list_memories",
         "delete_memory",
-        "execute_shell_command",
         "activate_project",
         "switch_modes",
         "get_current_config",
