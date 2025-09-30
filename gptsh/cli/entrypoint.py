@@ -217,8 +217,19 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
 
     # Interactive REPL mode
     if interactive:
-        if not sys.stdin.isatty() or not sys.stdout.isatty():
-            raise click.ClickException("Interactive mode requires a TTY.")
+        # Allow stdin to carry an initial prompt; require a TTY on stdout for REPL display
+        if not sys.stdout.isatty():
+            raise click.ClickException("Interactive mode requires a TTY on stdout.")
+        # Build an initial prompt for the first REPL turn from positional arg and/or stdin
+        initial_prompt = None
+        try:
+            stdin_input = None if sys.stdin.isatty() else read_stdin()
+        except Exception:
+            stdin_input = None
+        if prompt and stdin_input:
+            initial_prompt = f"{prompt}\n\n---\nInput:\n{stdin_input}"
+        else:
+            initial_prompt = prompt or stdin_input
         # Agent-level overrides for tools if CLI flags not provided
         no_tools_effective = no_tools or bool(agent_conf.get("no_tools"))
         if not tools_filter:
@@ -251,6 +262,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             config=config,
             logger=logger,
             agent_name=agent,
+            initial_prompt=initial_prompt,
         )
         sys.exit(0)
     # Handle prompt or stdin
@@ -575,6 +587,7 @@ def repl_loop(
     config: Dict[str, Any],
     logger: Any,
     agent_name: Optional[str],
+    initial_prompt: Optional[str],
 ) -> None:
     """
     Simple interactive REPL using GNU readline when available.
@@ -627,6 +640,14 @@ def repl_loop(
                     sys.stderr.flush()
                 except Exception:
                     pass
+    # If stdin is not a TTY (e.g., initial prompt was piped), reattach stdin to /dev/tty for interactive input
+    tty_in = None
+    if not sys.stdin.isatty():
+        try:
+            tty_in = open("/dev/tty", "r")
+            sys.stdin = tty_in
+        except Exception:
+            tty_in = None
     # Best-effort enable readline features
     _readline = None
     try:
@@ -653,6 +674,35 @@ def repl_loop(
     prompt_str = f"{agent_col}|{model_col}> "
     history_messages: List[Dict[str, Any]] = []
     last_interrupt = 0.0
+
+    # If an initial prompt was provided (via stdin or positional arg), run it once before REPL input
+    if initial_prompt and str(initial_prompt).strip():
+        try:
+            result_holder: List[str] = []
+            user_msg: Dict[str, Any] = {"role": "user", "content": initial_prompt}
+            loop.run_until_complete(
+                run_llm(
+                    prompt=initial_prompt,
+                    provider_conf=provider_conf,
+                    agent_conf=agent_conf,
+                    cli_model_override=cli_model_override,
+                    stream=stream,
+                    progress=progress,
+                    output_format=output_format,
+                    no_tools=no_tools,
+                    config=config,
+                    logger=logger,
+                    exit_on_interrupt=False,
+                    preinitialized_mcp=True,
+                    history_messages=history_messages,
+                    result_sink=result_holder,
+                )
+            )
+            assistant_content = result_holder[0] if result_holder else ""
+            history_messages.extend([user_msg, {"role": "assistant", "content": assistant_content}])
+        except KeyboardInterrupt:
+            last_interrupt = time.monotonic()
+            click.echo("Cancelled.", err=True)
     while True:
         try:
             line = input(prompt_str)
@@ -719,6 +769,12 @@ def repl_loop(
     try:
         if close_litellm_async_clients is not None:
             loop.run_until_complete(close_litellm_async_clients())
+    except Exception:
+        pass
+    # Close reattached TTY input if opened
+    try:
+        if 'tty_in' in locals() and tty_in is not None:
+            tty_in.close()
     except Exception:
         pass
     try:
