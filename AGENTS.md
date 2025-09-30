@@ -43,7 +43,7 @@ AGENTS.md      # (this file)
 ---
 ## Major Design/Implementation Points
 - **Async everywhere**: All operations that might block (model calls, subprocesses, HTTP, MCP, etc) MUST use `asyncio`.
-- **Config Management**: Merge global/user `~/.config/gptsh/config.yml` and project-local `.gptsh/config.yml`. Per-project overrides global. Reference env vars as `${VAR_NAME}`.
+- **Config Management**: Merge global/user `~/.config/gptsh/config.yml` (plus any `~/.config/gptsh/config.d/*.yml` snippets) and project-local `./.gptsh/config.yml`. Per-project overrides global. Reference env vars as `${VAR_NAME}`. YAML supports a custom `!include` tag with wildcard patterns, resolved relative to the including file.
 - **MCP Support**: Connects to MCP servers (local or remote), managed/configured via `mcp_servers.json` (Claude-compatible). Auto-respawn/reconnect logic for local/remote MCP servers, with exponential backoff and progress feedback.
 - **CLI Only** (for now): All command, mode, config options via command-line interface. TUI reserved for later.
 - **Tool Discovery**: Implements a `--list-tools` CLI arg to enumerate all tools provided by configured MCP servers, grouped by server.
