@@ -57,9 +57,10 @@ AGENTS.md      # (this file)
 
 Config is merged in this order (later overrides earlier):
 1. Global: `~/.config/gptsh/config.yml`
-2. Project: `./.gptsh/config.yml`
+2. Global snippets: `~/.config/gptsh/config.d/*.yml` (merged in lexicographic order)
+3. Project: `./.gptsh/config.yml`
 
-Environment variables can be referenced using `${VAR_NAME}` syntax. Secrets must be provided via env vars.
+Environment variables can be referenced using `${VAR_NAME}` syntax. YAML also supports a custom `!include` tag (with wildcard patterns) resolved relative to the including file. Secrets must be provided via env vars.
 
 Example global config:
 ```yaml

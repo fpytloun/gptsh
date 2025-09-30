@@ -199,9 +199,12 @@ uvx gptsh --tools serena,tavily
 
 Config is merged from:
 1) Global: ~/.config/gptsh/config.yml
-2) Project: ./.gptsh/config.yml
+2) Global snippets: ~/.config/gptsh/config.d/*.yml (merged in lexicographic order)
+3) Project: ./.gptsh/config.yml
 
-Environment variables may be referenced using ${VAR_NAME} (and ${env:VAR_NAME} in mcp_servers.json is normalized to ${VAR_NAME}).
+Environment variables may be referenced using ${VAR_NAME} (and ${env:VAR_NAME} in mcp_servers.json is normalized to ${VAR_NAME}). YAML also supports a custom !include tag resolved relative to the including file, with wildcard support. For example:
+- agents: !include agents.yml
+- agents: !include agents/*
 
 ### MCP
 
