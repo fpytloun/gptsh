@@ -41,9 +41,9 @@ DEFAULT_AGENTS = {
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--provider", default=None, help="Override LiteLLM provider from config")
-@click.option("--model", default=None, help="Override LLM model")
-@click.option("--agent", default=None, help="Named agent preset from config")
-@click.option("--config", "config_path", default=None, help="Specify alternate config path")
+@click.option("-m", "--model", default=None, help="Override LLM model")
+@click.option("-a", "--agent", default=None, help="Named agent preset from config")
+@click.option("-c", "--config", "config_path", default=None, help="Specify alternate config path")
 @click.option("--stream/--no-stream", default=True)
 @click.option("--progress/--no-progress", default=True)
 @click.option("--debug", is_flag=True, default=False)
