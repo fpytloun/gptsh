@@ -654,6 +654,51 @@ def repl_loop(
         import readline as _readline  # type: ignore
         try:
             _readline.parse_and_bind("tab: complete")
+            # Install simple tab-completion for REPL slash-commands and agents
+            commands = ["/exit", "/quit", "/model", "/agent"]
+
+            def _completer(text, state):
+                try:
+                    buf = _readline.get_line_buffer()
+                except Exception:
+                    buf = ""
+                # Only complete when starting with slash
+                if not buf.startswith("/"):
+                    return None
+                parts = buf.strip().split()
+                # Completing the command itself
+                if len(parts) <= 1 and not buf.endswith(" "):
+                    opts = [c for c in commands if c.startswith(text or "")]
+                    return opts[state] if state < len(opts) else None
+                # Completing arguments for specific commands
+                cmd = parts[0]
+                arg_prefix = ""
+                try:
+                    # Compute current arg prefix (text may be empty when at word boundary)
+                    if buf.endswith(" "):
+                        arg_prefix = ""
+                    else:
+                        arg_prefix = text or ""
+                except Exception:
+                    arg_prefix = text or ""
+                if cmd == "/agent":
+                    names = []
+                    try:
+                        agents_conf = config.get("agents") or {}
+                        names = [str(n) for n in agents_conf.keys()]
+                    except Exception:
+                        names = []
+                    opts = [n for n in names if n.startswith(arg_prefix)]
+                    return opts[state] if state < len(opts) else None
+                if cmd == "/model":
+                    # No centralized model list; allow free text (no suggestions)
+                    return None
+                return None
+
+            try:
+                _readline.set_completer(_completer)
+            except Exception:
+                pass
             # Default emacs bindings include Ctrl+R reverse-search-history
         except Exception:
             pass
@@ -721,6 +766,90 @@ def repl_loop(
 
         if not line.strip():
             continue
+
+        # Handle REPL slash-commands
+        sline = line.strip()
+        if sline.startswith("/"):
+            if sline in ("/exit", "/quit"):
+                click.echo("", err=True)
+                break
+            if sline.startswith("/model"):
+                parts = sline.split(None, 1)
+                if len(parts) == 2 and parts[1].strip():
+                    cli_model_override = parts[1].strip()
+                    # Recompute prompt to reflect new model
+                    chosen_model = (
+                        cli_model_override
+                        or (agent_conf or {}).get("model")
+                        or provider_conf.get("model")
+                        or "?"
+                    )
+                    model_label = str(chosen_model).rsplit("/", 1)[-1]
+                    agent_label = agent_name or "default"
+                    agent_col = click.style(agent_label, fg="cyan", bold=True)
+                    model_col = click.style(model_label, fg="magenta")
+                    prompt_str = f"{agent_col}|{model_col}> "
+                else:
+                    click.echo("Usage: /model <model>", err=True)
+                continue
+            if sline.startswith("/agent"):
+                parts = sline.split(None, 1)
+                if len(parts) != 2 or not parts[1].strip():
+                    click.echo("Usage: /agent <agent>", err=True)
+                    continue
+                new_agent = parts[1].strip()
+                agents_conf_all = config.get("agents") or {}
+                if new_agent not in agents_conf_all:
+                    click.echo(f"Unknown agent '{new_agent}'", err=True)
+                    continue
+                # Switch agent config
+                agent_conf = agents_conf_all.get(new_agent) or {}
+                agent_name = new_agent
+                # Reconfigure tools based on agent's 'tools' field
+                tools_field = agent_conf.get("tools") if isinstance(agent_conf, dict) else None
+                try:
+                    if isinstance(tools_field, list):
+                        if len(tools_field) == 0:
+                            # Disable tools entirely
+                            no_tools = True
+                            config.setdefault("mcp", {})["allowed_servers"] = []
+                            if mgr is not None:
+                                try:
+                                    loop.run_until_complete(mgr.stop())
+                                except Exception:
+                                    pass
+                        else:
+                            # Apply allow-list and ensure sessions are running
+                            labels = [str(x) for x in tools_field if x]
+                            config.setdefault("mcp", {})["allowed_servers"] = labels
+                            no_tools = False
+                            try:
+                                mgr = loop.run_until_complete(ensure_sessions_started_async(config))
+                            except Exception:
+                                pass
+                    else:
+                        # No specific tool filter; allow all servers
+                        config.setdefault("mcp", {})["allowed_servers"] = []
+                        if not no_tools:
+                            try:
+                                mgr = loop.run_until_complete(ensure_sessions_started_async(config))
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+                # Recompute prompt to reflect new agent and possibly new model default
+                chosen_model = (
+                    cli_model_override
+                    or (agent_conf or {}).get("model")
+                    or provider_conf.get("model")
+                    or "?"
+                )
+                model_label = str(chosen_model).rsplit("/", 1)[-1]
+                agent_label = agent_name or "default"
+                agent_col = click.style(agent_label, fg="cyan", bold=True)
+                model_col = click.style(model_label, fg="magenta")
+                prompt_str = f"{agent_col}|{model_col}> "
+                continue
 
         # Add to session history if readline is available
         if _readline is not None:
