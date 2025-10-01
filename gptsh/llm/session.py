@@ -166,8 +166,7 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
 
     # Copy starting conversation from params
     conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
-    max_iters = 5
-    for _ in range(max_iters):
+    while True:
         params["messages"] = conversation
         # INFO: Log LLM call with last user prompt in the current conversation turn
         try:
@@ -340,7 +339,11 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
                 "content": result,
             })
     # Max iterations reached
-    return ""
+    # Try to return the last tool result, or a message if nothing found
+    for msg in reversed(conversation):
+        if msg.get("role") == "tool" and msg.get("content"):
+            return str(msg.get("content"))
+    return "[No final LLM output. The model did not produce a final answer after tool calls.]"
 
 def _extract_text(c: Any) -> str:
     """
