@@ -1,5 +1,7 @@
 from typing import Any, Dict, List, Optional, AsyncIterator, Mapping
 import sys
+import logging
+import json as _json
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
 from gptsh.mcp import execute_tool_async
 
@@ -110,6 +112,18 @@ async def stream_completion(params: Dict[str, Any]) -> AsyncIterator[str]:
     """
     from litellm import acompletion
 
+    # INFO: Log LLM call with last user prompt
+    try:
+        msgs = params.get("messages") or []
+        last_user = None
+        for m in reversed(msgs):
+            if isinstance(m, dict) and m.get("role") == "user":
+                last_user = m.get("content")
+                break
+        logging.getLogger("gptsh").info("LLM call (stream) with prompt: %s", str(last_user) if last_user is not None else "")
+    except Exception:
+        pass
+
     stream_iter = await acompletion(stream=True, **params)
 
     async for chunk in stream_iter:
@@ -122,6 +136,18 @@ async def complete_simple(params: Dict[str, Any]) -> str:
     Single, non-streaming completion without tool loop. Returns final assistant content string.
     """
     from litellm import acompletion
+
+    # INFO: Log LLM call with last user prompt
+    try:
+        msgs = params.get("messages") or []
+        last_user = None
+        for m in reversed(msgs):
+            if isinstance(m, dict) and m.get("role") == "user":
+                last_user = m.get("content")
+                break
+        logging.getLogger("gptsh").info("LLM call with prompt: %s", str(last_user) if last_user is not None else "")
+    except Exception:
+        pass
 
     resp = await acompletion(**params)
     try:
@@ -143,6 +169,16 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
     max_iters = 5
     for _ in range(max_iters):
         params["messages"] = conversation
+        # INFO: Log LLM call with last user prompt in the current conversation turn
+        try:
+            last_user = None
+            for m in reversed(conversation):
+                if isinstance(m, dict) and m.get("role") == "user":
+                    last_user = m.get("content")
+                    break
+            logging.getLogger("gptsh").info("LLM call (tools loop) with prompt: %s", str(last_user) if last_user is not None else "")
+        except Exception:
+            pass
         resp = await acompletion(**params)
         calls = parse_tool_calls(resp)
         if not calls:
@@ -272,6 +308,15 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
                         await _asyncio.sleep(0)
                     except Exception:
                         pass
+            # INFO: Log tool invocation with arguments
+            try:
+                pretty_args = _json.dumps(args, ensure_ascii=False)
+            except Exception:
+                pretty_args = str(args)
+            try:
+                logging.getLogger("gptsh").info("Tool call: %s__%s args=%s", server, toolname, pretty_args)
+            except Exception:
+                pass
             try:
                 result = await execute_tool_async(server, toolname, args, config)
             except Exception as e:
@@ -282,6 +327,11 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
                         set_status(wait_label)
                     except Exception:
                         pass
+            # INFO: Log tool output/result
+            try:
+                logging.getLogger("gptsh").info("Tool result: %s__%s output=%s", server, toolname, str(result))
+            except Exception:
+                pass
             # Append tool result
             conversation.append({
                 "role": "tool",
