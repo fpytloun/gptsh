@@ -394,6 +394,13 @@ gptsh -i "Say hello"
 echo "Summarize this input" | gptsh -i
 ```
 
+REPL slash-commands:
+- /exit or /quit — exit the REPL
+- /model <model> — switch the active model
+- /agent <agent> — switch the active agent and reload tools according to agent config
+- /reasoning_effort [minimal|low|medium|high] — adjust reasoning effort
+(Tab completion works for slash-commands and agent names.)
+
 Disable progress UI:
 
 ```bash

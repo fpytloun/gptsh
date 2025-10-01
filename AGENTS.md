@@ -239,6 +239,8 @@ uvx pytest --maxfail=1 --disable-warnings -q
  - [x] Maintain per-REPL session chat history (messages threaded through LLM calls)
  - [x] Interactive mode accepts initial prompt from stdin or positional arg and continues after response
  - [x] Persistent MCP sessions across the entire REPL; initialized once and cleaned up on exit; LiteLLM async client cleanup and warning suppression
+ - [x] REPL slash-commands: `/exit`, `/quit`, `/model <model>`, `/agent <agent>`, `/reasoning_effort [minimal|low|medium|high]`
+ - [x] Tab-completion for slash-commands and agent names; switching agent also updates model and reloads tools
  
  ### Pending / Roadmap
 
