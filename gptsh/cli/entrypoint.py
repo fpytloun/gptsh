@@ -654,6 +654,13 @@ def repl_loop(
         import readline as _readline  # type: ignore
         try:
             _readline.parse_and_bind("tab: complete")
+            # Ensure '/' is part of the word being completed (so '/ag' matches '/agent')
+            try:
+                delims = _readline.get_completer_delims()
+                if "/" in delims:
+                    _readline.set_completer_delims(delims.replace("/", ""))
+            except Exception:
+                pass
             # Install simple tab-completion for REPL slash-commands and agents
             commands = ["/exit", "/quit", "/model", "/agent"]
 
@@ -805,36 +812,40 @@ def repl_loop(
                 # Switch agent config
                 agent_conf = agents_conf_all.get(new_agent) or {}
                 agent_name = new_agent
+                # Reset model override to the new agent's model (if provided)
+                cli_model_override = (agent_conf.get("model") if isinstance(agent_conf, dict) else None)
                 # Reconfigure tools based on agent's 'tools' field
                 tools_field = agent_conf.get("tools") if isinstance(agent_conf, dict) else None
                 try:
+                    # Always stop current MCP manager before applying a new allow-list so changes take effect
+                    if mgr is not None:
+                        try:
+                            loop.run_until_complete(mgr.stop())
+                        except Exception:
+                            pass
                     if isinstance(tools_field, list):
                         if len(tools_field) == 0:
                             # Disable tools entirely
                             no_tools = True
                             config.setdefault("mcp", {})["allowed_servers"] = []
-                            if mgr is not None:
-                                try:
-                                    loop.run_until_complete(mgr.stop())
-                                except Exception:
-                                    pass
+                            mgr = None
                         else:
-                            # Apply allow-list and ensure sessions are running
+                            # Apply allow-list and restart sessions
                             labels = [str(x) for x in tools_field if x]
                             config.setdefault("mcp", {})["allowed_servers"] = labels
                             no_tools = False
                             try:
                                 mgr = loop.run_until_complete(ensure_sessions_started_async(config))
                             except Exception:
-                                pass
+                                mgr = None
                     else:
-                        # No specific tool filter; allow all servers
+                        # No specific tool filter; allow all servers (reload)
                         config.setdefault("mcp", {})["allowed_servers"] = []
                         if not no_tools:
                             try:
                                 mgr = loop.run_until_complete(ensure_sessions_started_async(config))
                             except Exception:
-                                pass
+                                mgr = None
                 except Exception:
                     pass
                 # Recompute prompt to reflect new agent and possibly new model default
