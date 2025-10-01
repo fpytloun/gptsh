@@ -662,7 +662,7 @@ def repl_loop(
             except Exception:
                 pass
             # Install simple tab-completion for REPL slash-commands and agents
-            commands = ["/exit", "/quit", "/model", "/agent"]
+            commands = ["/exit", "/quit", "/model", "/agent", "/reasoning_effort"]
 
             def _completer(text, state):
                 try:
@@ -696,6 +696,9 @@ def repl_loop(
                     except Exception:
                         names = []
                     opts = [n for n in names if n.startswith(arg_prefix)]
+                    return opts[state] if state < len(opts) else None
+                if cmd == "/reasoning_effort":
+                    opts = [o for o in ["minimal", "low", "medium", "high"] if o.startswith(arg_prefix)]
                     return opts[state] if state < len(opts) else None
                 if cmd == "/model":
                     # No centralized model list; allow free text (no suggestions)
@@ -799,6 +802,20 @@ def repl_loop(
                 else:
                     click.echo("Usage: /model <model>", err=True)
                 continue
+            if sline.startswith("/reasoning_effort"):
+                parts = sline.split(None, 1)
+                if len(parts) == 2 and parts[1].strip():
+                    val = parts[1].strip().lower()
+                    if val in {"minimal", "low", "medium", "high"}:
+                        if not isinstance(agent_conf, dict):
+                            agent_conf = {}
+                        agent_conf["reasoning_effort"] = val
+                    else:
+                        click.echo("Usage: /reasoning_effort [minimal|low|medium|high]", err=True)
+                        continue
+                else:
+                    click.echo("Usage: /reasoning_effort [minimal|low|medium|high]", err=True)
+                    continue
             if sline.startswith("/agent"):
                 parts = sline.split(None, 1)
                 if len(parts) != 2 or not parts[1].strip():
