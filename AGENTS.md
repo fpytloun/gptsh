@@ -250,6 +250,7 @@ uvx pytest --maxfail=1 --disable-warnings -q
  - [x] Add progress bars and status feedback for long-running operations
  - [ ] Build interactive approval UX for destructive or privileged tool invocations
  - [ ] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
+ - [ ] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
 
  #### Configuration & Agents
  - [ ] Support full agent presets (system/user prompts, model selection, tool policies)
