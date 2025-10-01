@@ -4,6 +4,9 @@ import logging
 import json as _json
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
 from gptsh.mcp import execute_tool_async
+from rich.progress import Progress
+import asyncio
+from typing import Tuple
 
 async def prepare_completion_params(
     prompt: str,
@@ -155,7 +158,7 @@ async def complete_simple(params: Dict[str, Any]) -> str:
     except Exception:
         return ""
 
-async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], approved_map: Dict[str, List[str]], pause_ui=None, resume_ui=None, set_status=None, wait_label: Optional[str] = None) -> str:
+async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], approved_map: Dict[str, List[str]], progress: Optional[Progress] = None, pause_ui=None, resume_ui=None, wait_label: Optional[str] = None) -> str:
     """
     Tool execution loop using MCP until the model returns a final message with no tool_calls.
     Returns final assistant content string.
@@ -295,23 +298,15 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
                     })
                     continue
 
-            # Update progress/status to reflect tool execution
-            if callable(set_status):
-                try:
-                    set_status(f"Executing {server}__{toolname}")
-                except Exception:
-                    pass
-                else:
-                    try:
-                        import asyncio as _asyncio
-                        await _asyncio.sleep(0)
-                    except Exception:
-                        pass
-            # INFO: Log tool invocation with arguments
+            # INFO: Log tool invocation with arguments and show progress
+            task_id = None
             try:
                 pretty_args = _json.dumps(args, ensure_ascii=False)
             except Exception:
                 pretty_args = str(args)
+            # start progress task
+            if progress is not None:
+                task_id = progress.add_task(f"⏳ {server}__{toolname} args={pretty_args}", total=None)
             try:
                 logging.getLogger("gptsh").info("Tool call: %s__%s args=%s", server, toolname, pretty_args)
             except Exception:
@@ -321,11 +316,9 @@ async def complete_with_tools(params: Dict[str, Any], config: Dict[str, Any], ap
             except Exception as e:
                 result = f"Tool execution failed: {e}"
             finally:
-                if callable(set_status) and wait_label:
-                    try:
-                        set_status(wait_label)
-                    except Exception:
-                        pass
+                # mark progress done
+                if progress is not None and task_id is not None:
+                    progress.update(task_id, description=f"✔ {server}__{toolname} args={pretty_args}", completed=True)
             # INFO: Log tool output/result
             try:
                 logging.getLogger("gptsh").info("Tool result: %s__%s output=%s", server, toolname, str(result))

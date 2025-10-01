@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import warnings
+import re
 # Suppress known LiteLLM RuntimeWarning about un-awaited coroutine on loop close.
 warnings.filterwarnings(
     "ignore",
@@ -344,7 +345,7 @@ async def run_llm(
         progress_obj = Progress(
             SpinnerColumn(),
             TextColumn("{task.description}"),
-            transient=True,
+            transient=False,
             console=progress_console,
         )
         progress_obj.start()
@@ -515,9 +516,9 @@ async def run_llm(
                     params,
                     config,
                     approved_map,
+                    progress=progress_obj,
                     pause_ui=pause_ui,
                     resume_ui=resume_ui,
-                    set_status=set_status,
                     wait_label=wait_label,
                 )
             else:
@@ -611,7 +612,7 @@ def repl_loop(
                 progress_obj = Progress(
                     SpinnerColumn(),
                     TextColumn("{task.description}"),
-                    transient=True,
+                    transient=False,
                     console=progress_console,
                 )
                 progress_obj.start()
@@ -726,7 +727,7 @@ def repl_loop(
     agent_label = agent_name or "default"
     agent_col = click.style(agent_label, fg="cyan", bold=True)
     model_col = click.style(model_label, fg="magenta")
-    prompt_str = f"{agent_col}|{model_col}> "
+    prompt_str = re.sub('(\x1b\\[[0-9;]*[A-Za-z])', r'\001\1\002', f"{agent_col}|{model_col}> ") if _readline is not None else f"{agent_col}|{model_col}> "
     history_messages: List[Dict[str, Any]] = []
     last_interrupt = 0.0
 
@@ -798,7 +799,7 @@ def repl_loop(
                     agent_label = agent_name or "default"
                     agent_col = click.style(agent_label, fg="cyan", bold=True)
                     model_col = click.style(model_label, fg="magenta")
-                    prompt_str = f"{agent_col}|{model_col}> "
+                    prompt_str = re.sub('(\x1b\\[[0-9;]*[A-Za-z])', r'\001\1\002', f"{agent_col}|{model_col}> ") if _readline is not None else f"{agent_col}|{model_col}> "
                 else:
                     click.echo("Usage: /model <model>", err=True)
                 continue
@@ -876,7 +877,7 @@ def repl_loop(
                 agent_label = agent_name or "default"
                 agent_col = click.style(agent_label, fg="cyan", bold=True)
                 model_col = click.style(model_label, fg="magenta")
-                prompt_str = f"{agent_col}|{model_col}> "
+                prompt_str = re.sub('(\x1b\\[[0-9;]*[A-Za-z])', r'\001\1\002', f"{agent_col}|{model_col}> ") if _readline is not None else f"{agent_col}|{model_col}> "
                 continue
 
         # Add to session history if readline is available
