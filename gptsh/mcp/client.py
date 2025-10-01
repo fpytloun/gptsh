@@ -183,15 +183,15 @@ class _MCPManager:
                                             await asyncio.wait_for(session.list_tools(), timeout=self._hc_timeout)
                                         except Exception as e:
                                             logging.getLogger(__name__).warning("Healthcheck list_tools failed for '%s': %s", name, e, exc_info=True)
-                                except Exception as e:
-                                    logging.getLogger(__name__).warning("Initialization failed for MCP SSE server '%s' after %.1fs: %s", name, self._hc_timeout, e, exc_info=True)
-                                    self.sessions[name] = None
-                                    ready_event.set()
-                                    return
                                     self.sessions[name] = ("session", session)
                                     logging.getLogger(__name__).debug("Server '%s' ready (sse)", name)
                                     ready_event.set()
                                     await stop_event.wait()
+                                    return
+                                except Exception as e:
+                                    logging.getLogger(__name__).warning("Initialization failed for MCP SSE server '%s' after %.1fs: %s", name, self._hc_timeout, e, exc_info=True)
+                                    self.sessions[name] = None
+                                    ready_event.set()
                                     return
                     else:
                         try:
