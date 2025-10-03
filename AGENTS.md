@@ -200,7 +200,7 @@ Notes:
 - Unit tests with `pytest` and `pytest-asyncio` for async flows.
 - Integration tests spinning mock MCP servers (stdio and SSE/HTTP) and chaos tests (kill/restart servers) to validate recovery.
 - Snapshot tests for CLI output (TTY vs non-TTY).
-- Run via `uvx pytest`.
+- Run via `uv run pytest`.
  
 ### Running Tests
 
@@ -209,13 +209,13 @@ To run the full test suite:
 ```bash
 uv venv
 uv pip install -e .[dev]
-uvx pytest -q
+uv run pytest
 ```
 
 You can customize pytest execution, for example:
 
 ```bash
-uvx pytest --maxfail=1 --disable-warnings -q
+uv run pytest --maxfail=1 --disable-warnings -q
 ```
  
  ## Refactor: Modular, Extensible Architecture
@@ -349,7 +349,7 @@ This architecture ensures each component can be replaced or extended independent
 - Console entry point: `[project.scripts] gptsh = "gptsh.cli.entrypoint:main"`.
 - Editable install for development: `uv venv && uv pip install -e .[dev]`.
 - Run: `uv run gptsh "your prompt"` (ensures the right venv/tooling is used).
-- Testing: `uvx pytest -q`.
+- Testing: `uv run pytest`.
 - Optional: `uv lock` to pin resolutions and achieve reproducible builds.
 
 Example pyproject excerpt:
@@ -430,7 +430,7 @@ gptsh = "gptsh.cli.entrypoint:main"
 ## Installation and Development
 
 - **All installation, dev, and test scripts must use `uv`/`uvx` in a managed virtual environment.** 
-- Example: `uv venv` to init, then `uv pip install -e .` to install deps, `uvx pytest`, etc.
+- Example: `uv venv` to init, then `uv pip install -e .` to install deps, `uv run pytest`, etc.
 
 ---
 ## Reference Docs
