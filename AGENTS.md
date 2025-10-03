@@ -217,10 +217,10 @@ You can customize pytest execution, for example:
 ```bash
 uv run pytest --maxfail=1 --disable-warnings -q
 ```
- 
- ## Refactor: Modular, Extensible Architecture
 
- ### Overview
+## Refactor: Modular, Extensible Architecture
+
+### Overview
 
 GPTSH will be refactored into a clean, modular structure to maximize readability, testability, and extensibility. The new layers and their responsibilities are:
 
@@ -236,44 +236,44 @@ GPTSH will be refactored into a clean, modular structure to maximize readability
 
 This architecture ensures each component can be replaced or extended independently—swap LLM backends, add a web UI, or plug in new tool servers without touching unrelated code.
 
- To support future extensibility—multiple front-ends (CLI, TUI, web), pluggable LLM backends, flexible MCP tool servers, and structured domain models—GPTSH will be reorganized into a modular, object-oriented architecture. Each layer exposes a clear interface (Protocol or abstract base class), and dedicated implementation modules fulfill those interfaces. This structure improves readability, testability, security, and maintainability, and enables independent replacement of components without impacting others.
+To support future extensibility—multiple front-ends (CLI, TUI, web), pluggable LLM backends, flexible MCP tool servers, and structured domain models—GPTSH will be reorganized into a modular, object-oriented architecture. Each layer exposes a clear interface (Protocol or abstract base class), and dedicated implementation modules fulfill those interfaces. This structure improves readability, testability, security, and maintainability, and enables independent replacement of components without impacting others.
 
- **Core Components**
+**Core Components**
 
- 1. **Interfaces** (`gptsh/interfaces.py`):  
-    - `LLMClient`: async `complete(params) -> Dict[str,Any]` and `stream(params) -> AsyncIterator[str]`.  
-    - `MCPClient`: async `list_tools() -> Dict[str,List[str]]` and `call_tool(server,tool,args) -> str`.  
-    - `ApprovalPolicy`: `is_auto_allowed(server,tool) -> bool` and async `confirm(server,tool,args) -> bool`.  
-    - `ProgressReporter`: `start()`, `stop()`, `add_task(desc) -> Optional[int]`, `complete_task(id,desc)`, `pause()`, `resume()`.
+1. **Interfaces** (`gptsh/interfaces.py`):  
+   - `LLMClient`: async `complete(params) -> Dict[str,Any]` and `stream(params) -> AsyncIterator[str]`.  
+   - `MCPClient`: async `list_tools() -> Dict[str,List[str]]` and `call_tool(server,tool,args) -> str`.  
+   - `ApprovalPolicy`: `is_auto_allowed(server,tool) -> bool` and async `confirm(server,tool,args) -> bool`.  
+   - `ProgressReporter`: `start()`, `stop()`, `add_task(desc) -> Optional[int]`, `complete_task(id,desc)`, `pause()`, `resume()`.
 
- 2. **LLM Adapter** (`gptsh/llm/litellm_client.py`):  
-    - `LiteLLMClient` implements `LLMClient`, centralizing all `litellm` calls and chunk parsing.
+2. **LLM Adapter** (`gptsh/llm/litellm_client.py`):  
+   - `LiteLLMClient` implements `LLMClient`, centralizing all `litellm` calls and chunk parsing.
 
- 3. **MCP Manager** (`gptsh/mcp/manager.py`):  
-    - `MCPManager` implements `MCPClient`, wrapping existing logic with a clean API: `start()`, `list_tools()`, `call_tool()`, `stop()`.
+3. **MCP Manager** (`gptsh/mcp/manager.py`):  
+   - `MCPManager` implements `MCPClient`, wrapping existing logic with a clean API: `start()`, `list_tools()`, `call_tool()`, `stop()`.
 
- 4. **Approvals** (`gptsh/core/approval.py`):  
-    - `DefaultApprovalPolicy` implements `ApprovalPolicy`, encapsulating wildcard normalization and interactive confirmation via `rich.prompt`.
+4. **Approvals** (`gptsh/core/approval.py`):  
+   - `DefaultApprovalPolicy` implements `ApprovalPolicy`, encapsulating wildcard normalization and interactive confirmation via `rich.prompt`.
 
- 5. **Progress Reporting** (`gptsh/core/progress.py`):  
-    - `RichProgressReporter` implements `ProgressReporter`, providing persistent, well-wrapped progress bars.
+5. **Progress Reporting** (`gptsh/core/progress.py`):  
+   - `RichProgressReporter` implements `ProgressReporter`, providing persistent, well-wrapped progress bars.
 
- 6. **Chat Orchestration** (`gptsh/core/session.py`):  
-    - `ChatSession` class encapsulates conversation history, LLM calls, tool-call detection, parallel execution, approvals, and progress updates—replacing `complete_with_tools`.
+6. **Chat Orchestration** (`gptsh/core/session.py`):  
+   - `ChatSession` class encapsulates conversation history, LLM calls, tool-call detection, parallel execution, approvals, and progress updates—replacing `complete_with_tools`.
 
- 7. **Domain Models** (`gptsh/domain/models.py`):  
-    - Typed `@dataclass` definitions (`ProviderConfig`, `AgentConfig`, `ToolSpec`, etc.), mapping raw config dicts to structured objects.
+7. **Domain Models** (`gptsh/domain/models.py`):  
+   - Typed `@dataclass` definitions (`ProviderConfig`, `AgentConfig`, `ToolSpec`, etc.), mapping raw config dicts to structured objects.
 
- 8. **UI Layer** (`gptsh/ui`):  
-    - `UIInterface` protocol.  
-    - `gptsh/ui/cli.py` and future `gptsh/ui/tui.py` implement `UIInterface`.  
-    - `cli/entrypoint.py` selects and invokes the chosen UI.
+8. **UI Layer** (`gptsh/ui`):  
+   - `UIInterface` protocol.  
+   - `gptsh/ui/cli.py` and future `gptsh/ui/tui.py` implement `UIInterface`.  
+   - `cli/entrypoint.py` selects and invokes the chosen UI.
 
- 9. **Builtin Tool Registry** (`gptsh/mcp/builtin/base.py`):  
-    - Decorator-based `@tool` registration and shared `list_tools`, `list_tools_detailed`, and `execute` dispatch.  
-    - Individual builtin modules only declare tool functions with metadata.
+9. **Builtin Tool Registry** (`gptsh/mcp/builtin/base.py`):  
+   - Decorator-based `@tool` registration and shared `list_tools`, `list_tools_detailed`, and `execute` dispatch.  
+   - Individual builtin modules only declare tool functions with metadata.
 
- ### TODO List
+### TODO List
 
 - [ ] Create `gptsh/interfaces.py` defining `LLMClient`, `MCPClient`, `ApprovalPolicy`, `ProgressReporter`, and `UIInterface` protocols.  
 - [ ] Implement `gptsh/llm/litellm_client.py` with `LiteLLMClient` and `_extract_text` logic.  
@@ -291,59 +291,134 @@ This architecture ensures each component can be replaced or extended independent
 - [ ] Update `README.md` and code comments to explain the new modular architecture.  
 - [ ] Plan and document a stepwise migration strategy that preserves CI passing at each stage.
 
- ## TODO / Implementation Status
- 
- ### Completed
- - [x] Scaffolded project structure and Python packages (`cli`, `config`, `core`, `mcp`, `plugins`, `utils`, `tests`)
- - [x] Implemented config loader with YAML merging and environment variable expansion
- - [x] Built CLI entry point with Click, supporting prompt, agent, model, stream, progress, debug flags
- - [x] Integrated logging setup with configurable levels and formats
- - [x] Added stdin handler with truncation strategy for piped input
- - [x] MCP tool discovery and execution via official MCP SDK (stdio/HTTP/SSE)
- - [x] Implemented asynchronous LLM calls via `litellm` with streaming and single-shot support
- - [x] Wrote pytest tests for config loader, stdin handler, and CLI flows
- - [x] Added --mcp-servers CLI option to override path to MCP servers file
- - [x] Added --provider option to select LiteLLM provider from config
- - [x] Added --list-providers CLI option to list configured providers
- - [x] Rich Progress UI rendered to stderr; clean teardown before output
- - [x] Output format flag `-o/--output` (text|markdown) with Markdown rendering at end
- - [x] `--no-tools` to disable MCP; `--tools` to whitelist allowed MCP servers
- - [x] Interactive REPL mode with colored "<agent>|<model>>" prompt
- - [x] Maintain per-REPL session chat history (messages threaded through LLM calls)
- - [x] Interactive mode accepts initial prompt from stdin or positional arg and continues after response
- - [x] Persistent MCP sessions across the entire REPL; initialized once and cleaned up on exit; LiteLLM async client cleanup and warning suppression
- - [x] REPL slash-commands: `/exit`, `/quit`, `/model <model>`, `/agent <agent>`, `/reasoning_effort [minimal|low|medium|high]`
- - [x] Tab-completion for slash-commands and agent names; switching agent also updates model and reloads tools
- 
- ### Pending / Roadmap
+## TODO / Implementation Status
 
- #### MCP Integration
- - [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)
- - [ ] Create integration and chaos tests for MCP lifecycle resilience
+### Completed
+- [x] Scaffolded project structure and Python packages (`cli`, `config`, `core`, `mcp`, `plugins`, `utils`, `tests`)
+- [x] Implemented config loader with YAML merging and environment variable expansion
+- [x] Built CLI entry point with Click, supporting prompt, agent, model, stream, progress, debug flags
+- [x] Integrated logging setup with configurable levels and formats
+- [x] Added stdin handler with truncation strategy for piped input
+- [x] MCP tool discovery and execution via official MCP SDK (stdio/HTTP/SSE)
+- [x] Implemented asynchronous LLM calls via `litellm` with streaming and single-shot support
+- [x] Wrote pytest tests for config loader, stdin handler, and CLI flows
+- [x] Added --mcp-servers CLI option to override path to MCP servers file
+- [x] Added --provider option to select LiteLLM provider from config
+- [x] Added --list-providers CLI option to list configured providers
+- [x] Rich Progress UI rendered to stderr; clean teardown before output
+- [x] Output format flag `-o/--output` (text|markdown) with Markdown rendering at end
+- [x] `--no-tools` to disable MCP; `--tools` to whitelist allowed MCP servers
+- [x] Interactive REPL mode with colored "<agent>|<model>>" prompt
+- [x] Maintain per-REPL session chat history (messages threaded through LLM calls)
+- [x] Interactive mode accepts initial prompt from stdin or positional arg and continues after response
+- [x] Persistent MCP sessions across the entire REPL; initialized once and cleaned up on exit; LiteLLM async client cleanup and warning suppression
+- [x] REPL slash-commands: `/exit`, `/quit`, `/model <model>`, `/agent <agent>`, `/reasoning_effort [minimal|low|medium|high]`
+- [x] Tab-completion for slash-commands and agent names; switching agent also updates model and reloads tools
+- [x] Add progress bars and status feedback for long-running operations
+- [x] Build interactive approval UX for destructive or privileged tool invocations
+- [x] Support full agent presets (system/user prompts, model selection, tool policies)
+- [x] Complete configuration overrides and merging for global and project-local settings
 
- #### User Experience
- - [x] Add progress bars and status feedback for long-running operations
- - [ ] Build interactive approval UX for destructive or privileged tool invocations
- - [ ] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
- - [ ] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
+### Pending / Roadmap
 
- #### Configuration & Agents
- - [ ] Support full agent presets (system/user prompts, model selection, tool policies)
- - [ ] Complete configuration overrides and merging for global and project-local settings
- - [ ] Implement log redaction for secrets and sensitive data
+#### MCP Integration
+- [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)
+- [ ] Add option to define mcpServers in gptsh config per agents either by passing structure or including mcp_servers.json file
 
- #### Resilience & Timeouts
- - [ ] Add request timeouts with exponential backoff and jitter for model and MCP calls
+#### User Experience
+- [ ] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
+- [ ] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
 
- #### Packaging & Workflow
- - [ ] Add `uv lock` workflow and packaging pipelines for releases
- - [ ] Add more full tests coverage
+#### Configuration & Agents
+- [ ] Implement log redaction for secrets and sensitive data
+- [ ] Support logging into file
 
- #### Code quality & Optimization & Performance
- - [ ] Cleanup code, deduplicate some parts (loading agents, etc.), use objects
- 
- ---
- ## Packaging and uv Workflow
+#### Workflows
+- [ ] Add support for Workflows.
+
+Workflow is using multiple steps that consists of agents and other execution blocks
+
+Example config defining `create-git-commit` workflow that is using already defined `committer` agent and shell execution steps:
+
+```yaml
+workflow:
+  create-git-commit:
+    parameter:
+      amend:
+        # Will pass amend into workflow steps (shell variable of value 0/1 and into LLM step as user message)
+        type: bool
+      push:
+        type: bool
+    steps:
+      - description: "Obtain diff of changes"
+        on_failure: exit # Can be "exit" (default, will fail and pass output and exitcode) or "continue"
+        shell:
+          command:
+            staged=$(git diff --cached)
+
+            if [[ -z "$staged" && $amend -eq 0 ]]; then
+              echo "No staged changes to commit!" >&2
+              exit 1
+            fi
+
+            if [[ $amend -eq 1 ]]; then
+              if [[ -z "$staged" ]]; then
+                # No staged changes, just reword last commit
+                git show --pretty=format:%B HEAD
+              else
+                # Staged changes and committed changes
+                git show --pretty=format:'' HEAD
+                echo "$staged"
+              fi
+            else
+              echo "$staged"
+            fi
+      - description: "Generate commit message"
+        llm:
+          agent: committer
+          prompt:
+            user: |
+              Generate single commit message based on provided diff:
+              ${step[-1].stdout}
+      - description: "Commit and push"
+        shell:
+          env:
+            # define msg passed as env variable, reference last step's stdout.
+            msg: "${step[-1].stdout}"
+          command: |
+            if [[ $amend -eq 1 ]]; then
+              git commit --amend --edit -m "$msg"
+            else
+              git commit --edit -m "$msg"
+            fi
+
+            if [[ $push -eq 1 ]]; then
+              upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u})
+              remote=${upstream%%/*}
+              branch=${upstream#*/}
+              git push "$remote" HEAD:"$branch"
+            fi
+```
+
+Usage will be very simple:
+```sh
+gptsh -w create-git-commit
+# Or with parameters
+gptsh -w create-git-commit --amend --push
+```
+
+#### Resilience & Timeouts
+- [ ] Add request timeouts with exponential backoff and jitter for model and MCP calls
+
+#### Packaging & Workflow
+- [ ] Add `uv lock` workflow and packaging pipelines for releases
+- [ ] Add more full tests coverage
+
+#### Code quality & Optimization & Performance
+- [ ] Cleanup code, deduplicate some parts (loading agents, etc.), use objects
+
+---
+## Packaging and uv Workflow
 
 - Use a single `pyproject.toml` managed by `uv`.
 - Console entry point: `[project.scripts] gptsh = "gptsh.cli.entrypoint:main"`.
