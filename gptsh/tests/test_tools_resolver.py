@@ -1,6 +1,6 @@
-import pytest
+from typing import Any, Dict
 
-from typing import Any, Dict, List, Optional
+import pytest
 
 from gptsh.mcp.tools_resolver import resolve_tools
 
@@ -39,4 +39,3 @@ async def test_tools_resolver_filters_and_invokes(monkeypatch):
     read_handle = next(h for h in handles if h.name == "read")
     out = await read_handle.invoke({"x": 1})
     assert out == "fs:read:1"
-

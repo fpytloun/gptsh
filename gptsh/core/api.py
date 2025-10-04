@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.core.agent import Agent
 from gptsh.core.session import ChatSession
 from gptsh.mcp.manager import MCPManager
-
 
 """
 Agent-only core API.

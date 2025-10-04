@@ -1,6 +1,6 @@
-import pytest
-
 from typing import Any, Dict, List, Optional
+
+import pytest
 
 from gptsh.core.agent import ToolHandle
 from gptsh.core.config_resolver import build_agent
@@ -48,4 +48,3 @@ async def test_build_agent_base_params_and_tools_filter(monkeypatch):
     assert captured_allowed == ["fs"]
     assert set(agent.tools.keys()) == {"fs"}
     assert len(agent.tools["fs"]) == 1
-

@@ -10,7 +10,6 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from gptsh.config.loader import load_config
 from gptsh.core.api import run_prompt_with_agent
-from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.core.config_resolver import build_agent
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.logging import setup_logging
