@@ -130,10 +130,11 @@ def command_no_tools(
 
     import asyncio
 
-    from gptsh.core.config_resolver import build_agent as _build_agent
     # Use a fresh loop to avoid nested run() issues under pytest-asyncio
     # Run coroutine in a dedicated thread to avoid interfering with any running loop
     import threading
+
+    from gptsh.core.config_resolver import build_agent as _build_agent
 
     result_box: Dict[str, Any] = {}
 

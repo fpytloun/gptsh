@@ -2,7 +2,7 @@ import pytest
 
 from gptsh.core.agent import Agent
 from gptsh.core.approval import DefaultApprovalPolicy
-from gptsh.core.repl import command_model, command_reasoning_effort, command_tools, command_no_tools
+from gptsh.core.repl import command_model, command_no_tools, command_reasoning_effort, command_tools
 
 
 class DummyLLM:

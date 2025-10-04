@@ -228,3 +228,54 @@ def test_cli_timeout_exit_code(monkeypatch):
     result = runner.invoke(main, ["--no-tools", "--output", "text", "hello"], catch_exceptions=False)
     assert result.exit_code == 124
     assert "Operation timed out" in result.output
+
+
+def test_cli_interactive_invokes_agent_repl(monkeypatch):
+    import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
+
+    # Minimal config with agents/providers
+    def fake_load_config(paths=None):
+        return {
+            "providers": {"openai": {"model": "m1"}},
+            "default_provider": "openai",
+            "agents": {"default": {"model": "m1"}},
+            "default_agent": "default",
+        }
+
+    monkeypatch.setattr(ep, "load_config", fake_load_config)
+
+    # Pretend we are on a TTY for interactive mode
+    monkeypatch.setattr(ep.sys.stdout, "isatty", lambda: True)
+    # No stdin content
+    monkeypatch.setattr(ep, "read_stdin", lambda: None)
+
+    # Stub build_agent to avoid external calls
+    class DummyAgent:
+        name = "default"
+        llm = type("_", (), {"_base": {"model": "m1"}})()
+        tools = {}
+        policy = object()
+        provider_conf = {"model": "m1"}
+        agent_conf = {"model": "m1"}
+
+    async def fake_build_agent(cfg, **k):
+        return DummyAgent()
+
+    called = {}
+
+    def fake_run_agent_repl(**kwargs):
+        called.update(kwargs)
+        # Simulate immediate REPL exit without blocking
+        return None
+
+    monkeypatch.setattr(ep, "build_agent", fake_build_agent)
+    monkeypatch.setattr(ep, "run_agent_repl", fake_run_agent_repl)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["-i", "--no-tools"], catch_exceptions=False)
+    assert result.exit_code == 0
+    # Verify REPL was invoked with an Agent and flags propagated
+    assert isinstance(called.get("agent"), DummyAgent.__class__) or hasattr(called.get("agent"), "llm")
+    assert called.get("stream") in {True, False}
+    assert called.get("output_format") in {"markdown", "text"}
