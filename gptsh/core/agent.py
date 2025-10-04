@@ -30,3 +30,5 @@ class Agent:
     tools: Dict[str, List[ToolHandle]] = field(default_factory=dict)
     policy: ApprovalPolicy = field(default_factory=lambda: DefaultApprovalPolicy({}))
     generation_params: Dict[str, Any] = field(default_factory=dict)
+    provider_conf: Dict[str, Any] = field(default_factory=dict)
+    agent_conf: Dict[str, Any] = field(default_factory=dict)

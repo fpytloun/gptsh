@@ -54,4 +54,12 @@ async def build_agent(
     policy = DefaultApprovalPolicy(approved_map)
 
     name = cli_agent or config.get("default_agent") or "default"
-    return Agent(name=name, llm=llm, tools=tools, policy=policy, generation_params={})
+    return Agent(
+        name=name,
+        llm=llm,
+        tools=tools,
+        policy=policy,
+        generation_params={},
+        provider_conf=dict(provider_conf or {}),
+        agent_conf=dict(agent_conf or {}),
+    )

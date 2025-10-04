@@ -253,15 +253,12 @@ def run_agent_repl(
     # Readline for history/convenience, provide agent names for completion
     rl_enabled, rl = setup_readline(lambda: list((config.get("agents") or {}).keys()))
 
-    try:
-        model = getattr(agent.llm, "_base", {}).get("model")
-    except Exception:
-        model = None
-    model_label = str(model or "?").rsplit("/", 1)[-1]
+    model = (getattr(agent.llm, "_base", {}) or {}).get("model")
+    model_label = str(model or (agent.provider_conf or {}).get("model") or "?").rsplit("/", 1)[-1]
     agent_label = getattr(agent, "name", "default") or "default"
-    provider_conf_local: Dict[str, Any] = {"model": model_label}
-    agent_conf_local: Dict[str, Any] = {}
-    cli_model_override: Optional[str] = getattr(agent.llm, "_base", {}).get("model")
+    provider_conf_local: Dict[str, Any] = dict(getattr(agent, "provider_conf", {}) or {})
+    agent_conf_local: Dict[str, Any] = dict(getattr(agent, "agent_conf", {}) or {})
+    cli_model_override: Optional[str] = model or provider_conf_local.get("model")
     prompt_str = build_prompt(
         agent_name=agent_label,
         provider_conf=provider_conf_local,
