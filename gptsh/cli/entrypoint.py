@@ -11,6 +11,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from gptsh.config.loader import load_config
 from gptsh.core.api import run_prompt
 from gptsh.core.approval import DefaultApprovalPolicy
+from gptsh.core.config_resolver import build_agent
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.logging import setup_logging
 from gptsh.core.progress import RichProgressReporter
@@ -98,32 +99,47 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         if no_tools:
             click.echo("MCP tools disabled by --no-tools")
             sys.exit(0)
-        tools_map = list_tools(config)
-        # Determine selected agent config for agent-level autoApprove
-        agents_conf = config.get("agents") or {}
-        selected_agent_conf = None
-        if isinstance(agents_conf, dict):
-            # Use CLI agent if provided; otherwise fall back to config default_agent or 'default'
-            if agent:
-                selected_agent_conf = agents_conf.get(agent)
-            if selected_agent_conf is None:
-                default_agent_name = config.get("default_agent") or "default"
-                selected_agent_conf = agents_conf.get(default_agent_name) or (DEFAULT_AGENTS.get(default_agent_name) if isinstance(DEFAULT_AGENTS, dict) else None)
-        if selected_agent_conf is None:
-            # Fallback to built-in default agent mapping using CLI-provided name as last resort
-            selected_agent_conf = (DEFAULT_AGENTS.get(agent) if isinstance(DEFAULT_AGENTS, dict) else None)
-        approved_map = get_auto_approved_tools(config, agent_conf=selected_agent_conf)
+        labels = None
+        if tools_filter:
+            labels = [p for raw in tools_filter.split(",") for p in raw.split() if p]
+        # Build a minimal agent object for listing without requiring providers to be fully configured
+        try:
+            agent_obj = asyncio.run(
+                build_agent(
+                    config,
+                    cli_agent=agent,
+                    cli_provider=provider,
+                    cli_tools_filter=labels,
+                    cli_model_override=model,
+                )
+            )
+        except Exception:
+            # Fallback to direct MCP listing if agent resolution fails (e.g., no providers in stub tests)
+            tools = list_tools(config)
+            click.echo(f"Discovered tools ({len(tools)} server{'s' if len(tools) != 1 else ''}):")
+            for server, names in tools.items():
+                click.echo(f"{server} ({len(names)}):")
+                if names:
+                    for n in names:
+                        click.echo(f"  - {n}")
+                else:
+                    click.echo("  (no tools found or discovery failed)")
+            sys.exit(0)
+        if agent_obj is None:
+            click.echo("Failed to resolve agent/tools")
+            sys.exit(1)
+        approved_map = get_auto_approved_tools(config, agent_conf=(config.get("agents") or {}).get(agent or (config.get("default_agent") or "default")))
+        tools_map = agent_obj.tools or {}
         total_servers = len(tools_map)
         click.echo(f"Discovered tools ({total_servers} server{'s' if total_servers != 1 else ''}):")
-        for server, tools in tools_map.items():
-            approved_set = set(approved_map.get(server, []))
-            global_tools = set(approved_map.get("*", []))
-            click.echo(f"{server} ({len(tools)}):")
-            if tools:
-                for tool in tools:
-                    # Badge if tool is explicitly approved, globally approved by name, or server wildcard
-                    badge = " 󰁪" if ("*" in approved_set or tool in approved_set or tool in global_tools) else ""
-                    click.echo(f"  - {tool}{badge}")
+        for server, handles in tools_map.items():
+            approved_set = set(approved_map.get(server, []) or [])
+            global_tools = set(approved_map.get("*", []) or [])
+            click.echo(f"{server} ({len(handles)}):")
+            if handles:
+                for h in handles:
+                    badge = " 󰁪" if ("*" in approved_set or h.name in approved_set or h.name in global_tools) else ""
+                    click.echo(f"  - {h.name}{badge}")
             else:
                 click.echo("  (no tools found or discovery failed)")
         sys.exit(0)

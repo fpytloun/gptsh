@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from gptsh.core.agent import Agent
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressReporter
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
@@ -24,6 +25,23 @@ class ChatSession:
         self._approval = approval
         self._progress = progress
         self._config = config
+
+    @classmethod
+    def from_agent(
+        cls,
+        agent: Agent,
+        *,
+        progress: Optional[ProgressReporter],
+        config: Dict[str, Any],
+        mcp: Optional[MCPClient] = None,
+    ) -> "ChatSession":
+        """Construct a ChatSession from an Agent instance.
+
+        Agent encapsulates its own LiteLLMClient and ApprovalPolicy. Tools remain
+        resolved outside and are used primarily for discovery/listing; tool execution
+        continues to flow via MCP calls inside ChatSession.
+        """
+        return cls(agent.llm, mcp, agent.policy, progress, config)
 
     async def start(self) -> None:
         if self._mcp is not None:
