@@ -7,6 +7,7 @@ from gptsh.core.repl import (
     command_agent,
     command_exit,
     ReplExit,
+    command_help,
 )
 
 
@@ -88,3 +89,11 @@ def test_command_exit_raises():
     with pytest.raises(ReplExit):
         command_exit()
 
+
+def test_command_help_lists_commands():
+    text = command_help()
+    assert "Available commands:" in text
+    assert "/exit" in text and "/quit" in text
+    assert "/model <name>" in text
+    assert "/agent <name>" in text
+    assert "/reasoning_effort" in text

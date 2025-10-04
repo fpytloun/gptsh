@@ -31,6 +31,8 @@ from gptsh.core.repl import (
     command_model,
     command_reasoning_effort,
     command_agent,
+    command_help,
+    get_command_names,
     setup_readline,
     add_history,
     ReplExit,
@@ -643,6 +645,8 @@ def repl_loop(
                         loop=loop,
                         readline_enabled=(_readline is not None),
                     )
+                elif sline.startswith("/help"):
+                    click.echo(command_help())
                 else:
                     click.echo("Unknown command", err=True)
                 continue

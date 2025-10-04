@@ -128,6 +128,28 @@ def command_agent(
     return agent_conf, prompt_str, agent_name, no_tools, mgr
 
 
+# Simple command registry and help text
+_COMMANDS_USAGE = {
+    "/exit": "Exit the REPL",
+    "/quit": "Exit the REPL (alias)",
+    "/model <name>": "Override the current model",
+    "/agent <name>": "Switch to a configured agent",
+    "/reasoning_effort [minimal|low|medium|high]": "Set reasoning effort for current agent",
+    "/help": "Show available commands",
+}
+
+
+def get_command_names() -> List[str]:
+    return ["/exit", "/quit", "/model", "/agent", "/reasoning_effort", "/help"]
+
+
+def command_help() -> str:
+    lines = ["Available commands:"]
+    for cmd, desc in _COMMANDS_USAGE.items():
+        lines.append(f"  {cmd:45} - {desc}")
+    return "\n".join(lines)
+
+
 def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]:
     """Configure GNU readline with a simple completer for REPL slash-commands.
     Returns (enabled, readline_module_or_None).
@@ -144,7 +166,7 @@ def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]
                 _readline.set_completer_delims(delims.replace("/", ""))
         except Exception:
             pass
-        commands = ["/exit", "/quit", "/model", "/agent", "/reasoning_effort"]
+        commands = get_command_names()
 
         def _completer(text, state):
             try:
@@ -176,6 +198,8 @@ def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]
                 opts = [o for o in ["minimal", "low", "medium", "high"] if o.startswith(arg_prefix)]
                 return opts[state] if state < len(opts) else None
             if cmd == "/model":
+                return None
+            if cmd == "/help":
                 return None
             return None
 
