@@ -1,11 +1,13 @@
 # Refactor Progress (2025-10-04)
 
 ## Completed
-- Removed legacy `gptsh/llm/session.py`; unified streaming via ChatSession + chunk_utils
-- Cleaned CLI comments and imports accordingly
-- Test suite remains green (14/14)
+- Added core API (`gptsh/core/api.py`) and MCP facade (`gptsh/mcp/api.py`)
+- Refactored CLI to use core API for non-stream (run_prompt) and to build stream params via ChatSession
+- Kept streaming path monkeypatchable for tests
+- Added tests for core API seams (gptsh/tests/test_core_api.py)
+- Fixed and stabilized CLI tests; now 16 tests passing
 
-## Remaining suggestions
-- Add `core/api.py` as high-level orchestration entry for potential future frontends
-- Introduce `mcp/api.py` facade to centralize discovery/approval helpers
-- Normalize logging redaction based on config `logging.redact_keys`
+## Next Suggestions
+- Normalize logging redaction using config keys
+- Add config API helpers to consolidate effective option resolution
+- Optional: write integration tests for MCP lifecycle in a separate suite

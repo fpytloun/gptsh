@@ -133,17 +133,9 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Monkeypatch ChatSession to simulate denial exception
-    class DenySession:
-        def __init__(self, *a, **k):
-            pass
-        async def start(self):
-            pass
-        async def run(self, *a, **k):
-            from gptsh.core.exceptions import ToolApprovalDenied
-            raise ToolApprovalDenied("fs__delete")
-
-    monkeypatch.setattr(ep, "ChatSession", DenySession)
+    # Monkeypatch core API to simulate denial exception in non-stream path
+    from gptsh.core.exceptions import ToolApprovalDenied
+    monkeypatch.setattr(ep, "run_prompt", lambda **kwargs: (_ for _ in ()).throw(ToolApprovalDenied("fs__delete")))
 
     # Avoid potential progress setup in non-tty
     runner = CliRunner()
@@ -173,10 +165,13 @@ def test_cli_timeout_exit_code(monkeypatch):
             pass
         async def prepare_stream(self, *a, **k):
             return ({"model": "m1", "messages": []}, "m1")
-        async def stream_with_params(self, params):
-            # Simulate a timeout by raising in iteration
-            import asyncio
-            raise asyncio.TimeoutError()
+        def stream_with_params(self, params):
+            # Simulate a timeout by raising from an async generator
+            async def _gen():
+                import asyncio
+                raise asyncio.TimeoutError()
+                yield ""  # unreachable
+            return _gen()
         async def run(self, *a, **k):
             # Ensure that if non-stream path accidentally used, also timeout
             import asyncio
@@ -185,6 +180,7 @@ def test_cli_timeout_exit_code(monkeypatch):
     monkeypatch.setattr(ep, "ChatSession", TimeoutSession)
 
     runner = CliRunner()
-    result = runner.invoke(main, ["--output", "text", "hello"], catch_exceptions=False)
+    # Force streaming path to be used
+    result = runner.invoke(main, ["--no-tools", "--output", "text", "hello"], catch_exceptions=False)
     assert result.exit_code == 124
     assert "Operation timed out" in result.output

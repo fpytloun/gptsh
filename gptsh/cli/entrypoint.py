@@ -15,7 +15,9 @@ from click.core import ParameterSource
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
-from gptsh.mcp import list_tools, get_auto_approved_tools, ensure_sessions_started_async
+from gptsh.mcp import ensure_sessions_started_async
+from gptsh.mcp.api import list_tools, get_auto_approved_tools
+from gptsh.core.api import run_prompt, prepare_stream_params
 from gptsh.core.session import ChatSession
 from gptsh.llm.litellm_client import LiteLLMClient
 from gptsh.mcp.manager import MCPManager
@@ -362,7 +364,7 @@ async def run_llm(
     waiting_task_id: Optional[int] = None
     try:
         if stream:
-            # Build minimal params and chosen model via ChatSession.prepare_stream
+            # Build minimal params and chosen model via ChatSession to allow monkeypatch in tests
             llm = LiteLLMClient()
             session = ChatSession(llm, None, DefaultApprovalPolicy({}), pr, config)
             params, chosen_model = await session.prepare_stream(
@@ -417,7 +419,7 @@ async def run_llm(
                 except Exception:
                     pass
         else:
-            # Initialize MCP (via ChatSession.start) when tools are enabled
+            # Non-streaming paths via core API (handles tools if enabled)
             chosen_model = (
                 cli_model_override
                 or (agent_conf or {}).get("model")
@@ -427,65 +429,16 @@ async def run_llm(
             wait_label = f"Waiting for {str(chosen_model).rsplit('/', 1)[-1]}"
             if pr is not None:
                 waiting_task_id = pr.add_task(wait_label)
-            # Non-streaming paths
-            # Use new ChatSession orchestrator (tools and no-tools)
-            approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
-
-            class _ProgressAdapter:
-                def __init__(self, p):
-                    self._p = p
-
-                def start(self):
-                    if self._p is not None:
-                        try:
-                            self._p.start()
-                        except Exception:
-                            pass
-
-                def stop(self):
-                    if self._p is not None:
-                        try:
-                            self._p.stop()
-                        except Exception:
-                            pass
-
-                def add_task(self, description: str):
-                    if self._p is None:
-                        return None
-                    try:
-                        return self._p.add_task(description, total=None)
-                    except Exception:
-                        return None
-
-                def complete_task(self, task_id, description=None):
-                    if self._p is None or task_id is None:
-                        return
-                    try:
-                        if description is not None:
-                            self._p.update(task_id, description=description)
-                        self._p.update(task_id, completed=True)
-                    except Exception:
-                        pass
-
-                def pause(self):
-                    pass
-
-                def resume(self):
-                    pass
-
-            llm = LiteLLMClient()
-            mcp_mgr = MCPManager(config) if not no_tools else None
-            policy = DefaultApprovalPolicy(approved_map)
-            session = ChatSession(llm, mcp_mgr, policy, pr, config)
-            await session.start()
             try:
-                content = await session.run(
+                content = await run_prompt(
                     prompt=prompt,
+                    config=config,
                     provider_conf=provider_conf,
                     agent_conf=agent_conf,
                     cli_model_override=cli_model_override,
                     no_tools=no_tools,
                     history_messages=history_messages,
+                    progress_reporter=pr,
                 )
             except ToolApprovalDenied as e:
                 # Exit code 4: tool approval denied
