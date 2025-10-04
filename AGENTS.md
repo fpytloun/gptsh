@@ -24,20 +24,42 @@ A modular, extensible, and secure Python shell client that empowers developers a
 - **python-dotenv/os** for environment variable expansion in configs
 
 ---
-## Project Structure
+## Project Structure (Current)
 ```
 gptsh/
-  cli/         # CLI entrypoint, argument parsing (with click)
-  config/      # Load, merge, validate configs from ~/.config/gptsh & ./.gptsh/
-  core/        # Shell/LLM/MCP client logic (async, robust)
-  mcp/         # MCP-handling: protocol impl, server mgmt, recovery
-  plugins/     # (Future) Extension base and built-in plugins
-  tui/         # (Future) Optional TUI modules
-  utils/       # Utilities, helpers
-  tests/       # pytest-based test suite
-pyproject.toml # uv/uvx uses this
+  cli/
+    entrypoint.py        # CLI entry, args, REPL loop (thin, delegates to core)
+  config/
+    loader.py            # config loading, env expansion, !include support
+  core/
+    api.py               # high-level run helpers (run_prompt, prepare_stream_params)
+    approval.py          # DefaultApprovalPolicy (wildcards + TTY-aware confirm)
+    config_api.py        # helpers to resolve agent/provider, outputs, tools policy
+    exceptions.py        # ToolApprovalDenied and future typed errors
+    logging.py           # logging setup (text/json)
+    progress.py          # RichProgressReporter abstraction
+    repl.py              # REPL helpers, command registry (/help, /agent, /model, /reasoning_effort)
+    session.py           # ChatSession orchestrator (tool loop, streaming helpers)
+    stdin_handler.py     # safe stdin read, truncation notice
+  domain/
+    models.py            # ProviderConfig, AgentConfig, mapping helpers
+  llm/
+    litellm_client.py    # LiteLLMClient (LLMClient)
+    chunk_utils.py       # extract_text for streaming chunks
+    tool_adapter.py      # build LLM tool specs from MCP discovery
+  mcp/
+    client.py            # persistent sessions + low-level client logic
+    manager.py           # MCPManager (MCPClient)
+    api.py               # simple facade (list_tools, approvals)
+    builtin/
+      __init__.py        # builtin registry (time, shell), discovery helpers
+      time.py, shell.py  # builtin tools
+  tests/                 # pytest unit tests for core, cli, llm, mcp, repl
+scripts/
+  lint.py                # fallback linter runner (locates ruff binary)
+pyproject.toml           # deps, ruff config
 README.md
-AGENTS.md      # (this file)
+AGENTS.md                # (this file)
 ```
 
 ---
@@ -51,6 +73,40 @@ AGENTS.md      # (this file)
  - **Agents**: Named presets defined in config (e.g., `default`, `code_reviewer`, `full_stack_developer`, `git_committer`) that specify a system prompt, model selection, and MCP tool policy. The `default` agent is used unless overridden by `--agent`.
 - **Security**: Never log or print secrets or API keys. Use least-privilege principle for subprocesses and I/O. All configuration can include secrets via env variable references only, not hard-coded.
 - **Error/Recovery**: Must auto-attempt reconnection if an MCP server is lost and auto-restart local ones if crashed.
+
+---
+## Coding Conventions
+
+- Async-first: any blocking I/O (HTTP, MCP, subprocess) must be async.
+- Types: use full typing and from __future__ import annotations where practical.
+- Imports: sorted/organized via Ruff’s isort (I001). Group stdlib, third-party, first-party.
+- Line length: 100 (configured in [tool.ruff]). Prefer wrapping long strings, comments, and decorators.
+- Black compatibility: E203 and related spacing handled by Ruff config; do not fight Black.
+- Errors/exit codes: map to documented codes (0,1,4,124,130). Raise ToolApprovalDenied for required tools.
+- Logging: never log secrets or headers; use core.logging.setup_logging. Redaction utility is planned.
+- CLI: keep the entrypoint thin—delegate to core.api and core.session.
+- Tests: pytest with pytest-asyncio, structure tests near component domains.
+- No license/copyright headers unless requested.
+- Avoid one-letter variable names; prefer descriptive, short names.
+
+---
+## Linting & Testing (Ruff + Pytest)
+
+- Primary linter: Ruff (configured in pyproject.toml; line-length=100; isort enabled).
+- Run locally:
+  - `UV_CACHE_DIR=.uv-cache uv pip install -e .[dev]`
+  - `UV_CACHE_DIR=.uv-cache uv run ruff check`
+  - `UV_CACHE_DIR=.uv-cache uv run pytest`
+- Commit discipline: run Ruff and pytest for every change before submitting PRs.
+
+---
+## Sandbox Guidance
+
+- Prefer setting `UV_CACHE_DIR=.uv-cache` for uv commands to avoid home-directory permission issues in sandboxes.
+- Examples:
+  - `UV_CACHE_DIR=.uv-cache uv pip install -e .[dev]`
+  - `UV_CACHE_DIR=.uv-cache uv run ruff check`
+  - `UV_CACHE_DIR=.uv-cache uv run pytest -q`
 
 ---
 ## Configuration Schema and Examples

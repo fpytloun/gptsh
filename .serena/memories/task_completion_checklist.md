@@ -1,13 +1,10 @@
-# Task Completion Checklist
+# Task Completion Checklist (Updated)
 
-- Run unit tests: `uv run pytest -q` and ensure all pass.
-- If CLI behavior changed, validate `--help` output and key flows:
-  - `--list-tools`, `--tools`, `--no-tools`, `--mcp-servers`
-  - Single-shot prompt; streaming and non-streaming; stdin piping.
-- Verify MCP discovery:
-  - With default `.gptsh/mcp_servers.json` present: `uv run gptsh --list-tools`
-  - With filtering: `uv run gptsh --tools serena --list-tools`
-- Check logging level and output format switches (`--debug`, `-v`, `-o text|markdown`).
-- Ensure no secrets logged; review diffs/params.
-- Adhere to async style and typing; avoid blocking operations.
-- Update README or examples if behavior changed.
+Before marking a refactor/feature as complete:
+- Lint: `UV_CACHE_DIR=.uv-cache uv run ruff check` is clean (or consciously waived).
+- Tests: `UV_CACHE_DIR=.uv-cache uv run pytest` passes.
+- Docs: README.md and AGENTS.md reflect any structural or workflow changes.
+- Config: pyproject.toml updated for tool config (ruff) and optional dev deps.
+- No secrets in logs or code; approval prompts are TTY-safe.
+- Entry point remains thin; complex logic lives in core modules.
+- New code is typed and async-safe.

@@ -9,7 +9,7 @@ A modern, modular shell assistant powered by LLMs with first-class Model Context
 - Colored REPL prompt showing "<agent>|<model>>" and support for initial prompt via stdin or arg
 - Clean CLI UX with progress spinners and Markdown rendering
 
-See AGENTS.md for development standards and architecture details.
+See AGENTS.md for development standards, coding conventions, and architecture details.
 
 ## Goal
 
@@ -111,17 +111,27 @@ You can also set alias:
 alias gptsh="uvx --from gptsh-cli gptsh"
 ```
 
-### Git checkout
+### Git checkout (development)
 
 ```bash
 uv venv
-uv pip install -e .[dev]
+UV_CACHE_DIR=.uv-cache uv pip install -e .[dev]
 ```
 
 Run:
 
 ```bash
-uv run gptsh --help
+UV_CACHE_DIR=.uv-cache uv run gptsh --help
+
+### Linting and Tests
+
+Ruff is configured as the primary linter in `pyproject.toml` (line length 100, isort enabled). Run lint + tests before committing:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run ruff check
+UV_CACHE_DIR=.uv-cache uv run pytest
+```
+
 ```
 
 ## Quick Start
@@ -218,6 +228,18 @@ MCP servers configuration is taken from these locations. As most models has limi
 3) Global (`~/.config/gptsh/mcp_servers.json`)
 
 There are also builtin MCP servers that are always available (`time`, `shell`) but can be referenced and disabled with `mcp_servers.json`.
+
+### Project Structure (overview)
+
+```
+gptsh/
+  cli/entrypoint.py      # thin CLI, defers to core
+  core/                  # orchestration, config helpers, progress, REPL helpers
+  domain/models.py       # typed config models
+  llm/                   # LiteLLM adapter + chunk utils
+  mcp/                   # sessions, facade, manager, builtin tools
+  tests/                 # pytest suite (unit tests)
+```
 
 ### Example config.yml
 
