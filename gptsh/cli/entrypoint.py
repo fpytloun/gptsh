@@ -25,6 +25,7 @@ from gptsh.core.session import ChatSession
 from gptsh.llm.litellm_client import LiteLLMClient
 from gptsh.mcp.manager import MCPManager
 from gptsh.core.approval import DefaultApprovalPolicy
+from gptsh.domain.models import map_config_to_models, pick_effective_agent_provider
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.console import Console
 from rich.markdown import Markdown
@@ -197,27 +198,38 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                     click.echo("      (no tools found or discovery failed)")
         sys.exit(0)
 
-    # Ensure a default agent always exists by merging built-ins into config
+    # Ensure a default agent always exists by merging built-ins into config, then map to domain models
     existing_agents = dict(config.get("agents") or {})
     config["agents"] = {**DEFAULT_AGENTS, **existing_agents}
-
-    # Resolve provider and agent defaults
-    providers_conf = config.get("providers", {})
-    if not providers_conf:
+    defaults, providers, agents = map_config_to_models(config)
+    if not providers:
         raise click.ClickException("No providers defined in config.")
-
-    agents_conf = config.get("agents", DEFAULT_AGENTS)
-    # CLI should take precedence over config default
-    agent = agent or config.get("default_agent") or "default"
-    if agent not in agents_conf:
-        raise click.BadParameter(f"Unknown agent '{agent}'", param_hint="--agent")
-    agent_conf = agents_conf[agent]
-
-    # Determine effective provider: CLI --provider > agent.provider > config default_provider > first configured
-    selected_provider = provider or (agent_conf.get("provider") if isinstance(agent_conf, dict) else None) or config.get("default_provider") or next(iter(providers_conf))
-    if selected_provider not in providers_conf:
-        raise click.BadParameter(f"Unknown provider '{selected_provider}'", param_hint="--provider")
-    provider_conf = providers_conf[selected_provider]
+    try:
+        agent_dm, provider_dm = pick_effective_agent_provider(
+            defaults, providers, agents, cli_agent=agent, cli_provider=provider
+        )
+    except KeyError as e:
+        # Map to Click parameter errors where possible
+        msg = str(e)
+        if "agent" in msg:
+            raise click.BadParameter(msg, param_hint="--agent")
+        if "provider" in msg:
+            raise click.BadParameter(msg, param_hint="--provider")
+        raise
+    # Convert domain models back to dicts for downstream compatibility
+    provider_conf = {"model": provider_dm.model, **(provider_dm.params or {})}
+    if provider_dm.mcp:
+        provider_conf["mcp"] = provider_dm.mcp
+    agent_conf = {
+        "provider": agent_dm.provider,
+        "model": agent_dm.model,
+        "prompt": {"system": agent_dm.prompt.system, "user": agent_dm.prompt.user},
+        "params": agent_dm.params,
+        "mcp": agent_dm.mcp,
+        "tools": agent_dm.tools,
+        "no_tools": agent_dm.no_tools,
+        "output": agent_dm.output,
+    }
 
     # Interactive REPL mode
     if interactive:

@@ -1,16 +1,16 @@
 # Refactor Progress (2025-10-04)
 
 ## Completed (since last update)
-- Wired CLI tool path to use `ChatSession` + `LiteLLMClient` + `MCPManager` + `DefaultApprovalPolicy`
-- Added tests for ChatSession denied approval path and multi-tool execution
-- Adjusted `DefaultApprovalPolicy.confirm` to auto-deny when not in a TTY to avoid pytest stdin capture errors
-- Test suite now: 7 passing tests
+- Integrated domain models into CLI for agent/provider selection (gptsh/cli/entrypoint.py)
+- Added CLI test for agent/provider selection (gptsh/tests/test_cli_entrypoint.py)
+- Test suite now: 11 passing tests
 
 ## Current State
-- CLI streams for no-tools; delegates to ChatSession for tool flows
-- Approval prompts safe in non-interactive contexts
+- Modular interfaces + adapters + ChatSession in place
+- CLI lists tools and runs prompts; tool flows use ChatSession
+- Domain models drive selection logic in CLI
 
 ## Next
-- Introduce domain models (`gptsh/domain/models.py`) and integrate config mapping
-- Consider moving `prepare_completion_params` usage fully into `ChatSession` in CLI code paths to reduce duplication
-- Expand tests for CLI behaviors (list-tools snapshot, basic run without tools)
+- Optional: unify streaming path via ChatSession-like streaming helper
+- Add more tests: error codes mapping, approvals denied exit code, and list-agents output
+- Continue refactor per REFACTOR.md: progress abstraction across CLI and session
