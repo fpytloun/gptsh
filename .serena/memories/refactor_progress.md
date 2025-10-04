@@ -1,16 +1,14 @@
 # Refactor Progress (2025-10-04)
 
 ## Completed (since last update)
-- Introduced `ToolApprovalDenied` exception and mapped to CLI exit code 4 when tool_choice is required
-- Added CLI tests: list-agents output and approval denied exit code
-- Unified streaming via ChatSession helpers
-- Test suite: 13 passing
+- Added CLI exit code 124 for asyncio.TimeoutError and tests for it
+- Completed list-agents test coverage (more flexible expectation)
+- All tests passing: 14/14
 
 ## Current State
-- CLI: list-tools, list-agents, streaming, tool flows all covered
-- Domain models integrated for selection, approvals safe in non-tty
+- Interfaces, adapters, ChatSession, approvals, progress, domain models in place
+- CLI integrated with ChatSession, domain models, and error code mappings
 
 ## Next
-- Optional: refine list-agents output to use domain models for consistency
-- Add timeout/interrupt handling tests mapping to exit codes (124/130) if feasible in unit tests
-- Review remaining items in REFACTOR.md for additional refactors (e.g., progress reporter abstraction in CLI)
+- Optional polishing per REFACTOR.md: ensure consistent progress abstraction usage in REPL; expand MCP resilience (integration tests later)
+- Document updated architecture in REFACTOR.md if needed

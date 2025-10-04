@@ -554,6 +554,10 @@ async def run_llm(
                 console.print(Markdown(content or ""))
             else:
                 click.echo(content or "")
+    except asyncio.TimeoutError:
+        # Exit code 124: operation timeout
+        click.echo("Operation timed out", err=True)
+        sys.exit(124)
     except KeyboardInterrupt:
         if exit_on_interrupt:
             click.echo("", err=True)

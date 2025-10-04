@@ -150,3 +150,41 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
     result = runner.invoke(main, ["--output", "text", "delete file"], catch_exceptions=False)
     assert result.exit_code == 4
     assert "Tool approval denied" in result.output
+
+
+def test_cli_timeout_exit_code(monkeypatch):
+    from gptsh.cli.entrypoint import main
+    import gptsh.cli.entrypoint as ep
+
+    def fake_load_config(paths=None):
+        return {
+            "providers": {"openai": {"model": "m1"}},
+            "default_provider": "openai",
+            "agents": {"default": {"model": "m1"}},
+            "default_agent": "default",
+        }
+
+    monkeypatch.setattr(ep, "load_config", fake_load_config)
+
+    class TimeoutSession:
+        def __init__(self, *a, **k):
+            pass
+        async def start(self):
+            pass
+        async def prepare_stream(self, *a, **k):
+            return ({"model": "m1", "messages": []}, "m1")
+        async def stream_with_params(self, params):
+            # Simulate a timeout by raising in iteration
+            import asyncio
+            raise asyncio.TimeoutError()
+        async def run(self, *a, **k):
+            # Ensure that if non-stream path accidentally used, also timeout
+            import asyncio
+            raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(ep, "ChatSession", TimeoutSession)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--output", "text", "hello"], catch_exceptions=False)
+    assert result.exit_code == 124
+    assert "Operation timed out" in result.output
