@@ -19,9 +19,12 @@ from gptsh.mcp import list_tools, get_auto_approved_tools, ensure_sessions_start
 from gptsh.llm.session import (
     prepare_completion_params,
     stream_completion,
-    complete_with_tools,
     complete_simple,
 )
+from gptsh.core.session import ChatSession
+from gptsh.llm.litellm_client import LiteLLMClient
+from gptsh.mcp.manager import MCPManager
+from gptsh.core.approval import DefaultApprovalPolicy
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.console import Console
 from rich.markdown import Markdown
@@ -446,80 +449,64 @@ async def run_llm(
                 waiting_task_id = progress_obj.add_task(wait_label, total=None)
             # Non-streaming paths
             if has_tools:
+                # Use new ChatSession orchestrator
                 approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
 
-                def pause_ui():
-                    nonlocal waiting_task_id, progress_obj, progress_running
-                    # Remove current waiting task
-                    if waiting_task_id is not None and progress_obj is not None:
-                        try:
-                            progress_obj.remove_task(waiting_task_id)
-                        except Exception:
-                            pass
-                        waiting_task_id = None
-                    # Stop spinner so prompt won't be overwritten
-                    if progress_obj is not None and progress_running:
-                        try:
-                            progress_obj.stop()
-                        except Exception:
-                            pass
-                        progress_running = False
+                class _ProgressAdapter:
+                    def __init__(self, p):
+                        self._p = p
 
-                def resume_ui():
-                    nonlocal waiting_task_id, progress_obj, progress_running, chosen_model
-                    # Restart spinner if needed
-                    if progress_obj is not None and not progress_running:
-                        try:
-                            progress_obj.start()
-                        except Exception:
-                            pass
-                        progress_running = True
-                    # Recreate waiting task
-                    if progress_obj is not None:
-                        try:
-                            waiting_task_id = progress_obj.add_task(wait_label, total=None)
-                        except Exception:
-                            waiting_task_id = None
-
-                def set_status(text: Optional[str]):
-                    nonlocal waiting_task_id, progress_obj, progress_running
-                    # If no progress UI or no text, nothing to do
-                    if progress_obj is None or not text:
-                        return
-                    # Ensure a waiting task exists; if not, create one with the given description
-                    if waiting_task_id is None:
-                        try:
-                            waiting_task_id = progress_obj.add_task(text, total=None)
-                        except Exception:
-                            waiting_task_id = None
-                            return
-                        # Make sure the spinner is running
-                        if not progress_running:
+                    def start(self):
+                        if self._p is not None:
                             try:
-                                progress_obj.start()
+                                self._p.start()
                             except Exception:
                                 pass
-                            else:
-                                progress_running = True
-                        return
-                    # Update existing task description
-                    try:
-                        progress_obj.update(waiting_task_id, description=text, refresh=True)
+
+                    def stop(self):
+                        if self._p is not None:
+                            try:
+                                self._p.stop()
+                            except Exception:
+                                pass
+
+                    def add_task(self, description: str):
+                        if self._p is None:
+                            return None
                         try:
-                            progress_obj.refresh()
+                            return self._p.add_task(description, total=None)
+                        except Exception:
+                            return None
+
+                    def complete_task(self, task_id, description=None):
+                        if self._p is None or task_id is None:
+                            return
+                        try:
+                            if description is not None:
+                                self._p.update(task_id, description=description)
+                            self._p.update(task_id, completed=True)
                         except Exception:
                             pass
-                    except Exception:
+
+                    def pause(self):
                         pass
 
-                content = await complete_with_tools(
-                    params,
-                    config,
-                    approved_map,
-                    progress=progress_obj,
-                    pause_ui=pause_ui,
-                    resume_ui=resume_ui,
-                    wait_label=wait_label,
+                    def resume(self):
+                        pass
+
+                llm = LiteLLMClient()
+                mcp_mgr = MCPManager(config) if not no_tools else None
+                policy = DefaultApprovalPolicy(approved_map)
+                pr = _ProgressAdapter(progress_obj)
+                session = ChatSession(llm, mcp_mgr, policy, pr, config)
+                await session.start()
+                content = await session.run(
+                    prompt=prompt,
+                    provider_conf=provider_conf,
+                    agent_conf=agent_conf,
+                    cli_model_override=cli_model_override,
+                    no_tools=no_tools,
+                    history_messages=history_messages,
                 )
             else:
                 content = await complete_simple(params)

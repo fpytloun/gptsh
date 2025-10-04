@@ -29,6 +29,10 @@ class DefaultApprovalPolicy(ApprovalPolicy):
         )
 
     async def confirm(self, server: str, tool: str, args: Dict[str, Any]) -> bool:
+        # Deny in non-interactive environments for safety
+        import sys
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            return False
         try:
             from rich.prompt import Confirm
         except Exception:
@@ -39,4 +43,3 @@ class DefaultApprovalPolicy(ApprovalPolicy):
 
         arg_text = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else str(args)
         return bool(Confirm.ask(f"Allow tool {server}__{tool} with args {arg_text}?", default=False))
-

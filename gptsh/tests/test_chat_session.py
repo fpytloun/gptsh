@@ -67,3 +67,64 @@ async def test_chat_session_tool_loop_auto_approved():
     assert out == "done"
     assert mcp.called == [("fs", "read", {"path": "/tmp/x"})]
 
+
+@pytest.mark.asyncio
+async def test_chat_session_tool_loop_denied():
+    resp_tool = {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "t1",
+                            "function": {"name": "fs__delete", "arguments": "{}"},
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    resp_final = {"choices": [{"message": {"content": "final"}}]}
+    llm = FakeLLM([resp_tool, resp_final])
+    mcp = FakeMCP({"fs": ["delete"]}, {"fs__delete": "ok"})
+    # No approvals for delete
+    approval = DefaultApprovalPolicy({})
+    session = ChatSession(llm, mcp, approval, progress=None, config={})
+    await session.start()
+    out = await session.run("hi", provider_conf={"model": "x"})
+    assert out == "final"
+    # Tool should not be called because it was denied
+    assert mcp.called == []
+
+
+@pytest.mark.asyncio
+async def test_chat_session_multiple_tools():
+    resp_tool = {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "t1",
+                            "function": {"name": "fs__read", "arguments": "{}"},
+                        },
+                        {
+                            "id": "t2",
+                            "function": {"name": "time__now", "arguments": "{}"},
+                        },
+                    ],
+                }
+            }
+        ]
+    }
+    resp_final = {"choices": [{"message": {"content": "combined"}}]}
+    llm = FakeLLM([resp_tool, resp_final])
+    mcp = FakeMCP({"fs": ["read"], "time": ["now"]}, {"fs__read": "A", "time__now": "B"})
+    approval = DefaultApprovalPolicy({"*": ["*"]})
+    session = ChatSession(llm, mcp, approval, progress=None, config={})
+    await session.start()
+    out = await session.run("hi", provider_conf={"model": "x"})
+    assert out == "combined"
+    assert mcp.called == [("fs", "read", {}), ("time", "now", {})]
