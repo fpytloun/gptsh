@@ -220,9 +220,9 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     except KeyError as e:
         msg = str(e)
         if "agent" in msg:
-            raise click.BadParameter(msg, param_hint="--agent")
+            raise click.BadParameter(msg, param_hint="--agent") from None
         if "provider" in msg:
-            raise click.BadParameter(msg, param_hint="--provider")
+            raise click.BadParameter(msg, param_hint="--provider") from None
         raise
 
     # Interactive REPL mode
