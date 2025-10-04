@@ -1,28 +1,16 @@
 import asyncio
 import sys
-import json
 import time
 import warnings
-import re
-# Suppress known LiteLLM RuntimeWarning about un-awaited coroutine on loop close.
-warnings.filterwarnings(
-    "ignore",
-    message=r".*coroutine 'close_litellm_async_clients' was never awaited.*",
-    category=RuntimeWarning,
-)
 import click
-from click.core import ParameterSource
 from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp import ensure_sessions_started_async
 from gptsh.mcp.api import list_tools, get_auto_approved_tools
-from gptsh.core.api import run_prompt, prepare_stream_params
+from gptsh.core.api import run_prompt
 from gptsh.core.session import ChatSession
-from gptsh.llm.litellm_client import LiteLLMClient
-from gptsh.mcp.manager import MCPManager
 from gptsh.core.approval import DefaultApprovalPolicy
-from gptsh.domain.models import map_config_to_models, pick_effective_agent_provider
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.progress import RichProgressReporter
 from gptsh.core.repl import (
@@ -32,7 +20,6 @@ from gptsh.core.repl import (
     command_reasoning_effort,
     command_agent,
     command_help,
-    get_command_names,
     setup_readline,
     add_history,
     ReplExit,
@@ -48,6 +35,13 @@ except Exception:
     close_litellm_async_clients = None  # type: ignore
 
 from typing import Any, Dict, Optional, List
+
+# Suppress known LiteLLM RuntimeWarning about un-awaited coroutine on loop close.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*coroutine 'close_litellm_async_clients' was never awaited.*",
+    category=RuntimeWarning,
+)
 
 DEFAULT_AGENTS = {
     "default": {}
@@ -173,7 +167,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             if isinstance(tools_field, list):
                 allowed_servers = [str(x) for x in tools_field if x is not None]
                 if len(allowed_servers) == 0:
-                    click.echo(f"  tools: (disabled)")
+                    click.echo("  tools: (disabled)")
                     continue
 
             # Compute auto-approved map for this agent
@@ -332,8 +326,8 @@ async def run_llm(
     try:
         if stream:
             # Build minimal params and chosen model via ChatSession to allow monkeypatch in tests
-            llm = LiteLLMClient()
-            session = ChatSession(llm, None, DefaultApprovalPolicy({}), pr, config)
+            from gptsh.llm.litellm_client import LiteLLMClient
+            session = ChatSession(LiteLLMClient(), None, DefaultApprovalPolicy({}), pr, config)
             params, chosen_model = await session.prepare_stream(
                 prompt=prompt,
                 provider_conf=provider_conf,

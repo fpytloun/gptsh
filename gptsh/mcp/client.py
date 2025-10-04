@@ -11,7 +11,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.client.sse import sse_client
-import httpx
+import httpx  # noqa: F401  # may be used by underlying MCP clients/transports
 import importlib
 from gptsh.mcp.builtin import get_builtin_servers
 

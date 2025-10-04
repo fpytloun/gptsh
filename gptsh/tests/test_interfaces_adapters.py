@@ -1,4 +1,3 @@
-import asyncio
 import pytest
 
 from gptsh.llm.litellm_client import LiteLLMClient
