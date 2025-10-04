@@ -16,10 +16,6 @@ from gptsh.config.loader import load_config
 from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp import list_tools, get_auto_approved_tools, ensure_sessions_started_async
-from gptsh.llm.session import (
-    stream_completion,
-    complete_simple,
-)
 from gptsh.core.session import ChatSession
 from gptsh.llm.litellm_client import LiteLLMClient
 from gptsh.mcp.manager import MCPManager
@@ -350,7 +346,7 @@ async def run_llm(
       result_sink: Optional[List[str]] = None,
   ) -> None:
     """Execute an LLM call using LiteLLM with optional streaming.
-    Rendering and progress UI remain in CLI; core LLM/session logic lives in gptsh.llm.session.
+    Rendering and progress UI remain in CLI; core logic lives in ChatSession.
     """
     # Setup progress reporter if enabled
     pr: Optional[RichProgressReporter] = None

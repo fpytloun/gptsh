@@ -11,12 +11,11 @@ class LiteLLMClient(LLMClient):
         return await acompletion(**params)
 
     async def stream(self, params: Dict[str, Any]) -> AsyncIterator[str]:
-        from gptsh.llm.session import _extract_text  # reuse robust extractor
+        from gptsh.llm.chunk_utils import extract_text
         from litellm import acompletion  # lazy import for testability
 
         stream_iter = await acompletion(stream=True, **params)
         async for chunk in stream_iter:
-            text = _extract_text(chunk)
+            text = extract_text(chunk)
             if text:
                 yield text
-

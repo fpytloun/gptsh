@@ -45,10 +45,27 @@ To support future extensibility—multiple front-ends (CLI, TUI, web), pluggable
    - Typed `@dataclass` definitions (`ProviderConfig`, `AgentConfig`, `ToolSpec`, etc.), mapping raw config dicts to structured objects.
 
 8. **UI Layer** (`gptsh/ui`):  
-   - `UIInterface` protocol.  
-   - `gptsh/ui/cli.py` and future `gptsh/ui/tui.py` implement `UIInterface`.  
-   - `cli/entrypoint.py` selects and invokes the chosen UI.
+  - `UIInterface` protocol.  
+  - `cli/entrypoint.py` implements the CLI wiring using the interfaces; a future `gptsh/ui/tui.py` can implement a TUI.
 
 9. **Builtin Tool Registry** (`gptsh/mcp/builtin/base.py`):  
-   - Decorator-based `@tool` registration and shared `list_tools`, `list_tools_detailed`, and `execute` dispatch.  
-   - Individual builtin modules only declare tool functions with metadata.
+  - Decorator-based `@tool` registration and shared `list_tools`, `list_tools_detailed`, and `execute` dispatch.  
+  - Individual builtin modules only declare tool functions with metadata.
+
+### Current Status (as of 2025-10-04)
+
+- Implemented interfaces: `LLMClient`, `MCPClient`, `ApprovalPolicy`, `ProgressReporter`.
+- Added adapters: `LiteLLMClient`, `MCPManager`.
+- Added orchestration: `ChatSession` (non-stream + streaming helpers).
+- Added approval policy: `DefaultApprovalPolicy` with TTY-aware confirmation.
+- Added progress abstraction: `RichProgressReporter`; CLI uses it.
+- Added domain models: providers/agents mapping and selection, integrated into CLI.
+- CLI wired to use `ChatSession` for tool flows and non-stream runs; streaming uses ChatSession helpers.
+- Exit codes supported and tested: 0, 1, 4 (approval denied), 124 (timeout), 130 (interrupt).
+- Test suite: unit tests cover adapters, session, domain models, and CLI commands.
+
+### Remaining/Deferred
+
+- Optional TUI layer scaffolding.
+- Deeper MCP lifecycle/integration tests (spawn/retry/reconnect) and chaos tests.
+- Additional CLI snapshot tests for complex outputs if needed.
