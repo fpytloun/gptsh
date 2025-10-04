@@ -74,10 +74,10 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         # Allow comma or whitespace-separated list of paths
         parts = [p for raw in mcp_servers.split(",") for p in raw.split() if p]
         config.setdefault("mcp", {})["servers_files"] = parts if parts else []
+    # Pre-parse CLI tools filter into list to later apply via config_api
+    tools_filter_labels = None
     if tools_filter:
-        # Allow comma or whitespace-separated list of server labels
-        labels = [p for raw in tools_filter.split(",") for p in raw.split() if p]
-        config.setdefault("mcp", {})["allowed_servers"] = labels if labels else []
+        tools_filter_labels = [p for raw in tools_filter.split(",") for p in raw.split() if p]
     # Logging: default WARNING, -v/--verbose -> INFO, --debug -> DEBUG
     log_level = "DEBUG" if debug else ("INFO" if verbose else "WARNING")
     log_fmt = config.get("logging", {}).get("format", "text")
@@ -197,38 +197,19 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                     click.echo("      (no tools found or discovery failed)")
         sys.exit(0)
 
-    # Ensure a default agent always exists by merging built-ins into config, then map to domain models
+    # Ensure a default agent always exists by merging built-ins into config, then map via config_api
     existing_agents = dict(config.get("agents") or {})
     config["agents"] = {**DEFAULT_AGENTS, **existing_agents}
-    defaults, providers, agents = map_config_to_models(config)
-    if not providers:
-        raise click.ClickException("No providers defined in config.")
+    from gptsh.core.config_api import select_agent_provider_dicts, effective_output, compute_tools_policy
     try:
-        agent_dm, provider_dm = pick_effective_agent_provider(
-            defaults, providers, agents, cli_agent=agent, cli_provider=provider
-        )
+        agent_conf, provider_conf = select_agent_provider_dicts(config, cli_agent=agent, cli_provider=provider)
     except KeyError as e:
-        # Map to Click parameter errors where possible
         msg = str(e)
         if "agent" in msg:
             raise click.BadParameter(msg, param_hint="--agent")
         if "provider" in msg:
             raise click.BadParameter(msg, param_hint="--provider")
         raise
-    # Convert domain models back to dicts for downstream compatibility
-    provider_conf = {"model": provider_dm.model, **(provider_dm.params or {})}
-    if provider_dm.mcp:
-        provider_conf["mcp"] = provider_dm.mcp
-    agent_conf = {
-        "provider": agent_dm.provider,
-        "model": agent_dm.model,
-        "prompt": {"system": agent_dm.prompt.system, "user": agent_dm.prompt.user},
-        "params": agent_dm.params,
-        "mcp": agent_dm.mcp,
-        "tools": agent_dm.tools,
-        "no_tools": agent_dm.no_tools,
-        "output": agent_dm.output,
-    }
 
     # Interactive REPL mode
     if interactive:
@@ -246,26 +227,13 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         else:
             initial_prompt = prompt or stdin_input
         # Agent-level overrides for tools if CLI flags not provided
-        no_tools_effective = no_tools or bool(agent_conf.get("no_tools"))
-        if not tools_filter:
-            agent_tools = agent_conf.get("tools")
-            if isinstance(agent_tools, list):
-                if len(agent_tools) == 0:
-                    # Treat empty tools list as disabling tools entirely
-                    no_tools_effective = True
-                else:
-                    labels = [str(x) for x in agent_tools if x]
-                    config.setdefault("mcp", {})["allowed_servers"] = labels
-        # Determine effective output format: CLI --output takes precedence over agent config.
-        output_effective = output
-        try:
-            src = click.get_current_context().get_parameter_source("output")
-        except Exception:
-            src = None
-        if src != ParameterSource.COMMANDLINE:
-            agent_output = agent_conf.get("output") if isinstance(agent_conf, dict) else None
-            if agent_output in ("text", "markdown"):
-                output_effective = agent_output
+        labels = tools_filter_labels if tools_filter_labels is not None else None
+        from gptsh.core.config_api import compute_tools_policy
+        no_tools_effective, allowed = compute_tools_policy(agent_conf, labels, no_tools)
+        if allowed is not None:
+            config.setdefault("mcp", {})["allowed_servers"] = allowed
+        # Determine effective output format via config_api
+        output_effective = effective_output(output, agent_conf)
         repl_loop(
             provider_conf=provider_conf,
             agent_conf=agent_conf,
@@ -293,27 +261,14 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         prompt_given = prompt or stdin_input or agent_prompt
     if prompt_given:
         # Agent-level overrides for tools if CLI flags not provided
-        no_tools_effective = no_tools or bool(agent_conf.get("no_tools"))
-        if not tools_filter:
-            agent_tools = agent_conf.get("tools")
-            if isinstance(agent_tools, list):
-                if len(agent_tools) == 0:
-                    # Treat empty tools list as disabling tools entirely
-                    no_tools_effective = True
-                else:
-                    labels = [str(x) for x in agent_tools if x]
-                    config.setdefault("mcp", {})["allowed_servers"] = labels
+        labels = tools_filter_labels if tools_filter_labels is not None else None
+        from gptsh.core.config_api import compute_tools_policy
+        no_tools_effective, allowed = compute_tools_policy(agent_conf, labels, no_tools)
+        if allowed is not None:
+            config.setdefault("mcp", {})["allowed_servers"] = allowed
 
-        # Determine effective output format: CLI --output takes precedence over agent config.
-        output_effective = output
-        try:
-            src = click.get_current_context().get_parameter_source("output")
-        except Exception:
-            src = None
-        if src != ParameterSource.COMMANDLINE:
-            agent_output = agent_conf.get("output") if isinstance(agent_conf, dict) else None
-            if agent_output in ("text", "markdown"):
-                output_effective = agent_output
+        # Determine effective output format via config_api
+        output_effective = effective_output(output, agent_conf)
 
         asyncio.run(run_llm(
             prompt=prompt_given,
