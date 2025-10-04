@@ -78,6 +78,74 @@ def command_reasoning_effort(
     return agent_conf
 
 
+def command_tools(agent: Any) -> str:
+    """Return a formatted list of tools for the current agent.
+
+    Output matches the CLI list format: server (count):\n  - tool
+    """
+    tools_map = getattr(agent, "tools", {}) or {}
+    if not tools_map:
+        return "(no tools discovered)"
+    lines: List[str] = []
+    policy = getattr(agent, "policy", None)
+    for server, handles in tools_map.items():
+        lines.append(f"{server} ({len(handles)}):")
+        for h in handles:
+            name = getattr(h, 'name', '?')
+            badge = ""
+            try:
+                if policy and policy.is_auto_allowed(server, name):
+                    badge = " \u2714"  # checkmark for auto-approved
+            except Exception:
+                pass
+            lines.append(f"  - {name}{badge}")
+    return "\n".join(lines)
+
+
+def command_no_tools(
+    arg: Optional[str],
+    *,
+    config: Dict[str, Any],
+    agent_name: str,
+    cli_model_override: Optional[str],
+    current_no_tools: bool,
+) -> tuple[Any, bool, str]:
+    """Toggle or set no-tools and return (new_agent, no_tools, message).
+
+    - arg: "on" to disable tools, "off" to enable tools, None/"" to toggle.
+    - Rebuilds the Agent via build_agent to reflect the new policy.
+    """
+    val = (arg or "").strip().lower()
+    if val not in {"", "on", "off"}:
+        raise ValueError("Usage: /no-tools [on|off]")
+    # Infer current no_tools from agent.tools at call sites, then toggle here by caller's decision.
+    # This function computes only new_no_tools based on desired val.
+    # Determine effective state: toggle if no explicit value
+    if val == "on":
+        effective_no_tools = True
+    elif val == "off":
+        effective_no_tools = False
+    else:
+        effective_no_tools = not current_no_tools
+
+    import asyncio
+
+    from gptsh.core.config_resolver import build_agent as _build_agent
+    new_agent = asyncio.run(
+        _build_agent(
+            config,
+            cli_agent=agent_name,
+            cli_provider=None,
+            cli_tools_filter=None,
+            cli_model_override=cli_model_override,
+            cli_no_tools=effective_no_tools,
+        )
+    )
+    tools_map = getattr(new_agent, "tools", {}) or {}
+    msg = f"Tools {'disabled' if effective_no_tools else 'enabled'} ({sum(len(v or []) for v in tools_map.values())} available)"
+    return new_agent, effective_no_tools, msg
+
+
 def command_agent(
     arg: Optional[str],
     *,
@@ -136,12 +204,23 @@ _COMMANDS_USAGE = {
     "/model <name>": "Override the current model",
     "/agent <name>": "Switch to a configured agent",
     "/reasoning_effort [minimal|low|medium|high]": "Set reasoning effort for current agent",
+    "/tools": "List discovered MCP tools for current agent",
+    "/no-tools [on|off]": "Toggle or set MCP tool usage for this session",
     "/help": "Show available commands",
 }
 
 
 def get_command_names() -> List[str]:
-    return ["/exit", "/quit", "/model", "/agent", "/reasoning_effort", "/help"]
+    return [
+        "/exit",
+        "/quit",
+        "/model",
+        "/agent",
+        "/reasoning_effort",
+        "/tools",
+        "/no-tools",
+        "/help",
+    ]
 
 
 def command_help() -> str:
@@ -241,13 +320,14 @@ def run_agent_repl(
     import asyncio
     import sys
     import time
+
+    import click
     from rich.console import Console
     from rich.markdown import Markdown
-    import click
 
     from gptsh.core.api import run_prompt_with_agent
-    from gptsh.core.session import ChatSession
     from gptsh.core.progress import RichProgressReporter
+    from gptsh.core.session import ChatSession
 
     console = Console()
     # Readline for history/convenience, provide agent names for completion
@@ -404,7 +484,7 @@ def run_agent_repl(
                     continue
                 cli_model_override = new_override
                 try:
-                    getattr(agent, "llm")._base["model"] = cli_model_override
+                    agent.llm._base["model"] = cli_model_override
                 except Exception:
                     pass
                 provider_conf_local["model"] = cli_model_override
@@ -458,6 +538,32 @@ def run_agent_repl(
                     prompt_str = prompt_out
                 except Exception as e:
                     click.echo(f"Failed to switch agent: {e}", err=True)
+                continue
+            if cmd == "/tools":
+                try:
+                    click.echo(command_tools(agent))
+                except Exception as e:
+                    click.echo(f"Failed to list tools: {e}", err=True)
+                continue
+            if cmd == "/no-tools":
+                try:
+                    # Toggle or set explicitly
+                    desired = (arg or "").strip().lower()
+                    if desired not in {"", "on", "off"}:
+                        click.echo("Usage: /no-tools [on|off]", err=True)
+                        continue
+                    new_agent, _no, msg = command_no_tools(
+                        desired,
+                        config=config,
+                        agent_name=agent_label,
+                        cli_model_override=cli_model_override,
+                        current_no_tools=no_tools,
+                    )
+                    agent = new_agent
+                    no_tools = _no
+                    click.echo(msg)
+                except Exception as e:
+                    click.echo(f"Failed to toggle tools: {e}", err=True)
                 continue
             click.echo("Unknown command", err=True)
             continue

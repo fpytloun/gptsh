@@ -1,12 +1,10 @@
 import asyncio
 import sys
-import time
 import warnings
 
 import click
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from gptsh.config.loader import load_config
 from gptsh.core.api import run_prompt_with_agent
@@ -17,7 +15,6 @@ from gptsh.core.progress import RichProgressReporter
 from gptsh.core.repl import run_agent_repl
 from gptsh.core.session import ChatSession
 from gptsh.core.stdin_handler import read_stdin
-from gptsh.mcp import ensure_sessions_started_async
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
 
 # Ensure LiteLLM async HTTPX clients are closed cleanly on loop shutdown
