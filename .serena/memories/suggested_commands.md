@@ -1,0 +1,21 @@
+# Suggested Commands
+
+- Install dev environment:
+  - `uv venv`
+  - `uv pip install -e .[dev]`
+- Run CLI:
+  - `uv run gptsh --help`
+  - `uv run gptsh "Say hello"`
+  - `uv run gptsh -i` (interactive REPL)
+  - `uvx --from gptsh-cli gptsh --help` (ad-hoc via uvx)
+- MCP tools:
+  - `uv run gptsh --list-tools`
+  - `uv run gptsh --tools serena --list-tools`
+  - `uv run gptsh --no-tools "Explain which tools are available"`
+  - `uv run gptsh --mcp-servers ./.gptsh/mcp_servers.json --list-tools`
+- Testing:
+  - `uv run pytest -q`
+  - `uv run pytest --maxfail=1 --disable-warnings -q`
+- Lint/Format: (none configured explicitly); follow existing code style and typing; run `pytest`.
+- Packaging:
+  - Entry point: `gptsh = "gptsh.cli.entrypoint:main"`
