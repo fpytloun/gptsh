@@ -354,14 +354,13 @@ async def run_llm(
                     continue
                 # Ensure spinner is ended before any output
                 if not first_output_done:
-                    if waiting_task_id is not None and pr is not None:
-                        pr.complete_task(waiting_task_id)
-                        waiting_task_id = None
-                    # Clear any potential leftover line from progress UI to avoid a leading blank line
-                    if sys.stderr.isatty():
+                    if pr is not None:
+                        if waiting_task_id is not None:
+                            pr.complete_task(waiting_task_id)
+                            waiting_task_id = None
+                        # Stop progress to clear spinner before any output
                         try:
-                            sys.stderr.write("\x1b[1A\x1b[2K")
-                            sys.stderr.flush()
+                            pr.stop()
                         except Exception:
                             pass
                     first_output_done = True
@@ -423,14 +422,12 @@ async def run_llm(
                 except Exception:
                     pass
             # Stop waiting indicator before printing final output
-            if waiting_task_id is not None and pr is not None:
-                pr.complete_task(waiting_task_id)
-                waiting_task_id = None
-            # Clear any potential leftover line from progress UI to avoid a leading blank line
-            if sys.stderr.isatty():
+            if pr is not None:
+                if waiting_task_id is not None:
+                    pr.complete_task(waiting_task_id)
+                    waiting_task_id = None
                 try:
-                    sys.stderr.write("\x1b[1A\x1b[2K")
-                    sys.stderr.flush()
+                    pr.stop()
                 except Exception:
                     pass
             if output_format == "markdown":
