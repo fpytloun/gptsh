@@ -26,6 +26,7 @@ from gptsh.mcp.manager import MCPManager
 from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.domain.models import map_config_to_models, pick_effective_agent_provider
 from gptsh.core.exceptions import ToolApprovalDenied
+from gptsh.core.progress import RichProgressReporter
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.console import Console
 from rich.markdown import Markdown
@@ -351,20 +352,12 @@ async def run_llm(
     """Execute an LLM call using LiteLLM with optional streaming.
     Rendering and progress UI remain in CLI; core LLM/session logic lives in gptsh.llm.session.
     """
-    # Setup rich progress (spinner) if enabled
-    progress_obj: Optional[Progress] = None
-    progress_running: bool = False
+    # Setup progress reporter if enabled
+    pr: Optional[RichProgressReporter] = None
     console = Console()
     if progress and sys.stderr.isatty():
-        progress_console = Console(file=sys.stderr)
-        progress_obj = Progress(
-            SpinnerColumn(),
-            TextColumn("{task.description}"),
-            transient=False,
-            console=progress_console,
-        )
-        progress_obj.start()
-        progress_running = True
+        pr = RichProgressReporter()
+        pr.start()
 
     # If tools are enabled, force non-stream path (ChatSession orchestrates tools)
     if not no_tools:
@@ -375,7 +368,7 @@ async def run_llm(
         if stream:
             # Build minimal params and chosen model via ChatSession.prepare_stream
             llm = LiteLLMClient()
-            session = ChatSession(llm, None, DefaultApprovalPolicy({}), None, config)
+            session = ChatSession(llm, None, DefaultApprovalPolicy({}), pr, config)
             params, chosen_model = await session.prepare_stream(
                 prompt=prompt,
                 provider_conf=provider_conf,
@@ -384,8 +377,8 @@ async def run_llm(
                 history_messages=history_messages,
             )
             wait_label = f"Waiting for {str(chosen_model).rsplit('/', 1)[-1]}"
-            if progress_obj is not None:
-                waiting_task_id = progress_obj.add_task(wait_label, total=None)
+            if pr is not None:
+                waiting_task_id = pr.add_task(wait_label)
             md_buffer = "" if output_format == "markdown" else ""
             first_output_done = False
             full_output = ""
@@ -394,18 +387,9 @@ async def run_llm(
                     continue
                 # Ensure spinner is ended before any output
                 if not first_output_done:
-                    if waiting_task_id is not None and progress_obj is not None:
-                        try:
-                            progress_obj.remove_task(waiting_task_id)
-                        except Exception:
-                            pass
+                    if waiting_task_id is not None and pr is not None:
+                        pr.complete_task(waiting_task_id)
                         waiting_task_id = None
-                    if progress_obj is not None and progress_running:
-                        try:
-                            progress_obj.stop()
-                        except Exception:
-                            pass
-                        progress_running = False
                     # Clear any potential leftover line from progress UI to avoid a leading blank line
                     if sys.stderr.isatty():
                         try:
@@ -445,8 +429,8 @@ async def run_llm(
                 or "?"
             )
             wait_label = f"Waiting for {str(chosen_model).rsplit('/', 1)[-1]}"
-            if progress_obj is not None:
-                waiting_task_id = progress_obj.add_task(wait_label, total=None)
+            if pr is not None:
+                waiting_task_id = pr.add_task(wait_label)
             # Non-streaming paths
             # Use new ChatSession orchestrator (tools and no-tools)
             approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
@@ -496,7 +480,6 @@ async def run_llm(
             llm = LiteLLMClient()
             mcp_mgr = MCPManager(config) if not no_tools else None
             policy = DefaultApprovalPolicy(approved_map)
-            pr = _ProgressAdapter(progress_obj)
             session = ChatSession(llm, mcp_mgr, policy, pr, config)
             await session.start()
             try:
@@ -510,18 +493,9 @@ async def run_llm(
                 )
             except ToolApprovalDenied as e:
                 # Exit code 4: tool approval denied
-                if waiting_task_id is not None and progress_obj is not None:
-                    try:
-                        progress_obj.remove_task(waiting_task_id)
-                    except Exception:
-                        pass
+                if waiting_task_id is not None and pr is not None:
+                    pr.complete_task(waiting_task_id)
                     waiting_task_id = None
-                if progress_obj is not None and progress_running:
-                    try:
-                        progress_obj.stop()
-                    except Exception:
-                        pass
-                    progress_running = False
                 click.echo(f"Tool approval denied: {e}", err=True)
                 sys.exit(4)
             # Capture output for history if requested
@@ -531,18 +505,9 @@ async def run_llm(
                 except Exception:
                     pass
             # Stop waiting indicator before printing final output
-            if waiting_task_id is not None and progress_obj is not None:
-                try:
-                    progress_obj.remove_task(waiting_task_id)
-                except Exception:
-                    pass
+            if waiting_task_id is not None and pr is not None:
+                pr.complete_task(waiting_task_id)
                 waiting_task_id = None
-            if progress_obj is not None and progress_running:
-                try:
-                    progress_obj.stop()
-                except Exception:
-                    pass
-                progress_running = False
             # Clear any potential leftover line from progress UI to avoid a leading blank line
             if sys.stderr.isatty():
                 try:
@@ -569,18 +534,14 @@ async def run_llm(
         sys.exit(1)
     finally:
         # Ensure waiting indicator is cleared and progress stopped
-        if waiting_task_id is not None and progress_obj is not None:
-            try:
-                progress_obj.remove_task(waiting_task_id)
-            except Exception:
-                pass
+        if waiting_task_id is not None and pr is not None:
+            pr.complete_task(waiting_task_id)
             waiting_task_id = None
-        if progress_obj is not None and progress_running:
+        if pr is not None:
             try:
-                progress_obj.stop()
+                pr.stop()
             except Exception:
                 pass
-            progress_running = False
 
 def repl_loop(
     provider_conf: Dict[str, Any],

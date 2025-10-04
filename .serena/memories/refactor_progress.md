@@ -1,14 +1,13 @@
 # Refactor Progress (2025-10-04)
 
 ## Completed (since last update)
-- Added CLI exit code 124 for asyncio.TimeoutError and tests for it
-- Completed list-agents test coverage (more flexible expectation)
-- All tests passing: 14/14
+- Switched CLI to use `RichProgressReporter` abstraction for both streaming and non-stream flows
+- Kept all tests green: 14/14
 
 ## Current State
-- Interfaces, adapters, ChatSession, approvals, progress, domain models in place
-- CLI integrated with ChatSession, domain models, and error code mappings
+- Architecture aligned with REFACTOR.md: interfaces, session orchestrator, MCP manager, approvals, progress abstraction, domain models, and CLI integration.
+- CLI exit codes: 0,1,4,124,130 covered; tests for 4 and 124 included.
 
 ## Next
-- Optional polishing per REFACTOR.md: ensure consistent progress abstraction usage in REPL; expand MCP resilience (integration tests later)
-- Document updated architecture in REFACTOR.md if needed
+- Optional: add more integration tests around MCP server lifecycle (spawn/reconnect) — likely out-of-scope for this unit-test slice.
+- Consider updating REFACTOR.md to reflect completed items and remaining future work.
