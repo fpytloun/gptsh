@@ -1,14 +1,16 @@
 # Refactor Progress (2025-10-04)
 
 ## Completed (since last update)
-- Added ChatSession streaming helpers (`prepare_stream`, `stream_with_params`) and updated CLI to use them
-- Updated CLI tests to monkeypatch ChatSession for streaming and agent/provider selection
-- All tests passing: 11/11
+- Introduced `ToolApprovalDenied` exception and mapped to CLI exit code 4 when tool_choice is required
+- Added CLI tests: list-agents output and approval denied exit code
+- Unified streaming via ChatSession helpers
+- Test suite: 13 passing
 
 ## Current State
-- Non-stream and stream paths now consistently go through ChatSession APIs
-- CLI uses domain models for selection
+- CLI: list-tools, list-agents, streaming, tool flows all covered
+- Domain models integrated for selection, approvals safe in non-tty
 
 ## Next
-- Add tests for list-agents output and error code mappings
-- Review REFACTOR.md for any remaining gaps: progress abstraction used across CLI? approval policy integration completeness? MCP manager resilience tests (future integration tests)
+- Optional: refine list-agents output to use domain models for consistency
+- Add timeout/interrupt handling tests mapping to exit codes (124/130) if feasible in unit tests
+- Review remaining items in REFACTOR.md for additional refactors (e.g., progress reporter abstraction in CLI)

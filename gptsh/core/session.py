@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from gptsh.interfaces import LLMClient, MCPClient, ApprovalPolicy, ProgressReporter
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
+from gptsh.core.exceptions import ToolApprovalDenied
 
 
 class ChatSession:
@@ -101,6 +102,9 @@ class ChatSession:
                             "content": f"Denied by user: {fullname}",
                         }
                     )
+                    # If the agent or config requires tools to proceed, raise to allow CLI to set exit code
+                    if (self._config.get("mcp", {}) or {}).get("tool_choice") == "required":
+                        raise ToolApprovalDenied(fullname)
                     continue
 
                 task_id = None

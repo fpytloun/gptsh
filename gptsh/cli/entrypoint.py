@@ -25,6 +25,7 @@ from gptsh.llm.litellm_client import LiteLLMClient
 from gptsh.mcp.manager import MCPManager
 from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.domain.models import map_config_to_models, pick_effective_agent_provider
+from gptsh.core.exceptions import ToolApprovalDenied
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.console import Console
 from rich.markdown import Markdown
@@ -498,14 +499,31 @@ async def run_llm(
             pr = _ProgressAdapter(progress_obj)
             session = ChatSession(llm, mcp_mgr, policy, pr, config)
             await session.start()
-            content = await session.run(
-                prompt=prompt,
-                provider_conf=provider_conf,
-                agent_conf=agent_conf,
-                cli_model_override=cli_model_override,
-                no_tools=no_tools,
-                history_messages=history_messages,
-            )
+            try:
+                content = await session.run(
+                    prompt=prompt,
+                    provider_conf=provider_conf,
+                    agent_conf=agent_conf,
+                    cli_model_override=cli_model_override,
+                    no_tools=no_tools,
+                    history_messages=history_messages,
+                )
+            except ToolApprovalDenied as e:
+                # Exit code 4: tool approval denied
+                if waiting_task_id is not None and progress_obj is not None:
+                    try:
+                        progress_obj.remove_task(waiting_task_id)
+                    except Exception:
+                        pass
+                    waiting_task_id = None
+                if progress_obj is not None and progress_running:
+                    try:
+                        progress_obj.stop()
+                    except Exception:
+                        pass
+                    progress_running = False
+                click.echo(f"Tool approval denied: {e}", err=True)
+                sys.exit(4)
             # Capture output for history if requested
             if result_sink is not None:
                 try:

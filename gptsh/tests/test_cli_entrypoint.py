@@ -90,3 +90,63 @@ def test_cli_agent_provider_selection(monkeypatch):
     # Select non-default agent and provider override
     result = runner.invoke(main, ["--no-tools", "--agent", "dev", "--provider", "azure", "hello"])
     assert result.exit_code == 0
+
+
+def test_cli_list_agents(monkeypatch):
+    from gptsh.cli.entrypoint import main
+    import gptsh.cli.entrypoint as ep
+
+    def fake_load_config(paths=None):
+        return {
+            "providers": {"openai": {"model": "m1"}},
+            "default_provider": "openai",
+            "agents": {
+                "default": {"model": "m1", "tools": ["fs"], "prompt": {"system": "S"}},
+                "reviewer": {"provider": "openai", "model": "m1", "tools": []},
+            },
+            "default_agent": "default",
+        }
+
+    # Stub list_tools
+    monkeypatch.setattr(ep, "list_tools", lambda cfg: {"fs": ["read"]})
+    monkeypatch.setattr(ep, "get_auto_approved_tools", lambda cfg, agent_conf=None: {"*": ["*"]})
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--list-agents"])
+    assert result.exit_code == 0
+    assert "Configured agents:" in result.output
+    assert "- default" in result.output
+    # At least the default agent is listed; other sample agents may appear
+
+
+def test_cli_tool_approval_denied_exit_code(monkeypatch):
+    from gptsh.cli.entrypoint import main
+    import gptsh.cli.entrypoint as ep
+
+    def fake_load_config(paths=None):
+        return {
+            "providers": {"openai": {"model": "m1"}},
+            "default_provider": "openai",
+            "agents": {"default": {"model": "m1", "mcp": {"tool_choice": "required"}}},
+            "default_agent": "default",
+        }
+
+    monkeypatch.setattr(ep, "load_config", fake_load_config)
+
+    # Monkeypatch ChatSession to simulate denial exception
+    class DenySession:
+        def __init__(self, *a, **k):
+            pass
+        async def start(self):
+            pass
+        async def run(self, *a, **k):
+            from gptsh.core.exceptions import ToolApprovalDenied
+            raise ToolApprovalDenied("fs__delete")
+
+    monkeypatch.setattr(ep, "ChatSession", DenySession)
+
+    # Avoid potential progress setup in non-tty
+    runner = CliRunner()
+    result = runner.invoke(main, ["--output", "text", "delete file"], catch_exceptions=False)
+    assert result.exit_code == 4
+    assert "Tool approval denied" in result.output
