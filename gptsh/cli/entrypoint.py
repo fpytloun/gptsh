@@ -9,7 +9,7 @@ from rich.markdown import Markdown
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from gptsh.config.loader import load_config
-from gptsh.core.api import run_prompt
+from gptsh.core.api import run_prompt_with_agent
 from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.core.config_resolver import build_agent
 from gptsh.core.exceptions import ToolApprovalDenied
@@ -300,21 +300,19 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         # Determine effective output format via config_api
         output_effective = effective_output(output, agent_conf)
 
-        # Attempt to build an Agent for this run; if it fails, legacy flow still works
+        # Build an Agent for this run
         agent_obj = None
-        try:
-            labels_cli = tools_filter_labels
-            agent_obj = asyncio.run(
-                build_agent(
-                    config,
-                    cli_agent=agent,
-                    cli_provider=provider,
-                    cli_tools_filter=labels_cli,
-                    cli_model_override=model,
-                )
+        labels_cli = tools_filter_labels
+        agent_obj = asyncio.run(
+            build_agent(
+                config,
+                cli_agent=agent,
+                cli_provider=provider,
+                cli_tools_filter=labels_cli,
+                cli_model_override=model,
+                cli_no_tools=no_tools_effective,
             )
-        except Exception:
-            agent_obj = None
+        )
 
         asyncio.run(run_llm(
             prompt=prompt_given,
@@ -367,12 +365,10 @@ async def run_llm(
     waiting_task_id: Optional[int] = None
     try:
         if stream:
-            # Build minimal params and chosen model; prefer Agent if supported
-            if agent_obj is not None and hasattr(ChatSession, "from_agent"):
-                session = ChatSession.from_agent(agent_obj, progress=pr, config=config)
-            else:
-                from gptsh.llm.litellm_client import LiteLLMClient
-                session = ChatSession(LiteLLMClient(), None, DefaultApprovalPolicy({}), pr, config)
+            # Agent-only streaming path
+            if agent_obj is None or not hasattr(ChatSession, "from_agent"):
+                raise RuntimeError("Agent resolution failed or ChatSession missing from_agent")
+            session = ChatSession.from_agent(agent_obj, progress=pr, config=config)
             params, chosen_model = await session.prepare_stream(
                 prompt=prompt,
                 provider_conf=provider_conf,
@@ -435,7 +431,10 @@ async def run_llm(
             if pr is not None:
                 waiting_task_id = pr.add_task(wait_label)
             try:
-                content = await run_prompt(
+                if agent_obj is None:
+                    raise RuntimeError("Agent resolution failed")
+                content = await run_prompt_with_agent(
+                    agent=agent_obj,
                     prompt=prompt,
                     config=config,
                     provider_conf=provider_conf,

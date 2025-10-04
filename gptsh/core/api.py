@@ -3,14 +3,20 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from gptsh.core.approval import DefaultApprovalPolicy
+from gptsh.core.agent import Agent
 from gptsh.core.session import ChatSession
-from gptsh.llm.litellm_client import LiteLLMClient
-from gptsh.mcp.api import get_auto_approved_tools
 from gptsh.mcp.manager import MCPManager
 
 
-async def run_prompt(
+"""
+Agent-only core API.
+Existing legacy helpers were removed in favor of Agent-based flow.
+"""
+
+
+async def run_prompt_with_agent(
     *,
+    agent: Agent,
     prompt: str,
     config: Dict[str, Any],
     provider_conf: Dict[str, Any],
@@ -20,11 +26,8 @@ async def run_prompt(
     history_messages: Optional[List[Dict[str, Any]]] = None,
     progress_reporter=None,
 ) -> str:
-    approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
-    llm = LiteLLMClient()
     mcp_mgr = MCPManager(config) if not no_tools else None
-    policy = DefaultApprovalPolicy(approved_map)
-    session = ChatSession(llm, mcp_mgr, policy, progress_reporter, config)
+    session = ChatSession.from_agent(agent, mcp=mcp_mgr, progress=progress_reporter, config=config)
     await session.start()
     return await session.run(
         prompt=prompt,
@@ -35,9 +38,9 @@ async def run_prompt(
         history_messages=history_messages,
     )
 
-
 async def prepare_stream_params(
     *,
+    agent: Agent,
     prompt: str,
     config: Dict[str, Any],
     provider_conf: Dict[str, Any],
@@ -46,8 +49,7 @@ async def prepare_stream_params(
     history_messages: Optional[List[Dict[str, Any]]] = None,
     progress_reporter=None,
 ) -> Tuple[Dict[str, Any], str]:
-    llm = LiteLLMClient()
-    session = ChatSession(llm, None, DefaultApprovalPolicy({}), progress_reporter, config)
+    session = ChatSession.from_agent(agent, mcp=None, progress=progress_reporter, config=config)
     return await session.prepare_stream(
         prompt=prompt,
         provider_conf=provider_conf,
@@ -55,4 +57,3 @@ async def prepare_stream_params(
         cli_model_override=cli_model_override,
         history_messages=history_messages,
     )
-

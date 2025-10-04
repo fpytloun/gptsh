@@ -32,9 +32,11 @@ gptsh/
   config/
     loader.py            # config loading, env expansion, !include support
   core/
-    api.py               # high-level run helpers (run_prompt, prepare_stream_params)
+    api.py               # agent-only helpers (run_prompt_with_agent, prepare_stream_params(agent=...))
     approval.py          # DefaultApprovalPolicy (wildcards + TTY-aware confirm)
     config_api.py        # helpers to resolve agent/provider, outputs, tools policy
+    agent.py             # Agent dataclass and ToolHandle abstraction
+    config_resolver.py   # build_agent() resolves provider/agent, tools, approvals
     exceptions.py        # ToolApprovalDenied and future typed errors
     logging.py           # logging setup (text/json)
     progress.py          # RichProgressReporter abstraction
@@ -51,6 +53,7 @@ gptsh/
     client.py            # persistent sessions + low-level client logic
     manager.py           # MCPManager (MCPClient)
     api.py               # simple facade (list_tools, approvals)
+    tools_resolver.py    # resolve MCP tools into ToolHandles
     builtin/
       __init__.py        # builtin registry (time, shell), discovery helpers
       time.py, shell.py  # builtin tools
@@ -73,6 +76,31 @@ AGENTS.md                # (this file)
  - **Agents**: Named presets defined in config (e.g., `default`, `code_reviewer`, `full_stack_developer`, `git_committer`) that specify a system prompt, model selection, and MCP tool policy. The `default` agent is used unless overridden by `--agent`.
 - **Security**: Never log or print secrets or API keys. Use least-privilege principle for subprocesses and I/O. All configuration can include secrets via env variable references only, not hard-coded.
 - **Error/Recovery**: Must auto-attempt reconnection if an MCP server is lost and auto-restart local ones if crashed.
+
+### Agent-Only Execution Model (New)
+- The CLI and core now operate exclusively on an Agent abstraction.
+- `Agent` encapsulates:
+  - a preconfigured `LiteLLMClient` with `base_params` (model and generation params),
+  - an `ApprovalPolicy` (from merged global+agent MCP approvals),
+  - resolved MCP `ToolHandle`s grouped by server (for discovery/listing).
+- Core helpers:
+  - `run_prompt_with_agent(agent, ...)` to execute a turn (with or without tools).
+  - `prepare_stream_params(agent, ...)` to produce streaming params (tools disabled).
+- `ChatSession.from_agent(agent, ...)` constructs a session using the agent’s `llm` and `policy`.
+- Legacy `run_prompt`/legacy streaming helpers were removed from CLI usage; use the agent APIs instead.
+
+### Agent Resolution
+- `build_agent(config, cli_*)` in `core/config_resolver.py`:
+  - Resolves provider/agent precedence (CLI > agent > provider).
+  - Builds `LiteLLMClient(base_params=...)` from model and generation params.
+  - Computes effective tools policy (CLI flags and agent.tools), and resolves `ToolHandle`s via `mcp/tools_resolver.py`.
+  - Builds `DefaultApprovalPolicy` via `mcp.api.get_auto_approved_tools`.
+  - Returns an `Agent` object used by CLI and core execution.
+
+### MCP Tools
+- `mcp/tools_resolver.resolve_tools(config, allowed_servers)` discovers available tools and returns `ToolHandle`s.
+- `ToolHandle.invoke(args)` calls back into MCP execution (`execute_tool_async`).
+- LLM tool specs for the chat loop are still produced via `llm/tool_adapter.py` inside `ChatSession`.
 
 ---
 ## Coding Conventions
@@ -209,7 +237,7 @@ Notes:
 - Standardize on `asyncio` with `httpx.AsyncClient` for HTTP/SSE and async subprocess for stdio.
 - All long-running calls must accept a timeout (from config) and be cancellable.
 - Graceful shutdown: cancel tasks, close streams/clients, terminate child processes.
-- Streaming: prefer server-sent tokens; if disabled, buffer and print at end.
+- Streaming: CLI uses `ChatSession.prepare_stream` and `stream_with_params`; this path is agent-only and disables tools while streaming output.
 
 ---
 ## MCP Lifecycle and Resilience
@@ -336,7 +364,7 @@ gptsh = "gptsh.cli.entrypoint:main"
 ---
 ## CLI Usage
 
-- `gptsh [PROMPT]`         — Request answer using config/default GPT model; interactive prompt.
+- `gptsh [PROMPT]`         — Request answer using config/default agent; interactive prompt.
 - `dmesg | gptsh "Find errors in this input"`  — Uses stdin as chat/file context.
 - `gptsh "Find python source files in this project"`  — Calls MCP filesystem tool.
 - `gptsh --list-tools`     — Lists all available MCP tools by server.
@@ -357,6 +385,10 @@ gptsh = "gptsh.cli.entrypoint:main"
 - `--no-tools`                     # Disable MCP (discovery and execution)
 - `--tools LABELS`                 # Comma/space-separated allow-list of MCP servers to load
 - `-h, --help`
+
+Notes:
+- The CLI always resolves an `Agent` using `build_agent` before running. Non-stream and stream paths both use `ChatSession.from_agent`.
+- `--no-tools` and `--tools` influence the resolved agent’s tools via `compute_tools_policy`.
 
 ---
 ## Installation and Development

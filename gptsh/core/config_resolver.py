@@ -8,11 +8,19 @@ from gptsh.core.config_api import compute_tools_policy, select_agent_provider_di
 from gptsh.llm.litellm_client import LiteLLMClient
 
 
-async def build_agent(config: Dict[str, Any], *, cli_agent: Optional[str] = None, cli_provider: Optional[str] = None, cli_tools_filter: Optional[List[str]] = None, cli_model_override: Optional[str] = None) -> Agent:
+async def build_agent(
+    config: Dict[str, Any],
+    *,
+    cli_agent: Optional[str] = None,
+    cli_provider: Optional[str] = None,
+    cli_tools_filter: Optional[List[str]] = None,
+    cli_model_override: Optional[str] = None,
+    cli_no_tools: bool = False,
+) -> Agent:
     agent_conf, provider_conf = select_agent_provider_dicts(config, cli_agent=cli_agent, cli_provider=cli_provider)
 
     # Compute allowed servers and no_tools based on agent + CLI
-    no_tools, allowed = compute_tools_policy(agent_conf, cli_tools_filter, False)
+    no_tools, allowed = compute_tools_policy(agent_conf, cli_tools_filter, cli_no_tools)
 
     # Build LiteLLMClient with effective base params
     base_params: Dict[str, Any] = {}

@@ -39,6 +39,9 @@ def test_cli_stream_no_tools(monkeypatch):
     class DummySession:
         def __init__(self, *a, **k):
             pass
+        @classmethod
+        def from_agent(cls, agent, *, progress, config, mcp=None):
+            return cls()
         async def prepare_stream(self, prompt, provider_conf, agent_conf, cli_model_override, history_messages):
             params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
             return params, provider_conf.get("model")
@@ -47,6 +50,13 @@ def test_cli_stream_no_tools(monkeypatch):
             yield "world"
 
     monkeypatch.setattr(ep, "ChatSession", DummySession)
+    # Also stub build_agent to avoid dependency on providers
+    class DummyAgent:
+        llm = object()
+        policy = object()
+    async def fake_build_agent(cfg, **k):
+        return DummyAgent()
+    monkeypatch.setattr(ep, "build_agent", fake_build_agent)
 
     runner = CliRunner()
     result = runner.invoke(main, ["--no-tools", "--output", "text", "hi there"])
@@ -73,6 +83,9 @@ def test_cli_agent_provider_selection(monkeypatch):
     class DummySession:
         def __init__(self, *a, **k):
             pass
+        @classmethod
+        def from_agent(cls, agent, *, progress, config, mcp=None):
+            return cls()
         async def prepare_stream(self, prompt, provider_conf, agent_conf, cli_model_override, history_messages):
             params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
             return params, provider_conf.get("model")
@@ -83,6 +96,12 @@ def test_cli_agent_provider_selection(monkeypatch):
         async def run(self, *a, **k):
             return ""
     monkeypatch.setattr(ep, "ChatSession", DummySession)
+    class DummyAgent:
+        llm = object()
+        policy = object()
+    async def fake_build_agent(cfg, **k):
+        return DummyAgent()
+    monkeypatch.setattr(ep, "build_agent", fake_build_agent)
 
     runner = CliRunner()
     # Select non-default agent and provider override
@@ -132,8 +151,29 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
     # Monkeypatch core API to simulate denial exception in non-stream path
+    # Simulate tool approval denied by having run_llm path raise it via ChatSession.run
     from gptsh.core.exceptions import ToolApprovalDenied
-    monkeypatch.setattr(ep, "run_prompt", lambda **kwargs: (_ for _ in ()).throw(ToolApprovalDenied("fs__delete")))
+    class DenySession:
+        def __init__(self, *a, **k):
+            pass
+        @classmethod
+        def from_agent(cls, agent, *, progress, config, mcp=None):
+            return cls()
+        async def start(self):
+            pass
+        async def prepare_stream(self, *a, **k):
+            return ({"model": "m1", "messages": []}, "m1")
+        async def run(self, *a, **k):
+            raise ToolApprovalDenied("fs__delete")
+    monkeypatch.setattr(ep, "ChatSession", DenySession)
+    import gptsh.core.api as api
+    monkeypatch.setattr(api, "ChatSession", DenySession)
+    class DummyAgent:
+        llm = object()
+        policy = object()
+    async def fake_build_agent(cfg, **k):
+        return DummyAgent()
+    monkeypatch.setattr(ep, "build_agent", fake_build_agent)
 
     # Avoid potential progress setup in non-tty
     runner = CliRunner()
@@ -159,6 +199,9 @@ def test_cli_timeout_exit_code(monkeypatch):
     class TimeoutSession:
         def __init__(self, *a, **k):
             pass
+        @classmethod
+        def from_agent(cls, agent, *, progress, config, mcp=None):
+            return cls()
         async def start(self):
             pass
         async def prepare_stream(self, *a, **k):
@@ -176,6 +219,9 @@ def test_cli_timeout_exit_code(monkeypatch):
             raise asyncio.TimeoutError()
 
     monkeypatch.setattr(ep, "ChatSession", TimeoutSession)
+    async def fake_build_agent(cfg, **k):
+        return object()
+    monkeypatch.setattr(ep, "build_agent", fake_build_agent)
 
     runner = CliRunner()
     # Force streaming path to be used

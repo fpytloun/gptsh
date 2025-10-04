@@ -5,11 +5,14 @@ import pytest
 async def test_core_run_prompt_monkey(monkeypatch):
     # Monkey ChatSession via module where it's imported
     import gptsh.core.api as api
-    from gptsh.core.api import run_prompt
+    from gptsh.core.api import run_prompt_with_agent
 
     class DummySession:
         def __init__(self, *a, **k):
             pass
+        @classmethod
+        def from_agent(cls, agent, *, progress, config, mcp=None):
+            return cls()
         async def start(self):
             pass
         async def run(self, *a, **k):
@@ -18,7 +21,11 @@ async def test_core_run_prompt_monkey(monkeypatch):
     monkeypatch.setattr(api, "ChatSession", DummySession)
     monkeypatch.setattr(api, "MCPManager", lambda cfg: object())
 
-    out = await run_prompt(
+    class DummyAgent:
+        llm = object()
+        policy = object()
+    out = await run_prompt_with_agent(
+        agent=DummyAgent(),
         prompt="hi",
         config={},
         provider_conf={"model": "m"},
@@ -39,12 +46,19 @@ async def test_core_prepare_stream_params(monkeypatch):
     class DummySession:
         def __init__(self, *a, **k):
             pass
+        @classmethod
+        def from_agent(cls, agent, *, progress, config, mcp=None):
+            return cls()
         async def prepare_stream(self, *a, **k):
             return ({"model": "m"}, "m")
 
     monkeypatch.setattr(api, "ChatSession", DummySession)
 
+    class DummyAgent:
+        llm = object()
+        policy = object()
     params, model = await prepare_stream_params(
+        agent=DummyAgent(),
         prompt="hi",
         config={},
         provider_conf={"model": "m"},
@@ -54,4 +68,3 @@ async def test_core_prepare_stream_params(monkeypatch):
         progress_reporter=None,
     )
     assert params["model"] == "m" and model == "m"
-
