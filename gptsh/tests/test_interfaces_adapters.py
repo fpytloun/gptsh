@@ -1,9 +1,9 @@
 import pytest
 
-from gptsh.llm.litellm_client import LiteLLMClient
-from gptsh.mcp.manager import MCPManager
 from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.core.progress import RichProgressReporter
+from gptsh.llm.litellm_client import LiteLLMClient
+from gptsh.mcp.manager import MCPManager
 
 
 @pytest.mark.asyncio

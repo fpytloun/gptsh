@@ -6,10 +6,9 @@ from click.testing import CliRunner
     ({"fs": ["read", "write"], "time": ["now"]}),
 ])
 def test_cli_list_tools(monkeypatch, tools_map):
-    from gptsh.cli.entrypoint import main
-
     # Stub list_tools
     import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
     monkeypatch.setattr(ep, "list_tools", lambda cfg: tools_map)
 
     # Provide an empty agents config to avoid mis-detection
@@ -27,8 +26,8 @@ def test_cli_list_tools(monkeypatch, tools_map):
 
 
 def test_cli_stream_no_tools(monkeypatch):
-    from gptsh.cli.entrypoint import main
     import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
 
     # Minimal config with a provider
     def fake_load_config(paths=None):
@@ -56,8 +55,8 @@ def test_cli_stream_no_tools(monkeypatch):
 
 
 def test_cli_agent_provider_selection(monkeypatch):
-    from gptsh.cli.entrypoint import main
     import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
 
     # Config with two providers and two agents
     def fake_load_config(paths=None):
@@ -92,8 +91,8 @@ def test_cli_agent_provider_selection(monkeypatch):
 
 
 def test_cli_list_agents(monkeypatch):
-    from gptsh.cli.entrypoint import main
     import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
 
     def fake_load_config(paths=None):
         return {
@@ -119,8 +118,8 @@ def test_cli_list_agents(monkeypatch):
 
 
 def test_cli_tool_approval_denied_exit_code(monkeypatch):
-    from gptsh.cli.entrypoint import main
     import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
 
     def fake_load_config(paths=None):
         return {
@@ -144,8 +143,8 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
 
 
 def test_cli_timeout_exit_code(monkeypatch):
-    from gptsh.cli.entrypoint import main
     import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
 
     def fake_load_config(paths=None):
         return {

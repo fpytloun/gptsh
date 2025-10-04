@@ -1,7 +1,7 @@
 import pytest
 
-from gptsh.core.session import ChatSession
 from gptsh.core.approval import DefaultApprovalPolicy
+from gptsh.core.session import ChatSession
 
 
 class FakeLLM:

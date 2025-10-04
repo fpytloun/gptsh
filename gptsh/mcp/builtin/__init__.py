@@ -4,9 +4,10 @@
 # - list_tools_detailed() -> list[dict]
 # - execute(tool: str, arguments: dict) -> str
 
-from typing import Dict, Any
 import importlib
 import pkgutil
+from typing import Any, Dict
+
 
 def get_builtin_servers() -> Dict[str, Any]:
     """

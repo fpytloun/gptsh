@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, AsyncIterator, Dict
+
 from gptsh.interfaces import LLMClient
 
 
@@ -11,8 +12,9 @@ class LiteLLMClient(LLMClient):
         return await acompletion(**params)
 
     async def stream(self, params: Dict[str, Any]) -> AsyncIterator[str]:
-        from gptsh.llm.chunk_utils import extract_text
         from litellm import acompletion  # lazy import for testability
+
+        from gptsh.llm.chunk_utils import extract_text
 
         stream_iter = await acompletion(stream=True, **params)
         async for chunk in stream_iter:

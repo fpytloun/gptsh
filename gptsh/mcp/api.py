@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from gptsh.mcp.client import (
-    list_tools as _list_tools,
     discover_tools_detailed as _discover_tools_detailed,
     get_auto_approved_tools as _get_auto_approved_tools,
+    list_tools as _list_tools,
 )
 
 

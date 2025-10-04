@@ -1,6 +1,7 @@
 import sys
 from typing import Optional
 
+
 def read_stdin(max_bytes: int = 5242880) -> Optional[str]:
     """Read up to max_bytes from stdin, handle overflow with notice."""
     if sys.stdin.isatty():

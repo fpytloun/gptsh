@@ -1,19 +1,22 @@
-import json
-import os
-import sys
 import asyncio
+import importlib
+import json
 import logging
+import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+import sys
 from contextlib import asynccontextmanager
-from gptsh.config.loader import _expand_env
+from typing import Any, Dict, List, Optional, Tuple
+
+import httpx  # noqa: F401  # may be used by underlying MCP clients/transports
 from mcp import ClientSession
+from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.client.sse import sse_client
-import httpx  # noqa: F401  # may be used by underlying MCP clients/transports
-import importlib
+
+from gptsh.config.loader import _expand_env
 from gptsh.mcp.builtin import get_builtin_servers
+
 
 def _select_servers_file(config: Dict[str, Any]) -> Optional[str]:
     """
@@ -266,7 +269,7 @@ class _MCPManager:
             waiters.append(asyncio.create_task(asyncio.wait_for(ev.wait(), timeout=self.timeout_seconds)))
         if waiters:
             results = await asyncio.gather(*waiters, return_exceptions=True)
-            for name, res in zip(order, results):
+            for name, res in zip(order, results, strict=False):
                 if isinstance(res, Exception):
                     logger.warning("MCP server '%s' readiness timed out after %.1fs", name, self._hc_timeout)
                 else:
@@ -301,7 +304,7 @@ class _MCPManager:
             try:
                 if handle and handle[0] == "module":
                     mod = importlib.import_module(handle[1])
-                    tools_list = getattr(mod, "list_tools")() or []
+                    tools_list = mod.list_tools() or []
                     result[name] = list(tools_list)
                 elif handle and handle[0] == "session":
                     session = handle[1]
@@ -324,7 +327,7 @@ class _MCPManager:
             try:
                 if handle and handle[0] == "module":
                     mod = importlib.import_module(handle[1])
-                    detailed = getattr(mod, "list_tools_detailed")() or []
+                    detailed = mod.list_tools_detailed() or []
                     result[name] = list(detailed)
                 elif handle and handle[0] == "session":
                     session = handle[1]
@@ -353,7 +356,7 @@ class _MCPManager:
         handle = self.sessions.get(server)
         if handle and handle[0] == "module":
             mod = importlib.import_module(handle[1])
-            return str(getattr(mod, "execute")(tool, arguments or {}))
+            return str(mod.execute(tool, arguments or {}))
         if handle and handle[0] == "session":
             session = handle[1]
             resp = await session.call_tool(tool, arguments or {})

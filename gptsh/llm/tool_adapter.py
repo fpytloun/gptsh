@@ -1,5 +1,7 @@
 from typing import Any, Dict, List
+
 from gptsh.mcp import discover_tools_detailed_async
+
 
 async def build_llm_tools(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """

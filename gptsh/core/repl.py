@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import click
 import re
-from typing import Any, Dict, Optional, Tuple, Callable, List
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import click
 
 from gptsh.core.config_api import compute_tools_policy
 from gptsh.mcp import ensure_sessions_started_async

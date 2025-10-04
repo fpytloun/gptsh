@@ -1,4 +1,8 @@
-from gptsh.core.config_api import select_agent_provider_dicts, effective_output, compute_tools_policy
+from gptsh.core.config_api import (
+    compute_tools_policy,
+    effective_output,
+    select_agent_provider_dicts,
+)
 
 
 def test_select_agent_provider_dicts():

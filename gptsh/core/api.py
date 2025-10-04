@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.core.session import ChatSession
 from gptsh.llm.litellm_client import LiteLLMClient
-from gptsh.mcp.manager import MCPManager
-from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.mcp.api import get_auto_approved_tools
+from gptsh.mcp.manager import MCPManager
 
 
 async def run_prompt(

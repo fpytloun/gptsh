@@ -3,10 +3,9 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_core_run_prompt_monkey(monkeypatch):
-    from gptsh.core.api import run_prompt
-
     # Monkey ChatSession via module where it's imported
     import gptsh.core.api as api
+    from gptsh.core.api import run_prompt
 
     class DummySession:
         def __init__(self, *a, **k):
@@ -34,8 +33,8 @@ async def test_core_run_prompt_monkey(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_core_prepare_stream_params(monkeypatch):
-    from gptsh.core.api import prepare_stream_params
     import gptsh.core.api as api
+    from gptsh.core.api import prepare_stream_params
 
     class DummySession:
         def __init__(self, *a, **k):

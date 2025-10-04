@@ -1,13 +1,13 @@
 import pytest
 
 from gptsh.core.repl import (
+    ReplExit,
     build_prompt,
-    command_model,
-    command_reasoning_effort,
     command_agent,
     command_exit,
-    ReplExit,
     command_help,
+    command_model,
+    command_reasoning_effort,
 )
 
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from gptsh.interfaces import LLMClient, MCPClient, ApprovalPolicy, ProgressReporter
-from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
 from gptsh.core.exceptions import ToolApprovalDenied
+from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressReporter
+from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
 
 
 class ChatSession:

@@ -2,39 +2,43 @@ import asyncio
 import sys
 import time
 import warnings
+
 import click
-from gptsh.config.loader import load_config
-from gptsh.core.logging import setup_logging
-from gptsh.core.stdin_handler import read_stdin
-from gptsh.mcp import ensure_sessions_started_async
-from gptsh.mcp.api import list_tools, get_auto_approved_tools
-from gptsh.core.api import run_prompt
-from gptsh.core.session import ChatSession
-from gptsh.core.approval import DefaultApprovalPolicy
-from gptsh.core.exceptions import ToolApprovalDenied
-from gptsh.core.progress import RichProgressReporter
-from gptsh.core.repl import (
-    build_prompt as repl_build_prompt,
-    command_exit,
-    command_model,
-    command_reasoning_effort,
-    command_agent,
-    command_help,
-    setup_readline,
-    add_history,
-    ReplExit,
-)
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.progress import Progress, SpinnerColumn, TextColumn
+
+from gptsh.config.loader import load_config
+from gptsh.core.api import run_prompt
+from gptsh.core.approval import DefaultApprovalPolicy
+from gptsh.core.exceptions import ToolApprovalDenied
+from gptsh.core.logging import setup_logging
+from gptsh.core.progress import RichProgressReporter
+from gptsh.core.repl import (
+    ReplExit,
+    add_history,
+    build_prompt as repl_build_prompt,
+    command_agent,
+    command_exit,
+    command_help,
+    command_model,
+    command_reasoning_effort,
+    setup_readline,
+)
+from gptsh.core.session import ChatSession
+from gptsh.core.stdin_handler import read_stdin
+from gptsh.mcp import ensure_sessions_started_async
+from gptsh.mcp.api import get_auto_approved_tools, list_tools
 
 # Ensure LiteLLM async HTTPX clients are closed cleanly on loop shutdown
 try:
-    from litellm.llms.custom_httpx.async_client_cleanup import close_litellm_async_clients  # type: ignore
+    from litellm.llms.custom_httpx.async_client_cleanup import (
+        close_litellm_async_clients,  # type: ignore
+    )
 except Exception:
     close_litellm_async_clients = None  # type: ignore
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
 # Suppress known LiteLLM RuntimeWarning about un-awaited coroutine on loop close.
 warnings.filterwarnings(
@@ -206,7 +210,11 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     # Ensure a default agent always exists by merging built-ins into config, then map via config_api
     existing_agents = dict(config.get("agents") or {})
     config["agents"] = {**DEFAULT_AGENTS, **existing_agents}
-    from gptsh.core.config_api import select_agent_provider_dicts, effective_output, compute_tools_policy
+    from gptsh.core.config_api import (
+        compute_tools_policy,
+        effective_output,
+        select_agent_provider_dicts,
+    )
     try:
         agent_conf, provider_conf = select_agent_provider_dicts(config, cli_agent=agent, cli_provider=provider)
     except KeyError as e:

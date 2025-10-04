@@ -1,8 +1,9 @@
-import os
-import yaml
-import re
 import glob
+import os
+import re
 from typing import Any, Dict, Optional
+
+import yaml
 
 CONFIG_PATHS = [
     os.path.expanduser("~/.config/gptsh/config.yml"),

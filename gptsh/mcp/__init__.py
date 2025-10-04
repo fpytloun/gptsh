@@ -1,12 +1,13 @@
 from .client import (
-    list_tools,
-    get_auto_approved_tools,
-    discover_tools_detailed,
-    execute_tool,
     _discover_tools_detailed_async,
     _execute_tool_async,
+    discover_tools_detailed,
     ensure_sessions_started_async as _ensure_sessions_started_async,
+    execute_tool,
+    get_auto_approved_tools,
+    list_tools,
 )
+
 
 async def discover_tools_detailed_async(config):
     return await _discover_tools_detailed_async(config)

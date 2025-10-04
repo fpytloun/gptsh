@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from typing import Optional
-from gptsh.interfaces import ProgressReporter
+
 from rich.progress import Progress, SpinnerColumn, TextColumn
+
+from gptsh.interfaces import ProgressReporter
 
 
 class RichProgressReporter(ProgressReporter):

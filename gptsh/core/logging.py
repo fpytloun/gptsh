@@ -1,5 +1,6 @@
 import logging
 
+
 def setup_logging(level: str = "WARNING", fmt: str = "text"):  # text|json
     level = level.upper()
     format_str = (
