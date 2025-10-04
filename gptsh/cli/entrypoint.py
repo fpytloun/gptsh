@@ -14,17 +14,7 @@ from gptsh.core.config_resolver import build_agent
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.logging import setup_logging
 from gptsh.core.progress import RichProgressReporter
-from gptsh.core.repl import (
-    ReplExit,
-    add_history,
-    build_prompt as repl_build_prompt,
-    command_agent,
-    command_exit,
-    command_help,
-    command_model,
-    command_reasoning_effort,
-    setup_readline,
-)
+from gptsh.core.repl import run_agent_repl
 from gptsh.core.session import ChatSession
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp import ensure_sessions_started_async
@@ -245,35 +235,35 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         # Allow stdin to carry an initial prompt; require a TTY on stdout for REPL display
         if not sys.stdout.isatty():
             raise click.ClickException("Interactive mode requires a TTY on stdout.")
-        # Build an initial prompt for the first REPL turn from positional arg and/or stdin
-        initial_prompt = None
+        # Initial prompt from arg and/or stdin
         try:
             stdin_input = None if sys.stdin.isatty() else read_stdin()
         except Exception:
             stdin_input = None
-        if prompt and stdin_input:
-            initial_prompt = f"{prompt}\n\n---\nInput:\n{stdin_input}"
-        else:
-            initial_prompt = prompt or stdin_input
-        # Agent-level overrides for tools if CLI flags not provided
-        labels = tools_filter_labels if tools_filter_labels is not None else None
-        from gptsh.core.config_api import compute_tools_policy
-        no_tools_effective, allowed = compute_tools_policy(agent_conf, labels, no_tools)
+        initial_prompt = f"{prompt}\n\n---\nInput:\n{stdin_input}" if (prompt and stdin_input) else (prompt or stdin_input)
+        # Agent overrides and building
+        labels_cli = tools_filter_labels if tools_filter_labels is not None else None
+        no_tools_effective, allowed = compute_tools_policy(agent_conf, labels_cli, no_tools)
         if allowed is not None:
             config.setdefault("mcp", {})["allowed_servers"] = allowed
-        # Determine effective output format via config_api
         output_effective = effective_output(output, agent_conf)
-        repl_loop(
-            provider_conf=provider_conf,
-            agent_conf=agent_conf,
-            cli_model_override=model,
+        agent_obj = asyncio.run(
+            build_agent(
+                config,
+                cli_agent=agent,
+                cli_provider=provider,
+                cli_tools_filter=labels_cli,
+                cli_model_override=model,
+                cli_no_tools=no_tools_effective,
+            )
+        )
+        # Hand off to agent-only REPL
+        run_agent_repl(
+            agent=agent_obj,
+            config=config,
+            output_format=output_effective,
             stream=stream,
             progress=progress,
-            output_format=output_effective,
-            no_tools=no_tools_effective,
-            config=config,
-            logger=logger,
-            agent_name=agent,
             initial_prompt=initial_prompt,
         )
         sys.exit(0)
@@ -493,266 +483,6 @@ async def run_llm(
             except Exception:
                 pass
 
-def repl_loop(
-    provider_conf: Dict[str, Any],
-    agent_conf: Optional[Dict[str, Any]],
-    cli_model_override: Optional[str],
-    stream: bool,
-    progress: bool,
-    output_format: str,
-    no_tools: bool,
-    config: Dict[str, Any],
-    logger: Any,
-    agent_name: Optional[str],
-    initial_prompt: Optional[str],
-) -> None:
-    """
-    Simple interactive REPL using GNU readline when available.
-    - Up/Down for history navigation
-    - Ctrl+R for reverse history search (readline-provided)
-    - Ctrl+C cancels in-flight request; press twice quickly to exit
-    - Ctrl+D (EOF) exits
-    """
-    # Create a persistent event loop for the entire REPL session so MCP sessions persist
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    mgr = None
-    # Initialize MCP sessions before entering REPL so first command is fast
-    if not no_tools:
-        progress_obj = None
-        init_task_id = None
-        progress_running = False
-        try:
-            if sys.stderr.isatty():
-                progress_console = Console(file=sys.stderr)
-                progress_obj = Progress(
-                    SpinnerColumn(),
-                    TextColumn("{task.description}"),
-                    transient=False,
-                    console=progress_console,
-                )
-                progress_obj.start()
-                progress_running = True
-                init_task_id = progress_obj.add_task("Initializing MCP tools", total=None)
-            mgr = loop.run_until_complete(ensure_sessions_started_async(config))
-        except Exception:
-            pass
-        finally:
-            if init_task_id is not None and progress_obj is not None:
-                try:
-                    progress_obj.remove_task(init_task_id)
-                except Exception:
-                    pass
-                init_task_id = None
-            if progress_obj is not None and progress_running:
-                try:
-                    progress_obj.stop()
-                except Exception:
-                    pass
-                progress_running = False
-            # Clear any potential leftover line from progress UI to avoid a leading blank line
-            if sys.stderr.isatty():
-                try:
-                    sys.stderr.write("\x1b[1A\x1b[2K")
-                    sys.stderr.flush()
-                except Exception:
-                    pass
-    # If stdin is not a TTY (e.g., initial prompt was piped), reattach stdin to /dev/tty for interactive input
-    tty_in = None
-    if not sys.stdin.isatty():
-        try:
-            tty_in = open("/dev/tty", "r")
-            sys.stdin = tty_in
-        except Exception:
-            tty_in = None
-    # Best-effort enable readline features
-    readline_enabled, _readline = setup_readline(lambda: list((config.get("agents") or {}).keys()))
-
-    # Helper to build a nice, colored prompt: "<agent>|<model>> "
-    def _make_prompt(agent_name_local: Optional[str], provider_conf_local: Dict[str, Any], agent_conf_local: Optional[Dict[str, Any]]):
-        return repl_build_prompt(
-            agent_name=agent_name_local,
-            provider_conf=provider_conf_local,
-            agent_conf=agent_conf_local,
-            cli_model_override=cli_model_override,
-            readline_enabled=(_readline is not None),
-        )
-
-    # Build initial prompt
-    chosen_model = (
-        cli_model_override
-        or (agent_conf or {}).get("model")
-        or provider_conf.get("model")
-        or "?"
-    )
-    model_label = str(chosen_model).rsplit("/", 1)[-1]
-    agent_label = agent_name or "default"
-    agent_col = click.style(agent_label, fg="cyan", bold=True)
-    model_col = click.style(model_label, fg="magenta")
-    prompt_str = _make_prompt(agent_name, provider_conf, agent_conf)
-    history_messages: List[Dict[str, Any]] = []
-    last_interrupt = 0.0
-
-    # If an initial prompt was provided (via stdin or positional arg), run it once before REPL input
-    if initial_prompt and str(initial_prompt).strip():
-        try:
-            result_holder: List[str] = []
-            user_msg: Dict[str, Any] = {"role": "user", "content": initial_prompt}
-            loop.run_until_complete(
-                run_llm(
-                    prompt=initial_prompt,
-                    provider_conf=provider_conf,
-                    agent_conf=agent_conf,
-                    cli_model_override=cli_model_override,
-                    stream=stream,
-                    progress=progress,
-                    output_format=output_format,
-                    no_tools=no_tools,
-                    config=config,
-                    logger=logger,
-                    exit_on_interrupt=False,
-                    preinitialized_mcp=True,
-                    history_messages=history_messages,
-                    result_sink=result_holder,
-                )
-            )
-            assistant_content = result_holder[0] if result_holder else ""
-            history_messages.extend([user_msg, {"role": "assistant", "content": assistant_content}])
-        except KeyboardInterrupt:
-            last_interrupt = time.monotonic()
-            click.echo("Cancelled.", err=True)
-    while True:
-        try:
-            line = input(prompt_str)
-        except KeyboardInterrupt:
-            now = time.monotonic()
-            # Double Ctrl-C within 1.5s exits
-            if now - last_interrupt <= 1.5:
-                click.echo("", err=True)
-                break
-            last_interrupt = now
-            click.echo("(^C) Press Ctrl-C again to exit", err=True)
-            continue
-        except EOFError:
-            click.echo("", err=True)
-            break
-
-        if not line.strip():
-            continue
-
-        # Handle REPL slash-commands
-        sline = line.strip()
-        if sline.startswith("/"):
-            try:
-                if sline in ("/exit", "/quit"):
-                    command_exit()
-                elif sline.startswith("/model"):
-                    parts = sline.split(None, 1)
-                    cli_model_override, prompt_str = command_model(
-                        parts[1].strip() if len(parts) == 2 else None,
-                        agent_conf=agent_conf,
-                        provider_conf=provider_conf,
-                        cli_model_override=cli_model_override,
-                        agent_name=agent_name,
-                        readline_enabled=(_readline is not None),
-                    )
-                elif sline.startswith("/reasoning_effort"):
-                    parts = sline.split(None, 1)
-                    agent_conf = command_reasoning_effort(parts[1].strip() if len(parts) == 2 else None, agent_conf)
-                elif sline.startswith("/agent"):
-                    parts = sline.split(None, 1)
-                    (
-                        agent_conf,
-                        prompt_str,
-                        agent_name,
-                        no_tools,
-                        mgr,
-                    ) = command_agent(
-                        parts[1].strip() if len(parts) == 2 else None,
-                        config=config,
-                        agent_conf=agent_conf,
-                        agent_name=agent_name,
-                        provider_conf=provider_conf,
-                        cli_model_override=cli_model_override,
-                        no_tools=no_tools,
-                        mgr=mgr,
-                        loop=loop,
-                        readline_enabled=(_readline is not None),
-                    )
-                elif sline.startswith("/help"):
-                    click.echo(command_help())
-                else:
-                    click.echo("Unknown command", err=True)
-                continue
-            except ReplExit:
-                click.echo("", err=True)
-                break
-            except ValueError as ve:
-                click.echo(str(ve), err=True)
-                continue
-
-        # Add to session history if readline is available
-        add_history(_readline, line)
-
-        try:
-            # Prepare to capture assistant reply to maintain conversation history
-            result_holder: List[str] = []
-            user_msg: Dict[str, Any] = {"role": "user", "content": line}
-            loop.run_until_complete(
-                run_llm(
-                    prompt=line,
-                    provider_conf=provider_conf,
-                    agent_conf=agent_conf,
-                    cli_model_override=cli_model_override,
-                    stream=stream,
-                    progress=progress,
-                    output_format=output_format,
-                    no_tools=no_tools,
-                    config=config,
-                    logger=logger,
-                    exit_on_interrupt=False,
-                    preinitialized_mcp=True,
-                    history_messages=history_messages,
-                    result_sink=result_holder,
-                )
-            )
-            # Update history with user and assistant messages
-            assistant_content = result_holder[0] if result_holder else ""
-            history_messages.extend([user_msg, {"role": "assistant", "content": assistant_content}])
-        except KeyboardInterrupt:
-            last_interrupt = time.monotonic()
-            click.echo("Cancelled.", err=True)
-            continue
-
-    # Clean up MCP sessions and close the persistent event loop
-    try:
-        if not no_tools and mgr is not None:
-            loop.run_until_complete(mgr.stop())
-    except Exception:
-        pass
-    # Cleanup LiteLLM async clients to avoid un-awaited coroutine warnings
-    try:
-        if close_litellm_async_clients is not None:
-            loop.run_until_complete(close_litellm_async_clients())
-    except Exception:
-        pass
-    # Close reattached TTY input if opened
-    try:
-        if 'tty_in' in locals() and tty_in is not None:
-            tty_in.close()
-    except Exception:
-        pass
-    try:
-        # Suppress known RuntimeWarning from litellm's async_client_cleanup when closing loop
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                category=RuntimeWarning,
-                module=r"litellm\.llms\.custom_httpx\.async_client_cleanup",
-            )
-            loop.close()
-    except Exception:
-        pass
 
 if __name__ == "__main__":
     main()
