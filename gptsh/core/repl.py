@@ -131,16 +131,36 @@ def command_no_tools(
     import asyncio
 
     from gptsh.core.config_resolver import build_agent as _build_agent
-    new_agent = asyncio.run(
-        _build_agent(
-            config,
-            cli_agent=agent_name,
-            cli_provider=None,
-            cli_tools_filter=None,
-            cli_model_override=cli_model_override,
-            cli_no_tools=effective_no_tools,
-        )
-    )
+    # Use a fresh loop to avoid nested run() issues under pytest-asyncio
+    # Run coroutine in a dedicated thread to avoid interfering with any running loop
+    import threading
+
+    result_box: Dict[str, Any] = {}
+
+    def _worker():  # pragma: no cover - thread setup
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            result_box["agent"] = loop.run_until_complete(
+                _build_agent(
+                    config,
+                    cli_agent=agent_name,
+                    cli_provider=None,
+                    cli_tools_filter=None,
+                    cli_model_override=cli_model_override,
+                    cli_no_tools=effective_no_tools,
+                )
+            )
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join()
+    new_agent = result_box.get("agent")
     tools_map = getattr(new_agent, "tools", {}) or {}
     msg = f"Tools {'disabled' if effective_no_tools else 'enabled'} ({sum(len(v or []) for v in tools_map.values())} available)"
     return new_agent, effective_no_tools, msg

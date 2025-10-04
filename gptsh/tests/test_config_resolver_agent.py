@@ -48,3 +48,8 @@ async def test_build_agent_base_params_and_tools_filter(monkeypatch):
     assert captured_allowed == ["fs"]
     assert set(agent.tools.keys()) == {"fs"}
     assert len(agent.tools["fs"]) == 1
+    # Ensure agent stores resolved configs
+    assert isinstance(getattr(agent, "provider_conf", None), dict)
+    assert isinstance(getattr(agent, "agent_conf", None), dict)
+    assert agent.provider_conf.get("model") == "prov-model"
+    assert agent.agent_conf.get("model") == "agent-model"
