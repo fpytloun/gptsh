@@ -37,19 +37,18 @@ def test_cli_stream_no_tools(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Stub prepare_completion_params to avoid building tools and to set chosen_model
-    async def fake_prepare_completion_params(prompt, provider_conf, agent_conf, cli_model_override, config, no_tools, history_messages=None):
-        params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
-        return params, False, provider_conf.get("model")
+    # Monkeypatch ChatSession to control streaming
+    class DummySession:
+        def __init__(self, *a, **k):
+            pass
+        async def prepare_stream(self, prompt, provider_conf, agent_conf, cli_model_override, history_messages):
+            params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
+            return params, provider_conf.get("model")
+        async def stream_with_params(self, params):
+            yield "hello "
+            yield "world"
 
-    monkeypatch.setattr(ep, "prepare_completion_params", fake_prepare_completion_params)
-
-    # Fake stream_completion to yield two chunks
-    async def fake_stream_completion(params):
-        yield "hello "
-        yield "world"
-
-    monkeypatch.setattr(ep, "stream_completion", fake_stream_completion)
+    monkeypatch.setattr(ep, "ChatSession", DummySession)
 
     runner = CliRunner()
     result = runner.invoke(main, ["--no-tools", "--output", "text", "hi there"])
@@ -72,16 +71,20 @@ def test_cli_agent_provider_selection(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Short-circuit LLM path: streaming disabled by --no-tools and stub streaming
-    async def fake_prepare_completion_params(prompt, provider_conf, agent_conf, cli_model_override, config, no_tools, history_messages=None):
-        params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
-        return params, False, provider_conf.get("model")
-
-    async def fake_stream_completion(params):
-        yield "x"
-
-    monkeypatch.setattr(ep, "prepare_completion_params", fake_prepare_completion_params)
-    monkeypatch.setattr(ep, "stream_completion", fake_stream_completion)
+    # Short-circuit LLM path via ChatSession monkeypatch
+    class DummySession:
+        def __init__(self, *a, **k):
+            pass
+        async def prepare_stream(self, prompt, provider_conf, agent_conf, cli_model_override, history_messages):
+            params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
+            return params, provider_conf.get("model")
+        async def stream_with_params(self, params):
+            yield "x"
+        async def start(self):
+            pass
+        async def run(self, *a, **k):
+            return ""
+    monkeypatch.setattr(ep, "ChatSession", DummySession)
 
     runner = CliRunner()
     # Select non-default agent and provider override

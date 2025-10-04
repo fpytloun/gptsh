@@ -215,3 +215,25 @@ class ChatSession:
             raise RuntimeError("MCP not available")
         return await self._mcp.call_tool(server, tool, args)
 
+    async def prepare_stream(
+        self,
+        prompt: str,
+        provider_conf: Dict[str, Any],
+        agent_conf: Optional[Dict[str, Any]],
+        cli_model_override: Optional[str],
+        history_messages: Optional[List[Dict[str, Any]]],
+    ) -> tuple[Dict[str, Any], str]:
+        # Reuse parameter preparation but with tools disabled for streaming
+        params, _has_tools, chosen_model = await self._prepare_params(
+            prompt,
+            provider_conf,
+            agent_conf,
+            cli_model_override,
+            no_tools=True,
+            history_messages=history_messages,
+        )
+        return params, chosen_model
+
+    async def stream_with_params(self, params: Dict[str, Any]):
+        async for chunk in self._llm.stream(params):
+            yield chunk

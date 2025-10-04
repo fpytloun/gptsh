@@ -17,7 +17,6 @@ from gptsh.core.logging import setup_logging
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp import list_tools, get_auto_approved_tools, ensure_sessions_started_async
 from gptsh.llm.session import (
-    prepare_completion_params,
     stream_completion,
     complete_simple,
 )
@@ -366,49 +365,30 @@ async def run_llm(
         progress_obj.start()
         progress_running = True
 
-    # Prepare LiteLLM params (build messages/model/tools) via session
-    init_task_id = None
-    try:
-        # Ensure MCP servers are started once and kept for the duration of the run
-        if not no_tools and not preinitialized_mcp:
-            if progress_obj is not None:
-                init_label = "Initializing MCP tools"
-                init_task_id = progress_obj.add_task(init_label, total=None)
-            try:
-                await ensure_sessions_started_async(config)
-            except Exception:
-                # Do not fail request if MCP init fails; discovery/execution will handle per-server errors
-                pass
-        params, has_tools, chosen_model = await prepare_completion_params(
-            prompt=prompt,
-            provider_conf=provider_conf,
-            agent_conf=agent_conf,
-            cli_model_override=cli_model_override,
-            config=config,
-            no_tools=no_tools,
-            history_messages=history_messages,
-        )
-    finally:
-        if init_task_id is not None and progress_obj is not None:
-            try:
-                progress_obj.remove_task(init_task_id)
-            except Exception:
-                pass
-
-    # If tools are present, force non-stream path
-    if has_tools:
+    # If tools are enabled, force non-stream path (ChatSession orchestrates tools)
+    if not no_tools:
         stream = False
 
     waiting_task_id: Optional[int] = None
     try:
         if stream:
-            wait_label = f"Waiting for {chosen_model.rsplit('/', 1)[-1]}"
+            # Build minimal params and chosen model via ChatSession.prepare_stream
+            llm = LiteLLMClient()
+            session = ChatSession(llm, None, DefaultApprovalPolicy({}), None, config)
+            params, chosen_model = await session.prepare_stream(
+                prompt=prompt,
+                provider_conf=provider_conf,
+                agent_conf=agent_conf,
+                cli_model_override=cli_model_override,
+                history_messages=history_messages,
+            )
+            wait_label = f"Waiting for {str(chosen_model).rsplit('/', 1)[-1]}"
             if progress_obj is not None:
                 waiting_task_id = progress_obj.add_task(wait_label, total=None)
             md_buffer = "" if output_format == "markdown" else ""
             first_output_done = False
             full_output = ""
-            async for text in stream_completion(params):
+            async for text in session.stream_with_params(params):
                 if not text:
                     continue
                 # Ensure spinner is ended before any output
@@ -456,72 +436,76 @@ async def run_llm(
                 except Exception:
                     pass
         else:
-            wait_label = f"Waiting for {chosen_model.rsplit('/', 1)[-1]}"
+            # Initialize MCP (via ChatSession.start) when tools are enabled
+            chosen_model = (
+                cli_model_override
+                or (agent_conf or {}).get("model")
+                or provider_conf.get("model")
+                or "?"
+            )
+            wait_label = f"Waiting for {str(chosen_model).rsplit('/', 1)[-1]}"
             if progress_obj is not None:
                 waiting_task_id = progress_obj.add_task(wait_label, total=None)
             # Non-streaming paths
-            if has_tools:
-                # Use new ChatSession orchestrator
-                approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
+            # Use new ChatSession orchestrator (tools and no-tools)
+            approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
 
-                class _ProgressAdapter:
-                    def __init__(self, p):
-                        self._p = p
+            class _ProgressAdapter:
+                def __init__(self, p):
+                    self._p = p
 
-                    def start(self):
-                        if self._p is not None:
-                            try:
-                                self._p.start()
-                            except Exception:
-                                pass
-
-                    def stop(self):
-                        if self._p is not None:
-                            try:
-                                self._p.stop()
-                            except Exception:
-                                pass
-
-                    def add_task(self, description: str):
-                        if self._p is None:
-                            return None
+                def start(self):
+                    if self._p is not None:
                         try:
-                            return self._p.add_task(description, total=None)
-                        except Exception:
-                            return None
-
-                    def complete_task(self, task_id, description=None):
-                        if self._p is None or task_id is None:
-                            return
-                        try:
-                            if description is not None:
-                                self._p.update(task_id, description=description)
-                            self._p.update(task_id, completed=True)
+                            self._p.start()
                         except Exception:
                             pass
 
-                    def pause(self):
+                def stop(self):
+                    if self._p is not None:
+                        try:
+                            self._p.stop()
+                        except Exception:
+                            pass
+
+                def add_task(self, description: str):
+                    if self._p is None:
+                        return None
+                    try:
+                        return self._p.add_task(description, total=None)
+                    except Exception:
+                        return None
+
+                def complete_task(self, task_id, description=None):
+                    if self._p is None or task_id is None:
+                        return
+                    try:
+                        if description is not None:
+                            self._p.update(task_id, description=description)
+                        self._p.update(task_id, completed=True)
+                    except Exception:
                         pass
 
-                    def resume(self):
-                        pass
+                def pause(self):
+                    pass
 
-                llm = LiteLLMClient()
-                mcp_mgr = MCPManager(config) if not no_tools else None
-                policy = DefaultApprovalPolicy(approved_map)
-                pr = _ProgressAdapter(progress_obj)
-                session = ChatSession(llm, mcp_mgr, policy, pr, config)
-                await session.start()
-                content = await session.run(
-                    prompt=prompt,
-                    provider_conf=provider_conf,
-                    agent_conf=agent_conf,
-                    cli_model_override=cli_model_override,
-                    no_tools=no_tools,
-                    history_messages=history_messages,
-                )
-            else:
-                content = await complete_simple(params)
+                def resume(self):
+                    pass
+
+            llm = LiteLLMClient()
+            mcp_mgr = MCPManager(config) if not no_tools else None
+            policy = DefaultApprovalPolicy(approved_map)
+            pr = _ProgressAdapter(progress_obj)
+            session = ChatSession(llm, mcp_mgr, policy, pr, config)
+            await session.start()
+            content = await session.run(
+                prompt=prompt,
+                provider_conf=provider_conf,
+                agent_conf=agent_conf,
+                cli_model_override=cli_model_override,
+                no_tools=no_tools,
+                history_messages=history_messages,
+            )
             # Capture output for history if requested
             if result_sink is not None:
                 try:
