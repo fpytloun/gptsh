@@ -586,7 +586,21 @@ def repl_loop(
     except Exception:
         _readline = None
 
-    # Build a nice, colored prompt: "<agent>|<model>> "
+    # Helper to build a nice, colored prompt: "<agent>|<model>> "
+    def _make_prompt(agent_name_local: Optional[str], provider_conf_local: Dict[str, Any], agent_conf_local: Optional[Dict[str, Any]]):
+        chosen = (
+            cli_model_override
+            or (agent_conf_local or {}).get("model")
+            or provider_conf_local.get("model")
+            or "?"
+        )
+        model_label_l = str(chosen).rsplit("/", 1)[-1]
+        agent_label_l = agent_name_local or "default"
+        agent_col_l = click.style(agent_label_l, fg="cyan", bold=True)
+        model_col_l = click.style(model_label_l, fg="magenta")
+        return re.sub('(\x1b\\[[0-9;]*[A-Za-z])', r'\001\1\002', f"{agent_col_l}|{model_col_l}> ") if _readline is not None else f"{agent_col_l}|{model_col_l}> "
+
+    # Build initial prompt
     chosen_model = (
         cli_model_override
         or (agent_conf or {}).get("model")
@@ -597,7 +611,7 @@ def repl_loop(
     agent_label = agent_name or "default"
     agent_col = click.style(agent_label, fg="cyan", bold=True)
     model_col = click.style(model_label, fg="magenta")
-    prompt_str = re.sub('(\x1b\\[[0-9;]*[A-Za-z])', r'\001\1\002', f"{agent_col}|{model_col}> ") if _readline is not None else f"{agent_col}|{model_col}> "
+    prompt_str = _make_prompt(agent_name, provider_conf, agent_conf)
     history_messages: List[Dict[str, Any]] = []
     last_interrupt = 0.0
 
@@ -703,51 +717,29 @@ def repl_loop(
                 # Reset model override to the new agent's model (if provided)
                 cli_model_override = (agent_conf.get("model") if isinstance(agent_conf, dict) else None)
                 # Reconfigure tools based on agent's 'tools' field
-                tools_field = agent_conf.get("tools") if isinstance(agent_conf, dict) else None
+                # Apply tools policy via config helpers
+                from gptsh.core.config_api import compute_tools_policy
                 try:
-                    # Always stop current MCP manager before applying a new allow-list so changes take effect
+                    labels = None  # REPL command didn't specify CLI labels; rely on agent config
+                    no_tools, allowed = compute_tools_policy(agent_conf, labels, no_tools)
+                    if allowed is not None:
+                        config.setdefault("mcp", {})["allowed_servers"] = allowed
+                    # Restart or stop MCP sessions based on new policy
                     if mgr is not None:
                         try:
                             loop.run_until_complete(mgr.stop())
                         except Exception:
                             pass
-                    if isinstance(tools_field, list):
-                        if len(tools_field) == 0:
-                            # Disable tools entirely
-                            no_tools = True
-                            config.setdefault("mcp", {})["allowed_servers"] = []
+                        mgr = None
+                    if not no_tools:
+                        try:
+                            mgr = loop.run_until_complete(ensure_sessions_started_async(config))
+                        except Exception:
                             mgr = None
-                        else:
-                            # Apply allow-list and restart sessions
-                            labels = [str(x) for x in tools_field if x]
-                            config.setdefault("mcp", {})["allowed_servers"] = labels
-                            no_tools = False
-                            try:
-                                mgr = loop.run_until_complete(ensure_sessions_started_async(config))
-                            except Exception:
-                                mgr = None
-                    else:
-                        # No specific tool filter; allow all servers (reload)
-                        config.setdefault("mcp", {})["allowed_servers"] = []
-                        if not no_tools:
-                            try:
-                                mgr = loop.run_until_complete(ensure_sessions_started_async(config))
-                            except Exception:
-                                mgr = None
                 except Exception:
                     pass
-                # Recompute prompt to reflect new agent and possibly new model default
-                chosen_model = (
-                    cli_model_override
-                    or (agent_conf or {}).get("model")
-                    or provider_conf.get("model")
-                    or "?"
-                )
-                model_label = str(chosen_model).rsplit("/", 1)[-1]
-                agent_label = agent_name or "default"
-                agent_col = click.style(agent_label, fg="cyan", bold=True)
-                model_col = click.style(model_label, fg="magenta")
-                prompt_str = re.sub('(\x1b\\[[0-9;]*[A-Za-z])', r'\001\1\002', f"{agent_col}|{model_col}> ") if _readline is not None else f"{agent_col}|{model_col}> "
+                # Recompute prompt to reflect new agent/model
+                prompt_str = _make_prompt(agent_name, provider_conf, agent_conf)
                 continue
 
         # Add to session history if readline is available
