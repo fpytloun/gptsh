@@ -300,6 +300,22 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         # Determine effective output format via config_api
         output_effective = effective_output(output, agent_conf)
 
+        # Attempt to build an Agent for this run; if it fails, legacy flow still works
+        agent_obj = None
+        try:
+            labels_cli = tools_filter_labels
+            agent_obj = asyncio.run(
+                build_agent(
+                    config,
+                    cli_agent=agent,
+                    cli_provider=provider,
+                    cli_tools_filter=labels_cli,
+                    cli_model_override=model,
+                )
+            )
+        except Exception:
+            agent_obj = None
+
         asyncio.run(run_llm(
             prompt=prompt_given,
             provider_conf=provider_conf,
@@ -311,6 +327,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             no_tools=no_tools_effective,
             config=config,
             logger=logger,
+            agent_obj=agent_obj,
         ))
     else:
         raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
@@ -331,6 +348,7 @@ async def run_llm(
       preinitialized_mcp: bool = False,
       history_messages: Optional[List[Dict[str, Any]]] = None,
       result_sink: Optional[List[str]] = None,
+      agent_obj: Optional[Any] = None,
   ) -> None:
     """Execute an LLM call using LiteLLM with optional streaming.
     Rendering and progress UI remain in CLI; core logic lives in ChatSession.
@@ -349,9 +367,12 @@ async def run_llm(
     waiting_task_id: Optional[int] = None
     try:
         if stream:
-            # Build minimal params and chosen model via ChatSession to allow monkeypatch in tests
-            from gptsh.llm.litellm_client import LiteLLMClient
-            session = ChatSession(LiteLLMClient(), None, DefaultApprovalPolicy({}), pr, config)
+            # Build minimal params and chosen model; prefer Agent if supported
+            if agent_obj is not None and hasattr(ChatSession, "from_agent"):
+                session = ChatSession.from_agent(agent_obj, progress=pr, config=config)
+            else:
+                from gptsh.llm.litellm_client import LiteLLMClient
+                session = ChatSession(LiteLLMClient(), None, DefaultApprovalPolicy({}), pr, config)
             params, chosen_model = await session.prepare_stream(
                 prompt=prompt,
                 provider_conf=provider_conf,
@@ -403,7 +424,7 @@ async def run_llm(
                 except Exception:
                     pass
         else:
-            # Non-streaming paths via core API (handles tools if enabled)
+            # Non-streaming path. Prefer Agent wiring when available; fallback to core API.
             chosen_model = (
                 cli_model_override
                 or (agent_conf or {}).get("model")
