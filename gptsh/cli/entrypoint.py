@@ -25,6 +25,16 @@ from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.domain.models import map_config_to_models, pick_effective_agent_provider
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.progress import RichProgressReporter
+from gptsh.core.repl import (
+    build_prompt as repl_build_prompt,
+    command_exit,
+    command_model,
+    command_reasoning_effort,
+    command_agent,
+    setup_readline,
+    add_history,
+    ReplExit,
+)
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.console import Console
 from rich.markdown import Markdown
@@ -520,85 +530,17 @@ def repl_loop(
         except Exception:
             tty_in = None
     # Best-effort enable readline features
-    _readline = None
-    try:
-        import readline as _readline  # type: ignore
-        try:
-            _readline.parse_and_bind("tab: complete")
-            # Ensure '/' is part of the word being completed (so '/ag' matches '/agent')
-            try:
-                delims = _readline.get_completer_delims()
-                if "/" in delims:
-                    _readline.set_completer_delims(delims.replace("/", ""))
-            except Exception:
-                pass
-            # Install simple tab-completion for REPL slash-commands and agents
-            commands = ["/exit", "/quit", "/model", "/agent", "/reasoning_effort"]
-
-            def _completer(text, state):
-                try:
-                    buf = _readline.get_line_buffer()
-                except Exception:
-                    buf = ""
-                # Only complete when starting with slash
-                if not buf.startswith("/"):
-                    return None
-                parts = buf.strip().split()
-                # Completing the command itself
-                if len(parts) <= 1 and not buf.endswith(" "):
-                    opts = [c for c in commands if c.startswith(text or "")]
-                    return opts[state] if state < len(opts) else None
-                # Completing arguments for specific commands
-                cmd = parts[0]
-                arg_prefix = ""
-                try:
-                    # Compute current arg prefix (text may be empty when at word boundary)
-                    if buf.endswith(" "):
-                        arg_prefix = ""
-                    else:
-                        arg_prefix = text or ""
-                except Exception:
-                    arg_prefix = text or ""
-                if cmd == "/agent":
-                    names = []
-                    try:
-                        agents_conf = config.get("agents") or {}
-                        names = [str(n) for n in agents_conf.keys()]
-                    except Exception:
-                        names = []
-                    opts = [n for n in names if n.startswith(arg_prefix)]
-                    return opts[state] if state < len(opts) else None
-                if cmd == "/reasoning_effort":
-                    opts = [o for o in ["minimal", "low", "medium", "high"] if o.startswith(arg_prefix)]
-                    return opts[state] if state < len(opts) else None
-                if cmd == "/model":
-                    # No centralized model list; allow free text (no suggestions)
-                    return None
-                return None
-
-            try:
-                _readline.set_completer(_completer)
-            except Exception:
-                pass
-            # Default emacs bindings include Ctrl+R reverse-search-history
-        except Exception:
-            pass
-    except Exception:
-        _readline = None
+    readline_enabled, _readline = setup_readline(lambda: list((config.get("agents") or {}).keys()))
 
     # Helper to build a nice, colored prompt: "<agent>|<model>> "
     def _make_prompt(agent_name_local: Optional[str], provider_conf_local: Dict[str, Any], agent_conf_local: Optional[Dict[str, Any]]):
-        chosen = (
-            cli_model_override
-            or (agent_conf_local or {}).get("model")
-            or provider_conf_local.get("model")
-            or "?"
+        return repl_build_prompt(
+            agent_name=agent_name_local,
+            provider_conf=provider_conf_local,
+            agent_conf=agent_conf_local,
+            cli_model_override=cli_model_override,
+            readline_enabled=(_readline is not None),
         )
-        model_label_l = str(chosen).rsplit("/", 1)[-1]
-        agent_label_l = agent_name_local or "default"
-        agent_col_l = click.style(agent_label_l, fg="cyan", bold=True)
-        model_col_l = click.style(model_label_l, fg="magenta")
-        return re.sub('(\x1b\\[[0-9;]*[A-Za-z])', r'\001\1\002', f"{agent_col_l}|{model_col_l}> ") if _readline is not None else f"{agent_col_l}|{model_col_l}> "
 
     # Build initial prompt
     chosen_model = (
@@ -665,89 +607,54 @@ def repl_loop(
         # Handle REPL slash-commands
         sline = line.strip()
         if sline.startswith("/"):
-            if sline in ("/exit", "/quit"):
+            try:
+                if sline in ("/exit", "/quit"):
+                    command_exit()
+                elif sline.startswith("/model"):
+                    parts = sline.split(None, 1)
+                    cli_model_override, prompt_str = command_model(
+                        parts[1].strip() if len(parts) == 2 else None,
+                        agent_conf=agent_conf,
+                        provider_conf=provider_conf,
+                        cli_model_override=cli_model_override,
+                        agent_name=agent_name,
+                        readline_enabled=(_readline is not None),
+                    )
+                elif sline.startswith("/reasoning_effort"):
+                    parts = sline.split(None, 1)
+                    agent_conf = command_reasoning_effort(parts[1].strip() if len(parts) == 2 else None, agent_conf)
+                elif sline.startswith("/agent"):
+                    parts = sline.split(None, 1)
+                    (
+                        agent_conf,
+                        prompt_str,
+                        agent_name,
+                        no_tools,
+                        mgr,
+                    ) = command_agent(
+                        parts[1].strip() if len(parts) == 2 else None,
+                        config=config,
+                        agent_conf=agent_conf,
+                        agent_name=agent_name,
+                        provider_conf=provider_conf,
+                        cli_model_override=cli_model_override,
+                        no_tools=no_tools,
+                        mgr=mgr,
+                        loop=loop,
+                        readline_enabled=(_readline is not None),
+                    )
+                else:
+                    click.echo("Unknown command", err=True)
+                continue
+            except ReplExit:
                 click.echo("", err=True)
                 break
-            if sline.startswith("/model"):
-                parts = sline.split(None, 1)
-                if len(parts) == 2 and parts[1].strip():
-                    cli_model_override = parts[1].strip()
-                    # Recompute prompt to reflect new model
-                    chosen_model = (
-                        cli_model_override
-                        or (agent_conf or {}).get("model")
-                        or provider_conf.get("model")
-                        or "?"
-                    )
-                    model_label = str(chosen_model).rsplit("/", 1)[-1]
-                    agent_label = agent_name or "default"
-                    agent_col = click.style(agent_label, fg="cyan", bold=True)
-                    model_col = click.style(model_label, fg="magenta")
-                    prompt_str = re.sub('(\x1b\\[[0-9;]*[A-Za-z])', r'\001\1\002', f"{agent_col}|{model_col}> ") if _readline is not None else f"{agent_col}|{model_col}> "
-                else:
-                    click.echo("Usage: /model <model>", err=True)
-                continue
-            if sline.startswith("/reasoning_effort"):
-                parts = sline.split(None, 1)
-                if len(parts) == 2 and parts[1].strip():
-                    val = parts[1].strip().lower()
-                    if val in {"minimal", "low", "medium", "high"}:
-                        if not isinstance(agent_conf, dict):
-                            agent_conf = {}
-                        agent_conf["reasoning_effort"] = val
-                    else:
-                        click.echo("Usage: /reasoning_effort [minimal|low|medium|high]", err=True)
-                        continue
-                else:
-                    click.echo("Usage: /reasoning_effort [minimal|low|medium|high]", err=True)
-                    continue
-            if sline.startswith("/agent"):
-                parts = sline.split(None, 1)
-                if len(parts) != 2 or not parts[1].strip():
-                    click.echo("Usage: /agent <agent>", err=True)
-                    continue
-                new_agent = parts[1].strip()
-                agents_conf_all = config.get("agents") or {}
-                if new_agent not in agents_conf_all:
-                    click.echo(f"Unknown agent '{new_agent}'", err=True)
-                    continue
-                # Switch agent config
-                agent_conf = agents_conf_all.get(new_agent) or {}
-                agent_name = new_agent
-                # Reset model override to the new agent's model (if provided)
-                cli_model_override = (agent_conf.get("model") if isinstance(agent_conf, dict) else None)
-                # Reconfigure tools based on agent's 'tools' field
-                # Apply tools policy via config helpers
-                from gptsh.core.config_api import compute_tools_policy
-                try:
-                    labels = None  # REPL command didn't specify CLI labels; rely on agent config
-                    no_tools, allowed = compute_tools_policy(agent_conf, labels, no_tools)
-                    if allowed is not None:
-                        config.setdefault("mcp", {})["allowed_servers"] = allowed
-                    # Restart or stop MCP sessions based on new policy
-                    if mgr is not None:
-                        try:
-                            loop.run_until_complete(mgr.stop())
-                        except Exception:
-                            pass
-                        mgr = None
-                    if not no_tools:
-                        try:
-                            mgr = loop.run_until_complete(ensure_sessions_started_async(config))
-                        except Exception:
-                            mgr = None
-                except Exception:
-                    pass
-                # Recompute prompt to reflect new agent/model
-                prompt_str = _make_prompt(agent_name, provider_conf, agent_conf)
+            except ValueError as ve:
+                click.echo(str(ve), err=True)
                 continue
 
         # Add to session history if readline is available
-        if _readline is not None:
-            try:
-                _readline.add_history(line)
-            except Exception:
-                pass
+        add_history(_readline, line)
 
         try:
             # Prepare to capture assistant reply to maintain conversation history
