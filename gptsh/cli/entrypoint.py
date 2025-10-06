@@ -423,6 +423,38 @@ async def run_llm(
                     console.print(Markdown(md_buffer))
             else:
                 click.echo()  # newline
+            # Emit a helpful debug if we saw tool deltas but produced no text
+            try:
+                import logging
+                info = getattr(session._llm, "get_last_stream_info", lambda: {})()  # type: ignore[attr-defined]
+                if isinstance(info, dict):
+                    if not full_output and info.get("saw_tool_delta"):
+                        logging.getLogger(__name__).debug(
+                            "Stream ended with no text but tool deltas were observed: %s",
+                            info.get("tool_names"),
+                        )
+                        # Fallback: re-run non-stream to execute tools and print final content
+                        try:
+                            content = await run_prompt_with_agent(
+                                agent=agent_obj,
+                                prompt=prompt,
+                                config=config,
+                                provider_conf=provider_conf,
+                                agent_conf=agent_conf,
+                                cli_model_override=cli_model_override,
+                                no_tools=False,
+                                history_messages=history_messages,
+                                progress_reporter=pr,
+                            )
+                        except ToolApprovalDenied as e:
+                            click.echo(f"Tool approval denied: {e}", err=True)
+                            sys.exit(4)
+                        if output_format == "markdown":
+                            console.print(Markdown(content or ""))
+                        else:
+                            click.echo(content or "")
+            except Exception:
+                pass
             # Capture full output for history if requested
             if result_sink is not None:
                 try:
