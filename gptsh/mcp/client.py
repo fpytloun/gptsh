@@ -17,6 +17,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from gptsh.config.loader import _expand_env
 from gptsh.mcp.builtin import get_builtin_servers
+from gptsh.core.exceptions import ConfigError
 
 
 def _select_servers_file(config: Dict[str, Any]) -> Optional[str]:
@@ -58,25 +59,26 @@ def _parse_servers_value(value: Any) -> Dict[str, Any]:
     Environment variables inside strings are expanded.
     """
     servers: Dict[str, Any] = {}
-    try:
-        if isinstance(value, dict):
-            # Support direct YAML mapping or a nested Claude-compatible mapping
-            if "mcpServers" in value and isinstance(value["mcpServers"], dict):
-                servers = dict(value["mcpServers"])  # unwrap if user pasted JSON-style structure into YAML
-            else:
-                servers = dict(value)
-        elif isinstance(value, str):
-            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", value)
-            content = _expand_env(content)
+    if isinstance(value, dict):
+        # Support direct YAML mapping or a nested Claude-compatible mapping
+        if "mcpServers" in value and isinstance(value["mcpServers"], dict):
+            servers = dict(value["mcpServers"])  # unwrap if user pasted JSON-style structure into YAML
+        else:
+            servers = dict(value)
+        return servers
+    if isinstance(value, str):
+        content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", value)
+        content = _expand_env(content)
+        try:
             data = json.loads(content)
-            if isinstance(data, dict) and "mcpServers" in data and isinstance(data["mcpServers"], dict):
-                servers = dict(data["mcpServers"])  # unwrap Claude-compatible schema
-            elif isinstance(data, dict):
-                servers = dict(data)
-            else:
-                servers = {}
-    except Exception:
-        servers = {}
+        except json.JSONDecodeError as e:
+            raise ConfigError(f"Invalid JSON in mcp.servers: {e}")
+        if isinstance(data, dict) and "mcpServers" in data and isinstance(data["mcpServers"], dict):
+            return dict(data["mcpServers"])  # unwrap Claude-compatible schema
+        if isinstance(data, dict):
+            return dict(data)
+        # Parsed successfully but not a mapping; treat as empty mapping
+        return {}
     return servers
 
 def _compute_effective_servers(config: Dict[str, Any]) -> Dict[str, Any]:

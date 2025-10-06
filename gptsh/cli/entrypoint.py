@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 import warnings
 
@@ -83,13 +84,30 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     # Load config
     # Load configuration: use custom path or defaults
     if config_path:
-        config = load_config([config_path])
+        # Fail fast if the provided config path does not exist
+        if not os.path.isfile(config_path):
+            click.echo(f"Configuration file not found: {config_path}")
+            sys.exit(2)
+        try:
+            config = load_config([config_path])
+        except Exception as e:
+            click.echo(f"Failed to load configuration from {config_path}: {e}")
+            sys.exit(2)
     else:
-        config = load_config()
+        try:
+            config = load_config()
+        except Exception as e:
+            click.echo(f"Failed to load configuration: {e}")
+            sys.exit(2)
 
     if mcp_servers:
         # Allow comma or whitespace-separated list of paths
         parts = [p for raw in mcp_servers.split(",") for p in raw.split() if p]
+        # Validate that at least one provided servers file exists
+        existing = [p for p in parts if os.path.isfile(os.path.expanduser(p))]
+        if not existing:
+            click.echo(f"MCP servers file(s) not found: {', '.join(parts) if parts else '(none)'}")
+            sys.exit(2)
         mcp_cfg = config.setdefault("mcp", {})
         # If inline mcp.servers is configured, prefer it and ignore CLI file override
         if not mcp_cfg.get("servers"):
@@ -105,6 +123,18 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     log_level = "DEBUG" if debug else ("INFO" if verbose else "WARNING")
     log_fmt = config.get("logging", {}).get("format", "text")
     logger = setup_logging(log_level, log_fmt)
+
+    # Merge default agent so it's always present for checks and later listing
+    existing_agents = dict(config.get("agents") or {})
+    config["agents"] = {**DEFAULT_AGENTS, **existing_agents}
+
+    # Validate agent and provider names if explicitly set
+    if agent and agent not in config.get("agents", {}):
+        click.echo(f"Agent not found: {agent}")
+        sys.exit(2)
+    if provider and provider not in (config.get("providers") or {}):
+        click.echo(f"Provider not found: {provider}")
+        sys.exit(2)
 
     # Handle immediate listing flags
     if list_tools_flag:
@@ -126,7 +156,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                 )
             )
         except Exception as e:
-            # If the failure is due to conflicting config (tools + mcp.servers), surface a clear message
+            # Surface configuration errors directly
             from gptsh.core.exceptions import ConfigError
             if isinstance(e, ConfigError):
                 click.echo(f"Configuration error: {e}")
@@ -166,9 +196,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         _print_agents_listing(config, agents_conf, tools_map, no_tools)
         sys.exit(0)
 
-    # Ensure a default agent always exists by merging built-ins into config
-    existing_agents = dict(config.get("agents") or {})
-    config["agents"] = {**DEFAULT_AGENTS, **existing_agents}
+    # Ensure a default agent always exists by merging built-ins into config (done earlier for validation)
 
     # Interactive REPL mode
     if interactive:

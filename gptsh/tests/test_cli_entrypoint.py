@@ -1,5 +1,6 @@
 import pytest
 from click.testing import CliRunner
+import os
 
 
 @pytest.mark.parametrize("tools_map", [
@@ -23,6 +24,93 @@ def test_cli_list_tools(monkeypatch, tools_map):
     # Check that each server appears in output
     for server in tools_map:
         assert server in result.output
+
+
+def test_cli_invalid_config_path(monkeypatch):
+    import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
+    # Keep load_config from being called
+    monkeypatch.setattr(ep, "load_config", lambda paths=None: {})
+    runner = CliRunner()
+    result = runner.invoke(main, ["-c", "/this/does/not/exist.yml", "--list-tools"])
+    assert result.exit_code == 2
+    assert "Configuration file not found" in result.output
+
+
+def test_cli_invalid_mcp_servers_file(monkeypatch, tmp_path):
+    import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
+    # Minimal config
+    monkeypatch.setattr(ep, "load_config", lambda paths=None: {"agents": {"default": {}}, "default_agent": "default"})
+    runner = CliRunner()
+    result = runner.invoke(main, ["--mcp-servers", "/nope.json", "--list-tools"])
+    assert result.exit_code == 2
+    assert "MCP servers file(s) not found" in result.output
+
+
+def test_cli_invalid_agent_name(monkeypatch):
+    import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
+    # Minimal config with only default agent
+    monkeypatch.setattr(ep, "load_config", lambda paths=None: {"agents": {"default": {}}, "default_agent": "default"})
+    runner = CliRunner()
+    result = runner.invoke(main, ["-a", "doesnotexist", "--list-agents"])
+    assert result.exit_code == 2
+    assert "Agent not found" in result.output
+
+
+def test_cli_invalid_provider_name(monkeypatch):
+    import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
+    # Minimal config with only one provider
+    monkeypatch.setattr(ep, "load_config", lambda paths=None: {"providers": {"openai": {}}, "default_provider": "openai", "agents": {"default": {}}, "default_agent": "default"})
+    runner = CliRunner()
+    result = runner.invoke(main, ["--provider", "doesnotexist", "--list-agents"])
+    assert result.exit_code == 2
+    assert "Provider not found" in result.output
+
+
+def test_cli_load_config_failure_default(monkeypatch):
+    import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
+    # Cause load_config to raise
+    def raise_load(_paths=None):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(ep, "load_config", raise_load)
+    runner = CliRunner()
+    result = runner.invoke(main, ["--list-agents"])
+    assert result.exit_code == 2
+    assert "Failed to load configuration" in result.output
+
+
+def test_cli_load_config_path_with_invalid_yaml(monkeypatch, tmp_path):
+    import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
+    # Write an invalid YAML file
+    bad = tmp_path / "bad.yml"
+    bad.write_text(": not yaml\n", encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(main, ["-c", str(bad), "--list-agents"])
+    assert result.exit_code == 2
+    assert "Failed to load configuration from" in result.output
+
+
+def test_cli_inline_servers_invalid_json_in_list_tools(monkeypatch):
+    import gptsh.cli.entrypoint as ep
+    from gptsh.cli.entrypoint import main
+    # Provide config with invalid inline JSON for mcp.servers
+    cfg = {
+        "providers": {"openai": {"model": "m1"}},
+        "default_provider": "openai",
+        "mcp": {"servers": '{"mcpServers": '},
+        "agents": {"default": {}},
+        "default_agent": "default",
+    }
+    monkeypatch.setattr(ep, "load_config", lambda paths=None: cfg)
+    runner = CliRunner()
+    result = runner.invoke(main, ["--list-tools"])
+    assert result.exit_code == 2
+    assert "Configuration error:" in result.output
 
 
 def test_cli_stream_no_tools(monkeypatch):

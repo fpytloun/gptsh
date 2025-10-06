@@ -216,6 +216,21 @@ async def test_mcp_servers_accepts_json_string(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_inline_servers_invalid_json_raises(monkeypatch):
+    bad_json = '{"mcpServers": '  # truncated
+    config: Dict[str, Any] = {
+        "default_agent": "dev",
+        "providers": {"openai": {"model": "m"}},
+        "mcp": {"servers": bad_json},
+        "agents": {"dev": {}},
+    }
+    from gptsh.core.exceptions import ConfigError
+    with pytest.raises(ConfigError):
+        # Resolution path triggers server parsing
+        await build_agent(config, cli_agent="dev", cli_provider="openai")
+
+
+@pytest.mark.asyncio
 async def test_yaml_mapping_with_mcpServers_unwrapped(monkeypatch):
     config: Dict[str, Any] = {
         "default_agent": "dev",
