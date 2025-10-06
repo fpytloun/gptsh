@@ -16,10 +16,10 @@ class RichProgressReporter(ProgressReporter):
 
     def start(self) -> None:
         if self._progress is None:
-            # Render progress to stderr to avoid mixing with stdout content
+            # Render progress to stderr. Spinner green; text gray for subtlety.
             self._progress = Progress(
-                SpinnerColumn(),
-                TextColumn("{task.description}"),
+                SpinnerColumn(style="green"),
+                TextColumn("{task.description}", style="grey50"),
                 console=Console(file=sys.stderr),
             )
             self._progress.start()
