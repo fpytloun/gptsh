@@ -348,7 +348,7 @@ async def run_llm(
       history_messages: Optional[List[Dict[str, Any]]] = None,
       result_sink: Optional[List[str]] = None,
       agent_obj: Optional[Any] = None,
-  ) -> None:
+) -> None:
     """Execute an LLM call using LiteLLM with optional streaming.
     Rendering and progress UI remain in CLI; core logic lives in ChatSession.
     """
@@ -375,6 +375,17 @@ async def run_llm(
                 cli_model_override=cli_model_override,
                 history_messages=history_messages,
             )
+            try:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(
+                    "Streaming with model=%s tools=%d choice=%s",
+                    str(chosen_model).rsplit('/', 1)[-1],
+                    len(params.get("tools") or []),
+                    params.get("tool_choice"),
+                )
+            except Exception:
+                pass
             wait_label = f"Waiting for {str(chosen_model).rsplit('/', 1)[-1]}"
             if pr is not None:
                 waiting_task_id = pr.add_task(wait_label)

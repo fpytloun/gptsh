@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 from gptsh.core.agent import Agent
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressReporter
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
+
+
+logger = logging.getLogger(__name__)
 
 
 class ChatSession:
@@ -59,6 +63,7 @@ class ChatSession:
         )
         if not has_tools:
             # Simple one-shot
+            logger.debug("LLM complete (no tools): params.keys=%s", list(params.keys()))
             resp = await self._llm.complete(params)
             try:
                 return str((resp.get("choices") or [{}])[0].get("message", {}).get("content", "") or "")
@@ -73,8 +78,14 @@ class ChatSession:
                 params["tools"] = self._tool_specs
                 if "tool_choice" not in params:
                     params["tool_choice"] = "auto"
+            logger.debug(
+                "LLM complete (tool loop): tools=%d, choice=%s",
+                len(params.get("tools") or []),
+                params.get("tool_choice"),
+            )
             resp = await self._llm.complete(params)
             calls = parse_tool_calls(resp)
+            logger.debug("Parsed tool calls: %s", [c.get("name") for c in (calls or [])])
             if not calls:
                 try:
                     return str((resp.get("choices") or [{}])[0].get("message", {}).get("content", "") or "")
@@ -110,11 +121,14 @@ class ChatSession:
                     args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 except Exception:
                     args = {}
-
+                logger.debug(
+                    "Tool request: %s server=%s tool=%s args=%s", fullname, server, toolname, args
+                )
                 allowed = self._approval.is_auto_allowed(server, toolname)
                 if not allowed:
                     allowed = await self._approval.confirm(server, toolname, args)
                 if not allowed:
+                    logger.debug("Tool denied: %s", fullname)
                     conversation.append(
                         {
                             "role": "tool",
@@ -138,6 +152,7 @@ class ChatSession:
                 try:
                     result = await self._call_tool(server, toolname, args)
                 except Exception as e:  # pragma: no cover - defensive
+                    logger.warning("Tool execution error: %s: %s", fullname, e, exc_info=True)
                     result = f"Tool execution failed: {e}"
                 finally:
                     if self._progress is not None:
@@ -164,6 +179,12 @@ class ChatSession:
         no_tools: bool,
         history_messages: Optional[List[Dict[str, Any]]],
     ) -> tuple[Dict[str, Any], bool, str]:
+        logger.debug(
+            "Preparing params: no_tools=%s provider_keys=%s agent_keys=%s",
+            no_tools,
+            list((provider_conf or {}).keys()),
+            list((agent_conf or {}).keys()) if agent_conf else [],
+        )
         # Base params from provider
         params: Dict[str, Any] = {k: v for k, v in dict(provider_conf).items() if k not in {"model", "name"}}
         chosen_model = (
@@ -233,6 +254,12 @@ class ChatSession:
                 if "tool_choice" not in params:
                     params["tool_choice"] = "auto"
                 has_tools = True
+        logger.debug(
+            "Prepared params: model=%s has_tools=%s tools_count=%d",
+            chosen_model,
+            has_tools,
+            len(params.get("tools") or []),
+        )
 
         params["drop_params"] = True
         return params, has_tools, chosen_model

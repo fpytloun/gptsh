@@ -1,6 +1,10 @@
+import logging
 from typing import Any, Dict, List
 
 from gptsh.mcp import discover_tools_detailed_async
+
+
+logger = logging.getLogger(__name__)
 
 
 async def build_llm_tools(config: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -9,7 +13,9 @@ async def build_llm_tools(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     Tool names are prefixed with '<server>__' to route calls back.
     """
     tools: List[Dict[str, Any]] = []
+    logger.debug("Building LLM tools from discovery")
     detailed = await discover_tools_detailed_async(config)
+    logger.debug("Discovery servers: %s", list((detailed or {}).keys()))
     for server, items in detailed.items():
         for t in items:
             name = f"{server}__{t['name']}"

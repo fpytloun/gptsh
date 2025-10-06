@@ -237,7 +237,7 @@ Notes:
 - Standardize on `asyncio` with `httpx.AsyncClient` for HTTP/SSE and async subprocess for stdio.
 - All long-running calls must accept a timeout (from config) and be cancellable.
 - Graceful shutdown: cancel tasks, close streams/clients, terminate child processes.
-- Streaming: CLI uses `ChatSession.prepare_stream` and `stream_with_params`; this path is agent-only and disables tools while streaming output.
+- Streaming: CLI uses `ChatSession.prepare_stream` and `stream_with_params`
 
 ---
 ## MCP Lifecycle and Resilience

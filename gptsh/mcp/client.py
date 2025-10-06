@@ -350,15 +350,24 @@ class _MCPManager:
         return result
 
     async def call_tool(self, server: str, tool: str, arguments: Dict[str, Any]) -> str:
+        logger = logging.getLogger(__name__)
+        logger.debug("MCP call_tool start: server=%s tool=%s args_keys=%s", server, tool, list((arguments or {}).keys()))
         srv = self.servers.get(server) or {}
         if srv.get("disabled"):
             raise RuntimeError(f"MCP server '{server}' is disabled")
         handle = self.sessions.get(server)
         if handle and handle[0] == "module":
             mod = importlib.import_module(handle[1])
-            return str(mod.execute(tool, arguments or {}))
+            try:
+                out = str(mod.execute(tool, arguments or {}))
+                logger.debug("MCP call_tool done (module): server=%s tool=%s", server, tool)
+                return out
+            except Exception as e:
+                logger.warning("MCP module tool error: %s.%s: %s", server, tool, e, exc_info=True)
+                raise
         if handle and handle[0] == "session":
             session = handle[1]
+            logger.debug("MCP calling session tool: %s.%s", server, tool)
             resp = await session.call_tool(tool, arguments or {})
             texts: List[str] = []
             for item in getattr(resp, "content", []) or []:
@@ -370,7 +379,9 @@ class _MCPManager:
                         texts.append(str(item))
                     except Exception:
                         pass
-            return "\n".join(texts).strip()
+            out = "\n".join(texts).strip()
+            logger.debug("MCP call_tool done (session): server=%s tool=%s len(out)=%d", server, tool, len(out))
+            return out
         raise RuntimeError(f"MCP server '{server}' not configured or not connected")
 
 async def ensure_sessions_started_async(config: Dict[str, Any]) -> _MCPManager:
