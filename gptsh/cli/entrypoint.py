@@ -9,12 +9,16 @@ from rich.markdown import Markdown
 from gptsh.config.loader import load_config
 from gptsh.core.api import run_prompt_with_agent
 from gptsh.core.runner import RunRequest, run_turn, run_turn_with_request
+from gptsh.cli.utils import (
+    resolve_agent_and_settings as _resolve_agent_and_settings,
+    print_agents_listing as _print_agents_listing,
+    print_tools_listing as _print_tools_listing,
+)
 from gptsh.core.config_resolver import build_agent
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.logging import setup_logging
 from gptsh.core.progress import RichProgressReporter
 from gptsh.core.repl import run_agent_repl
-from gptsh.core.session import ChatSession
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
 
@@ -114,40 +118,6 @@ DEFAULT_AGENTS = {
     "default": {}
 }
 
-# Small helpers to reduce duplication across branches
-async def _resolve_agent_and_settings(
-    *,
-    config: Dict[str, Any],
-    agent_name: Optional[str],
-    provider_name: Optional[str],
-    model_override: Optional[str],
-    tools_filter_labels: Optional[List[str]],
-    no_tools_flag: bool,
-    output_format: str,
-):
-    from gptsh.core.config_api import (
-        compute_tools_policy,
-        effective_output,
-        select_agent_provider_dicts,
-    )
-
-    agent_conf, provider_conf = select_agent_provider_dicts(
-        config, cli_agent=agent_name, cli_provider=provider_name
-    )
-    labels = tools_filter_labels if tools_filter_labels is not None else None
-    no_tools_effective, allowed = compute_tools_policy(agent_conf, labels, no_tools_flag)
-    output_effective = effective_output(output_format, agent_conf)
-    # Do not mutate config; pass allowed servers through build_agent via tools_filter_labels
-    agent_obj = await build_agent(
-        config,
-        cli_agent=agent_name,
-        cli_provider=provider_name,
-        cli_tools_filter=labels,
-        cli_model_override=model_override,
-        cli_no_tools=no_tools_effective,
-    )
-    return agent_obj, agent_conf, provider_conf, output_effective, no_tools_effective, allowed
-
 # --- CLI Entrypoint ---
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
@@ -246,23 +216,9 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         _print_agents_listing(config, agents_conf, tools_map, no_tools)
         sys.exit(0)
 
-    # Ensure a default agent always exists by merging built-ins into config, then map via config_api
+    # Ensure a default agent always exists by merging built-ins into config
     existing_agents = dict(config.get("agents") or {})
     config["agents"] = {**DEFAULT_AGENTS, **existing_agents}
-    from gptsh.core.config_api import (
-        compute_tools_policy,
-        effective_output,
-        select_agent_provider_dicts,
-    )
-    try:
-        agent_conf, provider_conf = select_agent_provider_dicts(config, cli_agent=agent, cli_provider=provider)
-    except KeyError as e:
-        msg = str(e)
-        if "agent" in msg:
-            raise click.BadParameter(msg, param_hint="--agent") from None
-        if "provider" in msg:
-            raise click.BadParameter(msg, param_hint="--provider") from None
-        raise
 
     # Interactive REPL mode
     if interactive:
@@ -275,7 +231,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         except Exception:
             stdin_input = None
         initial_prompt = f"{prompt}\n\n---\nInput:\n{stdin_input}" if (prompt and stdin_input) else (prompt or stdin_input)
-        # Agent overrides and building
+        # Agent overrides and building via shared utils
         agent_obj, agent_conf, provider_conf, output_effective, no_tools_effective, allowed = asyncio.run(
             _resolve_agent_and_settings(
                 config=config,
@@ -302,7 +258,9 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     if not click.get_text_stream('stdin').isatty():
         stdin_input = read_stdin()
     # Try to get prompt from agent config
-    agent_prompt = agent_conf.get("prompt", {}).get("user") if agent_conf else None
+    # Pull agent user-prompt (if any) directly from config for fallback usage
+    selected_agent = agent or (config.get("default_agent") or "default")
+    agent_prompt = ((config.get("agents") or {}).get(selected_agent, {}) or {}).get("prompt", {}).get("user")
     # Combine prompt and piped stdin if both are provided
     if prompt and stdin_input:
         prompt_given = f"{prompt}\n\n---\nInput:\n{stdin_input}"
@@ -320,8 +278,6 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                 no_tools_flag=no_tools,
                 output_format=output,
             )
-            if allowed is not None:
-                config.setdefault("mcp", {})["allowed_servers"] = allowed
             await run_llm(
                 prompt=prompt_given,
                 provider_conf=provider_conf_local,
