@@ -1,10 +1,11 @@
-commiter:
+committer:
   model: "gpt-4.1-mini"
   output: text
   tools: []
   prompt:
     system: |
       You are expert in working with Git and creating meaningful Git commit messages using Conventional Commits v1.0.0.
+      Use only plain text for commit messages.
       
       **Instructions:**
       - User input is git diff of changes to be commited
