@@ -193,21 +193,22 @@ def command_agent(
     cli_model_override = (agent_conf.get("model") if isinstance(agent_conf, dict) else None)
     # Apply tools policy via config helpers
     labels = None  # REPL command didn't specify CLI labels; rely on agent config
-    no_tools, allowed = compute_tools_policy(agent_conf, labels, no_tools)
+    # Recompute fresh; do not treat previous no_tools as a CLI override when switching
+    no_tools, allowed = compute_tools_policy(agent_conf, labels, False)
+    mcp_cfg = config.setdefault("mcp", {})
     if allowed is not None:
-        config.setdefault("mcp", {})["allowed_servers"] = allowed
-    # Restart or stop MCP sessions based on new policy
-    if mgr is not None:
-        try:
-            loop.run_until_complete(mgr.stop())
-        except Exception:
-            pass
-        mgr = None
-    if not no_tools:
-        try:
-            mgr = loop.run_until_complete(ensure_sessions_started_async(config))
-        except Exception:
-            mgr = None
+        mcp_cfg["allowed_servers"] = allowed
+    else:
+        # Clear any previous filter so full set is available
+        mcp_cfg.pop("allowed_servers", None)
+    # Stop all existing MCP sessions so that subsequent discovery uses the updated policy/servers
+    # Force a new manager key by toggling a nonce; this avoids reusing cached sessions
+    try:
+        nonce = (mcp_cfg.get("_repl_nonce") or 0) + 1
+        mcp_cfg["_repl_nonce"] = nonce
+    except Exception:
+        mcp_cfg["_repl_nonce"] = 1
+    mgr = None
     prompt_str = build_prompt(
         agent_name=agent_name,
         provider_conf=provider_conf,

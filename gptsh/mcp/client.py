@@ -143,7 +143,7 @@ def _servers_signature(servers: Dict[str, Any]) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 # Per-event-loop MCP session manager to spawn/connect servers once and reuse them
-_MANAGERS: Dict[Tuple[int, str], "_MCPManager"] = {}
+_MANAGERS: Dict[Tuple[int, str, str], "_MCPManager"] = {}
 
 class _MCPManager:
     def __init__(self, config: Dict[str, Any], servers: Optional[Dict[str, Any]] = None):
@@ -464,7 +464,14 @@ async def ensure_sessions_started_async(config: Dict[str, Any]) -> _MCPManager:
     loop_id = id(asyncio.get_running_loop())
     servers = _compute_effective_servers(config)
     sig = _servers_signature(servers)
-    key = (loop_id, sig)
+    mcp_conf = (config.get("mcp") or {})
+    allowed_list = list((mcp_conf.get("allowed_servers") or []))
+    repl_nonce = str(mcp_conf.get("_repl_nonce") or "0")
+    try:
+        allowed_sig = ",".join(sorted(str(x) for x in allowed_list))
+    except Exception:
+        allowed_sig = ""
+    key = (loop_id, sig, f"{allowed_sig}|{repl_nonce}")
     mgr = _MANAGERS.get(key)
     if mgr is None:
         mgr = _MCPManager(config, servers=servers)
@@ -472,6 +479,25 @@ async def ensure_sessions_started_async(config: Dict[str, Any]) -> _MCPManager:
     if not mgr.started:
         await mgr.start()
     return mgr
+
+async def stop_all_sessions_async() -> None:
+    """
+    Stop and clear all MCP managers associated with the current event loop.
+    Useful when switching agents or changing effective servers so stale
+    sessions are not kept around.
+    """
+    loop_id = id(asyncio.get_running_loop())
+    # Collect keys for this loop
+    keys = [k for k in list(_MANAGERS.keys()) if isinstance(k, tuple) and k and k[0] == loop_id]
+    managers = [
+        _MANAGERS.get(k) for k in keys
+    ]
+    # Stop managers
+    if managers:
+        await asyncio.gather(*[m.stop() for m in managers if m], return_exceptions=True)
+    # Remove from cache
+    for k in keys:
+        _MANAGERS.pop(k, None)
 
 def list_tools(config: Dict[str, Any]) -> Dict[str, List[str]]:
     """

@@ -1,6 +1,7 @@
 from .client import (
     _discover_tools_detailed_async,
     _execute_tool_async,
+    stop_all_sessions_async as _stop_all_sessions_async,
     discover_tools_detailed,
     ensure_sessions_started_async as _ensure_sessions_started_async,
     execute_tool,
@@ -18,6 +19,9 @@ async def execute_tool_async(server, tool, arguments, config):
 async def ensure_sessions_started_async(config):
     return await _ensure_sessions_started_async(config)
 
+async def stop_all_sessions():
+    return await _stop_all_sessions_async()
+
 __all__ = [
     "list_tools",
     "get_auto_approved_tools",
@@ -26,4 +30,5 @@ __all__ = [
     "discover_tools_detailed_async",
     "execute_tool_async",
     "ensure_sessions_started_async",
+    "stop_all_sessions",
 ]
