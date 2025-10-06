@@ -584,9 +584,26 @@ def get_auto_approved_tools(config: Dict[str, Any], agent_conf: Optional[Dict[st
     Disabled servers are still included if present in config so the UI can display badges,
     but they will typically have no discovered tools.
     """
-    # Use the same precedence as for session startup
-    # Allow per-agent override if provided via config.mcp.servers_override
-    servers: Dict[str, Any] = _compute_effective_servers(config)
+    # Use the same precedence as for session startup; but if agent defines custom servers,
+    # do not inherit global approvals — compute servers from the agent override only.
+    effective_conf = config
+    try:
+        if isinstance(agent_conf, dict):
+            a_mcp = agent_conf.get("mcp") or {}
+            if isinstance(a_mcp, dict) and "servers" in a_mcp:
+                eff = dict(config or {})
+                mcp_cfg = dict((eff.get("mcp") or {}))
+                mcp_cfg["servers_override"] = a_mcp.get("servers")
+                # Remove other server sources to avoid inheriting global approvals
+                mcp_cfg.pop("servers", None)
+                mcp_cfg.pop("servers_files_cli", None)
+                mcp_cfg.pop("servers_files", None)
+                eff["mcp"] = mcp_cfg
+                effective_conf = eff
+    except Exception:
+        pass
+
+    servers: Dict[str, Any] = _compute_effective_servers(effective_conf)
 
     approved_map: Dict[str, List[str]] = {}
     for name, srv in servers.items():

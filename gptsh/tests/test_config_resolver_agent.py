@@ -119,6 +119,31 @@ async def test_tools_filter_applies_over_agent_servers(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_agent_custom_servers_do_not_inherit_global_approvals(monkeypatch):
+    # Global has approvals for 'global', agent defines custom 'agent' servers only
+    config: Dict[str, Any] = {
+        "default_agent": "dev",
+        "providers": {"openai": {"model": "m"}},
+        "mcp": {"servers": {"global": {"transport": {"type": "stdio"}, "command": "echo", "autoApprove": ["*"]}}},
+        "agents": {"dev": {"mcp": {"servers": {"agent": {"transport": {"type": "stdio"}, "command": "echo"}}}}},
+    }
+
+    # Patch get_auto_approved_tools path to run our logic but stub discovery
+    async def fake_resolve_tools(conf: Dict[str, Any], allowed_servers: Optional[List[str]] = None):
+        async def _exec(server: str, name: str, args: Dict[str, Any]) -> str:
+            return "ok"
+        return {"agent": [ToolHandle(server="agent", name="x", description="", input_schema={}, _executor=_exec)]}
+
+    monkeypatch.setattr("gptsh.mcp.tools_resolver.resolve_tools", fake_resolve_tools)
+    from gptsh.mcp.api import get_auto_approved_tools
+    agent = await build_agent(config, cli_agent="dev", cli_provider="openai")
+    # Compute approvals using effective (agent) config
+    approvals = get_auto_approved_tools({**config}, agent_conf=config["agents"]["dev"])  # type: ignore[index]
+    # Global approvals for 'global' should not leak into agent-only setup
+    assert "global" not in approvals or approvals.get("global") == []
+
+
+@pytest.mark.asyncio
 async def test_agent_servers_take_precedence_over_global(monkeypatch):
     config: Dict[str, Any] = {
         "default_agent": "dev",
