@@ -217,7 +217,7 @@ Notes:
 - Precedence: CLI `--mcp-servers` paths > agent `mcp.servers` > global `mcp.servers` > servers file (./.gptsh/mcp_servers.json, then ~/.config/gptsh/mcp_servers.json).
 - `mcp.servers` accepts either a YAML mapping or a JSON string. If a JSON string contains a top-level `mcpServers` key, it is unwrapped automatically.
 - `${VAR}` inside inline JSON or files is expanded from the runtime environment (and `${env:VAR}` is normalized to `${VAR}`).
-- Built-in in-process servers `time` and `shell` are always available by default and merged if not explicitly defined.
+- Built-in in-process servers `time` and `shell` are always available by default and merged even when using inline `mcp.servers` or agent overrides; you can disable them by defining servers with the same names and a `disabled: true` flag.
 
 ---
 ## Async Execution Model

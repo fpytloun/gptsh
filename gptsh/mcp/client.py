@@ -125,13 +125,10 @@ def _compute_effective_servers(config: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 servers = {}
 
-    # 4) Builtins merge rules:
-    # - If file or none => merge builtins by default
-    # - If inline/override => respect exact list, unless explicit inject provided
+    # 4) Builtins merge: always merge built-ins unless explicitly overridden by same key.
     inject_builtins = mcp_conf.get("servers_override_builtins") or {}
-    if source in ("file", "none"):
-        for _name, _def in (get_builtin_servers() or {}).items():
-            servers.setdefault(_name, _def)
+    for _name, _def in (get_builtin_servers() or {}).items():
+        servers.setdefault(_name, _def)
     if isinstance(inject_builtins, dict) and inject_builtins:
         for _name, _def in inject_builtins.items():
             servers.setdefault(_name, _def)

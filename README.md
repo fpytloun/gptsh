@@ -251,7 +251,7 @@ mcp:
     {"mcpServers": {"tavily": {"transport": {"type": "sse", "url": "https://api.tavily.com/mcp"}}}}
 ```
 
-Built-in in-process servers `time` and `shell` are always available and are merged if not explicitly defined.
+Built-in in-process servers `time` and `shell` are always available and are merged into your configuration (inline or file-based). To limit which servers/tools are used at runtime, use the `tools` allow-list on the agent (e.g., `tools: ["git"]`). This filters the merged set to only those servers. To completely override or effectively disable built-ins for an agent, set `tools` to a list without them.
 
 ### Project Structure (overview)
 
