@@ -178,6 +178,7 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
     # Avoid potential progress setup in non-tty
     runner = CliRunner()
     result = runner.invoke(main, ["--output", "text", "delete file"], catch_exceptions=False)
+    print(result.output)
     assert result.exit_code == 4
     assert "Tool approval denied" in result.output
 
@@ -232,7 +233,6 @@ def test_cli_timeout_exit_code(monkeypatch):
 
 def test_cli_interactive_invokes_agent_repl(monkeypatch):
     import gptsh.cli.entrypoint as ep
-    from gptsh.cli.entrypoint import main
 
     # Minimal config with agents/providers
     def fake_load_config(paths=None):
@@ -245,8 +245,6 @@ def test_cli_interactive_invokes_agent_repl(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Pretend we are on a TTY for interactive mode
-    monkeypatch.setattr(ep.sys.stdout, "isatty", lambda: True)
     # No stdin content
     monkeypatch.setattr(ep, "read_stdin", lambda: None)
 
@@ -273,7 +271,9 @@ def test_cli_interactive_invokes_agent_repl(monkeypatch):
     monkeypatch.setattr(ep, "run_agent_repl", fake_run_agent_repl)
 
     runner = CliRunner()
-    result = runner.invoke(main, ["-i", "--no-tools"], catch_exceptions=False)
+    # Force TTY behavior via CLI flag
+    result = runner.invoke(ep.main, ["-i", "--no-tools", "--assume-tty"], catch_exceptions=False)
+    print(result.output)
     assert result.exit_code == 0
     # Verify REPL was invoked with an Agent and flags propagated
     assert isinstance(called.get("agent"), DummyAgent.__class__) or hasattr(called.get("agent"), "llm")

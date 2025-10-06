@@ -34,6 +34,20 @@ warnings.filterwarnings(
     category=RuntimeWarning,
 )
 
+def _is_tty(assume_tty: bool = False) -> bool:
+    """Return True if we should treat the session as attached to a TTY.
+
+    When assume_tty is True, always return True (useful for tests/CI).
+    Otherwise, check Click's stdout stream for TTY capability.
+    """
+    if assume_tty:
+        return True
+    try:
+        stream = click.get_text_stream('stdout')
+    except Exception:
+        stream = sys.stdout
+    return bool(getattr(stream, 'isatty', lambda: False)())
+
 DEFAULT_AGENTS = {
     "default": {}
 }
@@ -57,8 +71,9 @@ DEFAULT_AGENTS = {
 @click.option("--no-tools", is_flag=True, default=False, help="Disable MCP tools (discovery and execution)")
 @click.option("--tools", "tools_filter", default=None, help="Comma/space-separated MCP server labels to allow (others skipped)")
 @click.option("--interactive", "-i", is_flag=True, default=False, help="Run in interactive REPL mode")
+@click.option("--assume-tty", is_flag=True, default=False, help="Assume TTY (for tests/CI)")
 @click.argument("prompt", required=False)
-def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, list_agents_flag, output, no_tools, tools_filter, interactive, prompt):
+def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, list_agents_flag, output, no_tools, tools_filter, interactive, assume_tty, prompt):
     """gptsh: Modular shell/LLM agent client."""
     # Load config
     # Load configuration: use custom path or defaults
@@ -230,11 +245,11 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     # Interactive REPL mode
     if interactive:
         # Allow stdin to carry an initial prompt; require a TTY on stdout for REPL display
-        if not sys.stdout.isatty():
+        if not _is_tty(assume_tty=assume_tty):
             raise click.ClickException("Interactive mode requires a TTY on stdout.")
         # Initial prompt from arg and/or stdin
         try:
-            stdin_input = None if sys.stdin.isatty() else read_stdin()
+            stdin_input = None if click.get_text_stream('stdin').isatty() else read_stdin()
         except Exception:
             stdin_input = None
         initial_prompt = f"{prompt}\n\n---\nInput:\n{stdin_input}" if (prompt and stdin_input) else (prompt or stdin_input)
@@ -266,7 +281,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         sys.exit(0)
     # Handle prompt or stdin
     stdin_input = None
-    if not sys.stdin.isatty():
+    if not click.get_text_stream('stdin').isatty():
         stdin_input = read_stdin()
     # Try to get prompt from agent config
     agent_prompt = agent_conf.get("prompt", {}).get("user") if agent_conf else None
@@ -340,7 +355,7 @@ async def run_llm(
     # Setup progress reporter if enabled
     pr: Optional[RichProgressReporter] = None
     console = Console()
-    if progress and sys.stderr.isatty():
+    if progress and click.get_text_stream('stderr').isatty():
         pr = RichProgressReporter()
         pr.start()
 
