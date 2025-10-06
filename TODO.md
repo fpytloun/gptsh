@@ -1,5 +1,11 @@
 # TODO
 
+## Important
+- [ ] System prompt override for agents does not seem to work
+- [ ] Fail if attempting to use agent that is not defined
+- [ ] Fail if instructing to use config (-c) that does not exist
+- [ ] Fail if instructing to use mcp_servers (--mcp-servers) file that does not exist
+
 ## MCP Integration
 - [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)
 - [ ] Add option to define mcpServers in gptsh config per agents either by passing structure or including mcp_servers.json file

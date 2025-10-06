@@ -19,4 +19,3 @@ def discover_tools_detailed(config: Dict[str, Any]) -> Dict[str, List[Dict[str, 
 
 def get_auto_approved_tools(config: Dict[str, Any], agent_conf: Optional[Dict[str, Any]] = None) -> Dict[str, List[str]]:
     return _get_auto_approved_tools(config, agent_conf=agent_conf)
-

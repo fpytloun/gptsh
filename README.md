@@ -222,12 +222,36 @@ Environment variables may be referenced using ${VAR_NAME} (and ${env:VAR_NAME} i
 
 ### MCP
 
-MCP servers configuration is taken from these locations. As most models has limit for number of tools available, only one servers config is loaded in this order:
-1) CLI parameter (eg. `--mcp-servers mcp_servers.json`)
-2) Current directory (`./.gptsh/mcp_servers.json`)
-3) Global (`~/.config/gptsh/mcp_servers.json`)
+You can configure MCP servers inline in YAML or via a Claude-compatible JSON file. Only one servers definition is used at a time with this precedence:
+1) CLI parameter (e.g., `--mcp-servers mcp_servers.json`)
+2) Per-agent inline YAML `agents.<name>.mcp.servers`
+3) Global inline YAML `mcp.servers`
+4) Servers file (first existing): `./.gptsh/mcp_servers.json` then `~/.config/gptsh/mcp_servers.json`
 
-There are also builtin MCP servers that are always available (`time`, `shell`) but can be referenced and disabled with `mcp_servers.json`.
+Inline YAML mapping (preferred):
+```yaml
+mcp:
+  servers:
+    tavily:
+      transport: { type: sse, url: "https://api.tavily.com/mcp" }
+      credentials:
+        headers:
+          Authorization: "Bearer ${TAVILY_API_KEY}"
+    filesystem:
+      transport: { type: stdio }
+      command: uvx
+      args: ["mcp-filesystem", "--root", "."]
+      env: {}
+```
+
+You can also embed JSON as a string. If the JSON includes a top-level `mcpServers`, it will be unwrapped automatically:
+```yaml
+mcp:
+  servers: |
+    {"mcpServers": {"tavily": {"transport": {"type": "sse", "url": "https://api.tavily.com/mcp"}}}}
+```
+
+Built-in in-process servers `time` and `shell` are always available and are merged if not explicitly defined.
 
 ### Project Structure (overview)
 

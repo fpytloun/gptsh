@@ -90,7 +90,13 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     if mcp_servers:
         # Allow comma or whitespace-separated list of paths
         parts = [p for raw in mcp_servers.split(",") for p in raw.split() if p]
-        config.setdefault("mcp", {})["servers_files"] = parts if parts else []
+        mcp_cfg = config.setdefault("mcp", {})
+        # If inline mcp.servers is configured, prefer it and ignore CLI file override
+        if not mcp_cfg.get("servers"):
+            # Mark CLI-provided paths so they are preferred among files
+            mcp_cfg["servers_files_cli"] = parts if parts else []
+            # Also set legacy key for compatibility in other code paths
+            mcp_cfg["servers_files"] = parts if parts else []
     # Pre-parse CLI tools filter into list to later apply via config_api
     tools_filter_labels = None
     if tools_filter:
@@ -119,7 +125,12 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                     cli_model_override=model,
                 )
             )
-        except Exception:
+        except Exception as e:
+            # If the failure is due to conflicting config (tools + mcp.servers), surface a clear message
+            from gptsh.core.exceptions import ConfigError
+            if isinstance(e, ConfigError):
+                click.echo(f"Configuration error: {e}")
+                sys.exit(2)
             # Fallback to direct MCP listing if agent resolution fails (e.g., no providers in stub tests)
             tools = list_tools(config)
             _print_tools_listing(tools, get_auto_approved_tools(config))

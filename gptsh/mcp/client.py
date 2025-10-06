@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import importlib
 import json
 import logging
@@ -29,7 +30,8 @@ def _select_servers_file(config: Dict[str, Any]) -> Optional[str]:
     mcp_conf = config.get("mcp", {}) or {}
     candidates: List[str] = []
 
-    user_paths = mcp_conf.get("servers_files")
+    # Prefer explicit CLI-provided paths if set
+    user_paths = mcp_conf.get("servers_files_cli") or mcp_conf.get("servers_files")
     if isinstance(user_paths, str):
         user_paths = [user_paths]
     if isinstance(user_paths, list):
@@ -49,11 +51,103 @@ def _select_servers_file(config: Dict[str, Any]) -> Optional[str]:
             continue
     return None
 
+def _parse_servers_value(value: Any) -> Dict[str, Any]:
+    """
+    Parse a servers mapping from either a dict (YAML) or a JSON string.
+    If the JSON payload contains a top-level 'mcpServers', unwrap it.
+    Environment variables inside strings are expanded.
+    """
+    servers: Dict[str, Any] = {}
+    try:
+        if isinstance(value, dict):
+            # Support direct YAML mapping or a nested Claude-compatible mapping
+            if "mcpServers" in value and isinstance(value["mcpServers"], dict):
+                servers = dict(value["mcpServers"])  # unwrap if user pasted JSON-style structure into YAML
+            else:
+                servers = dict(value)
+        elif isinstance(value, str):
+            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", value)
+            content = _expand_env(content)
+            data = json.loads(content)
+            if isinstance(data, dict) and "mcpServers" in data and isinstance(data["mcpServers"], dict):
+                servers = dict(data["mcpServers"])  # unwrap Claude-compatible schema
+            elif isinstance(data, dict):
+                servers = dict(data)
+            else:
+                servers = {}
+    except Exception:
+        servers = {}
+    return servers
+
+def _compute_effective_servers(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Compute the effective servers mapping using precedence:
+      1) config.mcp.servers_override (per-agent injection)
+      2) config.mcp.servers (global inline YAML or JSON string)
+      3) First existing servers file (CLI paths > local > global)
+      4) Built-in servers are always present (added if missing)
+    """
+    mcp_conf = (config.get("mcp") or {})
+    servers: Dict[str, Any] = {}
+
+    # 0) If CLI provided file paths explicitly and no inline servers exist, prefer files
+    cli_paths = (mcp_conf.get("servers_files_cli") or []) if not mcp_conf.get("servers") else []
+    if cli_paths:
+        # Force file-based selection path by setting servers to empty and relying on _select_servers_file
+        pass
+    source: str = "none"
+    # 1) Per-agent override
+    if "servers_override" in mcp_conf and mcp_conf["servers_override"] and not cli_paths:
+        servers = _parse_servers_value(mcp_conf["servers_override"]) or {}
+        source = "override"
+    # 2) Global inline servers
+    elif "servers" in mcp_conf and mcp_conf["servers"] and not cli_paths:
+        servers = _parse_servers_value(mcp_conf["servers"]) or {}
+        source = "inline"
+    else:
+        # 3) File-based fallback
+        selected_file = _select_servers_file(config)
+        if selected_file:
+            try:
+                with open(selected_file, "r", encoding="utf-8") as f:
+                    raw = f.read()
+                content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
+                content = _expand_env(content)
+                data = json.loads(content)
+                servers.update(data.get("mcpServers", {}))
+                logging.getLogger(__name__).debug("Selected MCP servers file: %s", selected_file)
+                source = "file"
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    "Failed to parse MCP servers file %s: %s", selected_file, e, exc_info=True
+                )
+                servers = {}
+
+    # 4) Builtins merge rules:
+    # - If file or none => merge builtins by default
+    # - If inline/override => respect exact list, unless explicit inject provided
+    inject_builtins = mcp_conf.get("servers_override_builtins") or {}
+    if source in ("file", "none"):
+        for _name, _def in (get_builtin_servers() or {}).items():
+            servers.setdefault(_name, _def)
+    if isinstance(inject_builtins, dict) and inject_builtins:
+        for _name, _def in inject_builtins.items():
+            servers.setdefault(_name, _def)
+    return servers
+
+def _servers_signature(servers: Dict[str, Any]) -> str:
+    """Return a stable signature for a servers mapping for caching managers."""
+    try:
+        payload = json.dumps(servers, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        payload = str(servers)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
 # Per-event-loop MCP session manager to spawn/connect servers once and reuse them
-_MANAGERS: Dict[int, "_MCPManager"] = {}
+_MANAGERS: Dict[Tuple[int, str], "_MCPManager"] = {}
 
 class _MCPManager:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], servers: Optional[Dict[str, Any]] = None):
         self.config = config
         self.timeout_seconds: float = float(config.get("timeouts", {}).get("request_seconds", 30))
         spawn_conf = (config.get("mcp", {}) or {}).get("spawn", {}) or {}
@@ -63,7 +157,7 @@ class _MCPManager:
             self._hc_timeout: float = float(hc_conf.get("timeout")) if "timeout" in hc_conf else self.timeout_seconds
         except Exception:
             self._hc_timeout = self.timeout_seconds
-        self.servers: Dict[str, Any] = {}
+        self.servers: Dict[str, Any] = dict(servers or {})
         # name -> ("module", module_path) or ("session", ClientSession) or None if disabled/unavailable/filtered
         self.sessions: Dict[str, Optional[Tuple[str, Any]]] = {}
         self._server_tasks: Dict[str, asyncio.Task] = {}
@@ -76,25 +170,8 @@ class _MCPManager:
             return
         logger = logging.getLogger(__name__)
         logger.debug("Starting MCP manager (timeout=%.1fs)", self.timeout_seconds)
-        # Build servers dict using single selected servers file and merge builtins
-        selected_file = _select_servers_file(self.config)
-        servers: Dict[str, Any] = {}
-        if selected_file:
-            try:
-                with open(selected_file, "r", encoding="utf-8") as f:
-                    raw = f.read()
-                content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
-                content = _expand_env(content)
-                data = json.loads(content)
-                servers.update(data.get("mcpServers", {}))
-                logger.debug("Selected MCP servers file: %s", selected_file)
-            except Exception as e:
-                logger.warning("Failed to parse MCP servers file %s: %s", selected_file, e, exc_info=True)
-                servers = {}
-        for _name, _def in (get_builtin_servers() or {}).items():
-            servers.setdefault(_name, _def)
-
-        self.servers = servers
+        # Servers were precomputed; ensure a dict copy
+        self.servers = dict(self.servers or {})
         allowed = set((self.config.get("mcp", {}) or {}).get("allowed_servers") or [])
         if allowed:
             logger.debug("Allowed MCP servers filter: %s", ", ".join(sorted(allowed)))
@@ -253,7 +330,7 @@ class _MCPManager:
                     pass
 
         # Spawn runners in parallel and wait until each signals ready or times out
-        for name, srv in servers.items():
+        for name, srv in self.servers.items():
             stop_event = asyncio.Event()
             ready_event = asyncio.Event()
             self._stop_events[name] = stop_event
@@ -386,10 +463,13 @@ class _MCPManager:
 
 async def ensure_sessions_started_async(config: Dict[str, Any]) -> _MCPManager:
     loop_id = id(asyncio.get_running_loop())
-    mgr = _MANAGERS.get(loop_id)
+    servers = _compute_effective_servers(config)
+    sig = _servers_signature(servers)
+    key = (loop_id, sig)
+    mgr = _MANAGERS.get(key)
     if mgr is None:
-        mgr = _MCPManager(config)
-        _MANAGERS[loop_id] = mgr
+        mgr = _MCPManager(config, servers=servers)
+        _MANAGERS[key] = mgr
     if not mgr.started:
         await mgr.start()
     return mgr
@@ -505,25 +585,9 @@ def get_auto_approved_tools(config: Dict[str, Any], agent_conf: Optional[Dict[st
     Disabled servers are still included if present in config so the UI can display badges,
     but they will typically have no discovered tools.
     """
-    selected_file = _select_servers_file(config)
-    servers: Dict[str, Any] = {}
-    if selected_file:
-        try:
-            with open(selected_file, "r", encoding="utf-8") as f:
-                raw = f.read()
-            content = re.sub(r"\$\{env:([A-Za-z_]\w*)\}", r"${\1}", raw)
-            content = _expand_env(content)
-            data = json.loads(content)
-            servers.update(data.get("mcpServers", {}))
-        except FileNotFoundError:
-            pass
-        except Exception:
-            # If parse fails for the file, ignore it
-            pass
-
-    # Merge builtin in-process servers so agent-level entries like 'time' can match a server group
-    for _name, _def in (get_builtin_servers() or {}).items():
-        servers.setdefault(_name, _def)
+    # Use the same precedence as for session startup
+    # Allow per-agent override if provided via config.mcp.servers_override
+    servers: Dict[str, Any] = _compute_effective_servers(config)
 
     approved_map: Dict[str, List[str]] = {}
     for name, srv in servers.items():

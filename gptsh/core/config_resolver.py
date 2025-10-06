@@ -44,14 +44,34 @@ async def build_agent(
         tools = {}
         tool_specs = []
     else:
+        # Prepare a transient config copy to inject per-agent MCP servers override, if any
+        eff_config: Dict[str, Any] = dict(config or {})
+        mcp_cfg: Dict[str, Any] = dict((eff_config.get("mcp") or {}))
+        # Agent-level inline servers override: agent_conf.mcp.servers
+        try:
+            agent_mcp = (agent_conf or {}).get("mcp") if isinstance(agent_conf, dict) else None
+            if isinstance(agent_mcp, dict) and "servers" in agent_mcp:
+                # Agent-level inline servers take precedence; tools list further filters them
+                mcp_cfg["servers_override"] = agent_mcp.get("servers")
+                # When agent overrides servers, do not use CLI-provided servers files
+                mcp_cfg.pop("servers_files_cli", None)
+                mcp_cfg.pop("servers_files", None)
+                # Ensure global inline servers don't interfere with override resolution
+                if "servers" in mcp_cfg:
+                    mcp_cfg.pop("servers", None)
+        except Exception:
+            pass
+        eff_config["mcp"] = mcp_cfg
+
         from gptsh.mcp.tools_resolver import resolve_tools as _resolve_tools
-        tools = await _resolve_tools(config, allowed_servers=allowed)
+        tools = await _resolve_tools(eff_config, allowed_servers=allowed)
         tool_specs = build_llm_tools_from_handles(tools)
 
     # Build approval policy (merge global + agent approvals)
     try:
+        # Use the same effective config for approvals to reflect per-agent servers
         from gptsh.mcp import get_auto_approved_tools
-        approved_map = get_auto_approved_tools(config, agent_conf=agent_conf)
+        approved_map = get_auto_approved_tools(eff_config if not no_tools else config, agent_conf=agent_conf)
     except Exception:
         approved_map = {}
     policy = DefaultApprovalPolicy(approved_map)

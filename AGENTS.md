@@ -89,7 +89,7 @@ AGENTS.md                # (this file)
 ### Major Design/Implementation Points
 - **Async everywhere**: All operations that might block (model calls, subprocesses, HTTP, MCP, etc) MUST use `asyncio`.
 - **Config Management**: Merge global/user `~/.config/gptsh/config.yml` (plus any `~/.config/gptsh/config.d/*.yml` snippets) and project-local `./.gptsh/config.yml`. Per-project overrides global. Reference env vars as `${VAR_NAME}`. YAML supports a custom `!include` tag with wildcard patterns, resolved relative to the including file.
-- **MCP Support**: Connects to MCP servers (local or remote), managed/configured via `mcp_servers.json` (Claude-compatible). Auto-respawn/reconnect logic for local/remote MCP servers, with exponential backoff and progress feedback.
+- **MCP Support**: Connects to MCP servers (local or remote). Servers can be configured inline via YAML under `mcp.servers` (recommended) or via a Claude-compatible `mcp_servers.json`. Inline `mcp.servers` takes precedence over files; per-agent overrides are supported via `agents.<name>.mcp.servers`.
 - **CLI Only** (for now): All command, mode, config options via command-line interface. TUI reserved for later.
 - **Tool Discovery**: Implements a `--list-tools` CLI arg to enumerate all tools provided by configured MCP servers, grouped by server.
 - **Progress & Edge cases**: Use progress bar when possible. Always show progress or status updates for long ops, handle broken pipes, terminations, or timeouts gracefully.
@@ -214,9 +214,10 @@ Example MCP servers file (Claude-compatible schema):
 For better examples, see examples directory
 
 Notes:
-- A single servers file is selected by precedence: CLI mcp.servers_files (first existing), then ./.gptsh/mcp_servers.json, then ~/.config/gptsh/mcp_servers.json.
-- `${VAR}` inside servers JSON is expanded from the runtime environment (and `${env:VAR}` is normalized to `${VAR}`).
-- Built-in in-process servers `time` and `shell` are always available by default and can be referenced or disabled via mcp_servers.json.
+- Precedence: CLI `--mcp-servers` paths > agent `mcp.servers` > global `mcp.servers` > servers file (./.gptsh/mcp_servers.json, then ~/.config/gptsh/mcp_servers.json).
+- `mcp.servers` accepts either a YAML mapping or a JSON string. If a JSON string contains a top-level `mcpServers` key, it is unwrapped automatically.
+- `${VAR}` inside inline JSON or files is expanded from the runtime environment (and `${env:VAR}` is normalized to `${VAR}`).
+- Built-in in-process servers `time` and `shell` are always available by default and merged if not explicitly defined.
 
 ---
 ## Async Execution Model
