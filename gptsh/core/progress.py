@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Optional
+import sys
+from rich.console import Console
 
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -10,16 +12,23 @@ from gptsh.interfaces import ProgressReporter
 class RichProgressReporter(ProgressReporter):
     def __init__(self):
         self._progress: Optional[Progress] = None
+        self._paused: bool = False
 
     def start(self) -> None:
         if self._progress is None:
-            self._progress = Progress(SpinnerColumn(), TextColumn("{task.description}"))
+            # Render progress to stderr to avoid mixing with stdout content
+            self._progress = Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                console=Console(file=sys.stderr),
+            )
             self._progress.start()
 
     def stop(self) -> None:
         if self._progress is not None:
             self._progress.stop()
             self._progress = None
+        self._paused = False
 
     def add_task(self, description: str) -> Optional[int]:
         if self._progress is None:
@@ -34,10 +43,17 @@ class RichProgressReporter(ProgressReporter):
         self._progress.update(task_id, completed=True)
 
     def pause(self) -> None:
-        # Rich Progress auto-handles redraws; nothing required here for now
-        pass
+        # Temporarily stop live rendering to allow interactive prompts on stdout
+        if self._progress is not None and not self._paused:
+            try:
+                self._progress.stop()
+            finally:
+                self._paused = True
 
     def resume(self) -> None:
-        # Rich Progress auto-handles redraws; nothing required here for now
-        pass
-
+        # Resume live rendering if previously paused
+        if self._progress is not None and self._paused:
+            try:
+                self._progress.start()
+            finally:
+                self._paused = False

@@ -125,10 +125,24 @@ class ChatSession:
                     "Tool request: %s server=%s tool=%s args=%s", fullname, server, toolname, args
                 )
                 allowed = self._approval.is_auto_allowed(server, toolname)
+                paused_here = False
                 if not allowed:
+                    # Pause progress to ensure the approval prompt is visible
+                    if self._progress is not None:
+                        try:
+                            self._progress.pause()
+                            paused_here = True
+                        except Exception:
+                            paused_here = False
                     allowed = await self._approval.confirm(server, toolname, args)
                 if not allowed:
                     logger.debug("Tool denied: %s", fullname)
+                    # Resume progress if we paused it for the prompt
+                    if paused_here and self._progress is not None:
+                        try:
+                            self._progress.resume()
+                        except Exception:
+                            pass
                     conversation.append(
                         {
                             "role": "tool",
@@ -144,6 +158,12 @@ class ChatSession:
 
                 task_id = None
                 if self._progress is not None:
+                    # If we paused earlier for approval, resume before adding a task
+                    if paused_here:
+                        try:
+                            self._progress.resume()
+                        except Exception:
+                            pass
                     try:
                         pretty = json.dumps(args, ensure_ascii=False)
                     except Exception:

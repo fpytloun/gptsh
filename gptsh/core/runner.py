@@ -84,6 +84,12 @@ async def run_turn(
                             pr.stop()
                         except Exception:
                             pass
+                        # Ensure stdout starts on a fresh line after stopping progress
+                        if output_format != "markdown":
+                            try:
+                                click.echo()
+                            except Exception:
+                                pass
                     first_output_done = True
                 if output_format == "markdown":
                     md_buffer += text
@@ -94,12 +100,13 @@ async def run_turn(
                     sys.stdout.write(text)
                     sys.stdout.flush()
                 full_output += text
-            # After stream ends
+            # After stream ends: only print trailing newline for text if something was streamed
             if output_format == "markdown":
                 if md_buffer:
                     console.print(Markdown(md_buffer))
             else:
-                click.echo()
+                if first_output_done:
+                    click.echo()
             # If we saw streamed tool deltas but no output, fallback to non-stream
             try:
                 import logging
@@ -111,6 +118,12 @@ async def run_turn(
                             "Stream ended with no text but tool deltas were observed: %s",
                             info.get("tool_names"),
                         )
+                        # Stop progress before printing fallback content
+                        if pr is not None:
+                            try:
+                                pr.stop()
+                            except Exception:
+                                pass
                         content = await run_prompt_with_agent(
                             agent=agent,
                             prompt=prompt,
@@ -125,6 +138,11 @@ async def run_turn(
                         if output_format == "markdown":
                             console.print(Markdown(content or ""))
                         else:
+                            # Ensure separation from any prior progress output
+                            try:
+                                click.echo()
+                            except Exception:
+                                pass
                             click.echo(content or "")
                         if result_sink is not None:
                             try:
