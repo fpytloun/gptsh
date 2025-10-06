@@ -35,7 +35,8 @@ def test_cli_stream_no_tools(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Monkeypatch ChatSession to control streaming
+    # Monkeypatch ChatSession to control streaming (patch the runner module)
+    import gptsh.core.runner as runner_mod
     class DummySession:
         def __init__(self, *a, **k):
             pass
@@ -49,7 +50,7 @@ def test_cli_stream_no_tools(monkeypatch):
             yield "hello "
             yield "world"
 
-    monkeypatch.setattr(ep, "ChatSession", DummySession)
+    monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
     # Also stub build_agent to avoid dependency on providers
     class DummyAgent:
         llm = object()
@@ -79,7 +80,8 @@ def test_cli_agent_provider_selection(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Short-circuit LLM path via ChatSession monkeypatch
+    # Short-circuit LLM path via ChatSession monkeypatch (patch the runner module)
+    import gptsh.core.runner as runner_mod
     class DummySession:
         def __init__(self, *a, **k):
             pass
@@ -95,7 +97,7 @@ def test_cli_agent_provider_selection(monkeypatch):
             pass
         async def run(self, *a, **k):
             return ""
-    monkeypatch.setattr(ep, "ChatSession", DummySession)
+    monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
     class DummyAgent:
         llm = object()
         policy = object()
@@ -150,7 +152,8 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Monkeypatch core API to simulate denial exception in non-stream path
+    # Monkeypatch to simulate denial exception (patch both runner and api paths)
+    import gptsh.core.runner as runner_mod
     # Simulate tool approval denied by having run_llm path raise it via ChatSession.run
     from gptsh.core.exceptions import ToolApprovalDenied
     class DenySession:
@@ -165,7 +168,11 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
             return ({"model": "m1", "messages": []}, "m1")
         async def run(self, *a, **k):
             raise ToolApprovalDenied("fs__delete")
-    monkeypatch.setattr(ep, "ChatSession", DenySession)
+        # Provide stream_with_params to satisfy runner's streaming path
+        async def stream_with_params(self, params):
+            if False:
+                yield ""  # pragma: no cover
+    monkeypatch.setattr(runner_mod, "ChatSession", DenySession)
     import gptsh.core.api as api
     monkeypatch.setattr(api, "ChatSession", DenySession)
     class DummyAgent:
@@ -177,7 +184,7 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
 
     # Avoid potential progress setup in non-tty
     runner = CliRunner()
-    result = runner.invoke(main, ["--output", "text", "delete file"], catch_exceptions=False)
+    result = runner.invoke(main, ["--no-stream", "--output", "text", "delete file"], catch_exceptions=False)
     print(result.output)
     assert result.exit_code == 4
     assert "Tool approval denied" in result.output
@@ -197,6 +204,8 @@ def test_cli_timeout_exit_code(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
+    # Define and patch a TimeoutSession into the runner module
+    import gptsh.core.runner as runner_mod
     class TimeoutSession:
         def __init__(self, *a, **k):
             pass
@@ -215,11 +224,10 @@ def test_cli_timeout_exit_code(monkeypatch):
                 yield ""  # unreachable
             return _gen()
         async def run(self, *a, **k):
-            # Ensure that if non-stream path accidentally used, also timeout
             import asyncio
             raise asyncio.TimeoutError()
 
-    monkeypatch.setattr(ep, "ChatSession", TimeoutSession)
+    monkeypatch.setattr(runner_mod, "ChatSession", TimeoutSession)
     async def fake_build_agent(cfg, **k):
         return object()
     monkeypatch.setattr(ep, "build_agent", fake_build_agent)
