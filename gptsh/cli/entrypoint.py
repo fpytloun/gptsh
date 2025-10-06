@@ -344,9 +344,7 @@ async def run_llm(
         pr = RichProgressReporter()
         pr.start()
 
-    # If tools are enabled, force non-stream path (ChatSession orchestrates tools)
-    if not no_tools:
-        stream = False
+    # Support tools in both streaming and non-streaming paths
 
     waiting_task_id: Optional[int] = None
     try:

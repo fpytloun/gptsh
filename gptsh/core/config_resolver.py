@@ -6,6 +6,7 @@ from gptsh.core.agent import Agent
 from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.core.config_api import compute_tools_policy, select_agent_provider_dicts
 from gptsh.llm.litellm_client import LiteLLMClient
+from gptsh.llm.tool_adapter import build_llm_tools_from_handles
 
 
 async def build_agent(
@@ -41,9 +42,11 @@ async def build_agent(
     # Import resolver lazily so tests can monkeypatch it reliably
     if no_tools:
         tools = {}
+        tool_specs = []
     else:
         from gptsh.mcp.tools_resolver import resolve_tools as _resolve_tools
         tools = await _resolve_tools(config, allowed_servers=allowed)
+        tool_specs = build_llm_tools_from_handles(tools)
 
     # Build approval policy (merge global + agent approvals)
     try:
@@ -58,6 +61,7 @@ async def build_agent(
         name=name,
         llm=llm,
         tools=tools,
+        tool_specs=tool_specs,
         policy=policy,
         generation_params={},
         provider_conf=dict(provider_conf or {}),

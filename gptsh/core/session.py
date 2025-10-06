@@ -19,12 +19,15 @@ class ChatSession:
         approval: ApprovalPolicy,
         progress: Optional[ProgressReporter],
         config: Dict[str, Any],
+        *,
+        tool_specs: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         self._llm = llm
         self._mcp = mcp
         self._approval = approval
         self._progress = progress
         self._config = config
+        self._tool_specs: List[Dict[str, Any]] = list(tool_specs or [])
 
     @classmethod
     def from_agent(
@@ -35,13 +38,8 @@ class ChatSession:
         config: Dict[str, Any],
         mcp: Optional[MCPClient] = None,
     ) -> "ChatSession":
-        """Construct a ChatSession from an Agent instance.
-
-        Agent encapsulates its own LiteLLMClient and ApprovalPolicy. Tools remain
-        resolved outside and are used primarily for discovery/listing; tool execution
-        continues to flow via MCP calls inside ChatSession.
-        """
-        return cls(agent.llm, mcp, agent.policy, progress, config)
+        """Construct a ChatSession from an Agent instance, including its tool specs."""
+        return cls(agent.llm, mcp, agent.policy, progress, config, tool_specs=getattr(agent, "tool_specs", None))
 
     async def start(self) -> None:
         if self._mcp is not None:
@@ -70,6 +68,11 @@ class ChatSession:
         conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
         while True:
             params["messages"] = conversation
+            # Ensure tools remain attached for every turn
+            if self._tool_specs and "tools" not in params:
+                params["tools"] = self._tool_specs
+                if "tool_choice" not in params:
+                    params["tool_choice"] = "auto"
             resp = await self._llm.complete(params)
             calls = parse_tool_calls(resp)
             if not calls:
@@ -212,19 +215,21 @@ class ChatSession:
 
         has_tools = False
         if not no_tools:
-            # Merge MCP settings from global + provider + agent, then build tool specs
-            merged_conf = {
-                "mcp": {
-                    **((self._config.get("mcp", {}) or {})),
-                    **(provider_conf.get("mcp", {}) or {}),
-                    **(((agent_conf or {}).get("mcp", {})) or {}),
+            specs = self._tool_specs
+            if not specs:
+                # Fallback to dynamic discovery based on merged MCP config
+                merged_conf = {
+                    "mcp": {
+                        **((self._config.get("mcp", {}) or {})),
+                        **(provider_conf.get("mcp", {}) or {}),
+                        **(((agent_conf or {}).get("mcp", {})) or {}),
+                    }
                 }
-            }
-            tools = await build_llm_tools(merged_conf)
-            if not tools:
-                tools = await build_llm_tools(self._config)
-            if tools:
-                params["tools"] = tools
+                specs = await build_llm_tools(merged_conf)
+                if not specs:
+                    specs = await build_llm_tools(self._config)
+            if specs:
+                params["tools"] = specs
                 if "tool_choice" not in params:
                     params["tool_choice"] = "auto"
                 has_tools = True
@@ -245,13 +250,13 @@ class ChatSession:
         cli_model_override: Optional[str],
         history_messages: Optional[List[Dict[str, Any]]],
     ) -> tuple[Dict[str, Any], str]:
-        # Reuse parameter preparation but with tools disabled for streaming
+        # Reuse parameter preparation and include tools for streaming too
         params, _has_tools, chosen_model = await self._prepare_params(
             prompt,
             provider_conf,
             agent_conf,
             cli_model_override,
-            no_tools=True,
+            no_tools=False,
             history_messages=history_messages,
         )
         return params, chosen_model

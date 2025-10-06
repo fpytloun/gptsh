@@ -25,6 +25,30 @@ async def build_llm_tools(config: Dict[str, Any]) -> List[Dict[str, Any]]:
             })
     return tools
 
+def build_llm_tools_from_handles(tools_map: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
+    """
+    Build OpenAI-style tool specs from resolved ToolHandle objects.
+    The handle must expose: name, description, input_schema. Grouping key is the server label.
+    """
+    specs: List[Dict[str, Any]] = []
+    for server, handles in (tools_map or {}).items():
+        for h in handles:
+            specs.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": f"{server}__{getattr(h, 'name', '')}",
+                        "description": getattr(h, "description", "") or "",
+                        "parameters": getattr(h, "input_schema", None) or {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": True,
+                        },
+                    },
+                }
+            )
+    return specs
+
 def parse_tool_calls(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Extract tool_calls from a LiteLLM-normalized response.
