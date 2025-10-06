@@ -322,7 +322,11 @@ def add_history(readline_module: Any, line: str) -> None:
         pass
 
 
-def run_agent_repl(
+import asyncio
+from typing import Any, Dict, List, Optional
+
+
+async def run_agent_repl_async(
     *,
     agent: Any,
     config: Dict[str, Any],
@@ -338,7 +342,6 @@ def run_agent_repl(
     - Maintains a simple in-memory history for the current session.
     - Supports /help and /exit.
     """
-    import asyncio
     import sys
     import time
 
@@ -380,82 +383,30 @@ def run_agent_repl(
     last_interrupt = 0.0
 
     async def _run_once(user_text: str) -> str:
-        pr: Optional[RichProgressReporter] = None
-        waiting_id = None
-        content = ""
-        try:
-            if progress and sys.stderr.isatty():
-                pr = RichProgressReporter()
-                pr.start()
-            if stream:
-                session = ChatSession.from_agent(agent, progress=pr, config=config)
-                params, chosen_model = await session.prepare_stream(
-                    prompt=user_text,
-                    provider_conf={},
-                    agent_conf=agent_conf_local,
-                    cli_model_override=cli_model_override,
-                    history_messages=history_messages,
-                )
-                wait_label = f"Waiting for {str(chosen_model).rsplit('/', 1)[-1]}"
-                if pr is not None:
-                    waiting_id = pr.add_task(wait_label)
-                md_buffer = "" if output_format == "markdown" else ""
-                async for chunk in session.stream_with_params(params):
-                    if not chunk:
-                        continue
-                    if pr is not None and waiting_id is not None:
-                        pr.complete_task(waiting_id)
-                        waiting_id = None
-                        try:
-                            pr.stop()
-                        except Exception:
-                            pass
-                    if output_format == "markdown":
-                        md_buffer += chunk
-                        while "\n" in md_buffer:
-                            line, md_buffer = md_buffer.split("\n", 1)
-                            console.print(Markdown(line))
-                    else:
-                        sys.stdout.write(chunk)
-                        sys.stdout.flush()
-                    content += chunk
-                if output_format == "markdown" and md_buffer:
-                    console.print(Markdown(md_buffer))
-                else:
-                    click.echo()
-            else:
-                wait_label = f"Waiting for {model_label}"
-                if pr is not None:
-                    waiting_id = pr.add_task(wait_label)
-                content = await run_prompt_with_agent(
-                    agent=agent,
-                    prompt=user_text,
-                    config=config,
-                    provider_conf={},
-                    agent_conf=agent_conf_local,
-                    cli_model_override=cli_model_override,
-                    no_tools=no_tools,
-                    history_messages=history_messages,
-                    progress_reporter=pr,
-                )
-                if output_format == "markdown":
-                    console.print(Markdown(content or ""))
-                else:
-                    click.echo(content or "")
-        finally:
-            if pr is not None:
-                if waiting_id is not None:
-                    pr.complete_task(waiting_id)
-                try:
-                    pr.stop()
-                except Exception:
-                    pass
-        return content or ""
+        # Reuse CLI run_llm to ensure consistent streaming fallback and tool behavior
+        from gptsh.cli.entrypoint import run_llm as _run_llm
+        sink: List[str] = []
+        await _run_llm(
+            prompt=user_text,
+            provider_conf=provider_conf_local,
+            agent_conf=agent_conf_local,
+            cli_model_override=cli_model_override,
+            stream=stream,
+            progress=progress,
+            output_format=output_format,
+            no_tools=no_tools,
+            config=config,
+            logger=console,
+            history_messages=history_messages,
+            result_sink=sink,
+            agent_obj=agent,
+        )
+        return (sink[0] if sink else "")
 
     if initial_prompt and str(initial_prompt).strip():
         try:
             user_msg = {"role": "user", "content": initial_prompt}
-            content = asyncio.run(_run_once(initial_prompt))
+            content = await _run_once(initial_prompt)
             history_messages.extend([user_msg, {"role": "assistant", "content": content}])
         except KeyboardInterrupt:
             last_interrupt = time.monotonic()
@@ -520,36 +471,28 @@ def run_agent_repl(
             if cmd == "/agent":
                 try:
                     # Reuse existing helper to produce consistent prompt and policy
-                    loop = asyncio.new_event_loop()
-                    try:
-                        agent_conf_out, prompt_out, agent_name_out, no_tools, _mgr = command_agent(
-                            arg,
-                            config=config,
-                            agent_conf=agent_conf_local,
-                            agent_name=agent_label,
-                            provider_conf=provider_conf_local,
-                            cli_model_override=cli_model_override,
-                            no_tools=no_tools,
-                            mgr=None,
-                            loop=loop,
-                            readline_enabled=rl_enabled,
-                        )
-                    finally:
-                        try:
-                            loop.close()
-                        except Exception:
-                            pass
-                    # Rebuild Agent to reflect new selection
+                    loop = asyncio.get_running_loop()
+                    agent_conf_out, prompt_out, agent_name_out, no_tools, _mgr = command_agent(
+                        arg,
+                        config=config,
+                        agent_conf=agent_conf_local,
+                        agent_name=agent_label,
+                        provider_conf=provider_conf_local,
+                        cli_model_override=cli_model_override,
+                        no_tools=no_tools,
+                        mgr=None,
+                        loop=loop,
+                        readline_enabled=rl_enabled,
+                    )
+                    # Rebuild Agent to reflect new selection using current loop
                     from gptsh.core.config_resolver import build_agent as _build_agent
-                    agent = asyncio.run(
-                        _build_agent(
-                            config,
-                            cli_agent=agent_name_out,
-                            cli_provider=None,
-                            cli_tools_filter=None,
-                            cli_model_override=None,
-                            cli_no_tools=no_tools,
-                        )
+                    agent = await _build_agent(
+                        config,
+                        cli_agent=agent_name_out,
+                        cli_provider=None,
+                        cli_tools_filter=None,
+                        cli_model_override=None,
+                        cli_no_tools=no_tools,
                     )
                     agent_conf_local = agent_conf_out if isinstance(agent_conf_out, dict) else {}
                     agent_label = agent_name_out
@@ -592,9 +535,30 @@ def run_agent_repl(
         add_history(rl, sline)
         try:
             user_msg = {"role": "user", "content": sline}
-            content = asyncio.run(_run_once(sline))
+            content = await _run_once(sline)
             history_messages.extend([user_msg, {"role": "assistant", "content": content}])
         except KeyboardInterrupt:
             last_interrupt = time.monotonic()
             click.echo("Cancelled.", err=True)
             continue
+
+
+def run_agent_repl(
+    *,
+    agent: Any,
+    config: Dict[str, Any],
+    output_format: str,
+    stream: bool,
+    progress: bool,
+    initial_prompt: Optional[str] = None,
+) -> None:
+    asyncio.run(
+        run_agent_repl_async(
+            agent=agent,
+            config=config,
+            output_format=output_format,
+            stream=stream,
+            progress=progress,
+            initial_prompt=initial_prompt,
+        )
+    )

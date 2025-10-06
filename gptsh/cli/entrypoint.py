@@ -301,11 +301,11 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         # Determine effective output format via config_api
         output_effective = effective_output(output, agent_conf)
 
-        # Build an Agent for this run
-        agent_obj = None
-        labels_cli = tools_filter_labels
-        agent_obj = asyncio.run(
-            build_agent(
+        # Build Agent and run LLM within a single event loop to avoid
+        # initializing MCP sessions multiple times across loops.
+        async def _run_once():
+            labels_cli = tools_filter_labels
+            agent_obj = await build_agent(
                 config,
                 cli_agent=agent,
                 cli_provider=provider,
@@ -313,21 +313,21 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                 cli_model_override=model,
                 cli_no_tools=no_tools_effective,
             )
-        )
+            await run_llm(
+                prompt=prompt_given,
+                provider_conf=provider_conf,
+                agent_conf=agent_conf,
+                cli_model_override=model,
+                stream=stream,
+                progress=progress,
+                output_format=output_effective,
+                no_tools=no_tools_effective,
+                config=config,
+                logger=logger,
+                agent_obj=agent_obj,
+            )
 
-        asyncio.run(run_llm(
-            prompt=prompt_given,
-            provider_conf=provider_conf,
-            agent_conf=agent_conf,
-            cli_model_override=model,
-            stream=stream,
-            progress=progress,
-            output_format=output_effective,
-            no_tools=no_tools_effective,
-            config=config,
-            logger=logger,
-            agent_obj=agent_obj,
-        ))
+        asyncio.run(_run_once())
     else:
         raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
 
