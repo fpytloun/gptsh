@@ -233,11 +233,33 @@ There are also builtin MCP servers that are always available (`time`, `shell`) b
 
 ```
 gptsh/
-  cli/entrypoint.py      # thin CLI, defers to core
-  core/                  # orchestration, config helpers, progress, REPL helpers
-  domain/models.py       # typed config models
-  llm/                   # LiteLLM adapter + chunk utils
-  mcp/                   # sessions, facade, manager, builtin tools
+  cli/
+    entrypoint.py        # thin CLI, defers to core
+    utils.py             # CLI helpers: agent resolution, listings
+  core/
+    api.py               # run_prompt_with_agent
+    approval.py          # DefaultApprovalPolicy
+    config_api.py        # config helpers (now use core.models)
+    config_resolver.py   # build_agent
+    exceptions.py        # ToolApprovalDenied
+    logging.py           # logger setup
+    models.py            # typed config models (moved from domain/)
+    progress.py          # RichProgressReporter
+    repl.py              # interactive REPL (uses runner)
+    runner.py            # unified run_turn (stream + tools + fallback)
+    session.py           # ChatSession (tool loop, params)
+    stdin_handler.py     # safe stdin handling
+  llm/
+    litellm_client.py    # LiteLLMClient + stream chunk logging
+    chunk_utils.py       # extract_text
+    tool_adapter.py      # tool specs + tool_calls parsing
+  mcp/
+    client.py            # persistent sessions
+    manager.py           # MCPManager
+    api.py               # facade
+    tools_resolver.py    # ToolHandle resolver
+    builtin/
+      time.py, shell.py  # builtin tools
   tests/                 # pytest suite (unit tests)
 ```
 

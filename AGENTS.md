@@ -4,13 +4,35 @@ This document describes the requirements, architecture, and development instruct
 
 ---
 
-## Project Vision
+## How to use this document
+
+- Agent-facing guidance: actionable rules and checklists for LLM agents are in the "AGENT-FACING GUIDANCE" section near the end. Start there if you are an LLM building or maintaining code.
+- Project reference: architecture, configuration, tooling, and CLI semantics are under "PROJECT REFERENCE". Use these sections as the authoritative source of facts about the project.
+- Safety: never execute destructive actions without explicit approval. See Approval UX and the Agent Safety Rules for constraints.
+
+## Section map
+
+- AGENT-FACING GUIDANCE
+  - Development Instructions
+  - Safety Rules (approvals, secrets, execution constraints)
+  - Memory and Planning
+  - Task Completion Checklist
+- PROJECT REFERENCE
+  - Project Vision, Tech Stack, Structure
+  - Configuration, MCP, Execution Model, Logging
+  - Testing, Packaging, CLI Usage, Exit Codes
+
+---
+
+## PROJECT REFERENCE
+
+### Project Vision
 
 A modular, extensible, and secure Python shell client that empowers developers and system administrators with conversational and tool-augmented AI using the latest GPT-like LLMs, based on [litellm](https://docs.litellm.ai/). It natively supports the Model Context Protocol (MCP) for tool integrations (including Claude and others)
 
 ---
-## Tech Stack
-- **Python 3.10+**, fully typed
+### Tech Stack
+ - **Python 3.10+**, fully typed
 - **litellm** for LLM APIs (OpenAI, Claude, Perplexity, Azure, etc.)
 - **mcp** Python SDK for Model Context Protocol (MCP) ([documentation](https://openai.github.io/openai-agents-python/mcp/))
 - **pyyaml** for config loading/merging
@@ -20,31 +42,31 @@ A modular, extensible, and secure Python shell client that empowers developers a
 - **asyncio**, **httpx** for async operations, especially for MCP/http/SSE
 - **uv/uvx** as the only accepted way to install/manage dependencies & run dev scripts
 - **pytest** for testing
-- **watchdog** for config reloads (optional)
 - **python-dotenv/os** for environment variable expansion in configs
 
 ---
-## Project Structure (Current)
+### Project Structure
 ```
 gptsh/
   cli/
     entrypoint.py        # CLI entry, args, REPL loop (thin, delegates to core)
+    utils.py             # CLI utilities (agent resolution, listings)
   config/
     loader.py            # config loading, env expansion, !include support
   core/
-    api.py               # agent-only helpers (run_prompt_with_agent, prepare_stream_params(agent=...))
+    api.py               # agent-only helpers (run_prompt_with_agent)
     approval.py          # DefaultApprovalPolicy (wildcards + TTY-aware confirm)
-    config_api.py        # helpers to resolve agent/provider, outputs, tools policy
+    config_api.py        # helpers to resolve agent/provider, outputs, tools policy (uses core.models)
     agent.py             # Agent dataclass and ToolHandle abstraction
     config_resolver.py   # build_agent() resolves provider/agent, tools, approvals
     exceptions.py        # ToolApprovalDenied and future typed errors
     logging.py           # logging setup (text/json)
+    models.py            # typed config models (moved from domain/)
     progress.py          # RichProgressReporter abstraction
-    repl.py              # REPL helpers, command registry (/help, /agent, /model, /reasoning_effort)
+    repl.py              # REPL helpers; uses runner for consistency
+    runner.py            # Unified run_turn (stream + tools + fallback)
     session.py           # ChatSession orchestrator (tool loop, streaming helpers)
     stdin_handler.py     # safe stdin read, truncation notice
-  domain/
-    models.py            # ProviderConfig, AgentConfig, mapping helpers
   llm/
     litellm_client.py    # LiteLLMClient (LLMClient)
     chunk_utils.py       # extract_text for streaming chunks
@@ -58,15 +80,13 @@ gptsh/
       __init__.py        # builtin registry (time, shell), discovery helpers
       time.py, shell.py  # builtin tools
   tests/                 # pytest unit tests for core, cli, llm, mcp, repl
-scripts/
-  lint.py                # fallback linter runner (locates ruff binary)
 pyproject.toml           # deps, ruff config
 README.md
 AGENTS.md                # (this file)
 ```
 
 ---
-## Major Design/Implementation Points
+### Major Design/Implementation Points
 - **Async everywhere**: All operations that might block (model calls, subprocesses, HTTP, MCP, etc) MUST use `asyncio`.
 - **Config Management**: Merge global/user `~/.config/gptsh/config.yml` (plus any `~/.config/gptsh/config.d/*.yml` snippets) and project-local `./.gptsh/config.yml`. Per-project overrides global. Reference env vars as `${VAR_NAME}`. YAML supports a custom `!include` tag with wildcard patterns, resolved relative to the including file.
 - **MCP Support**: Connects to MCP servers (local or remote), managed/configured via `mcp_servers.json` (Claude-compatible). Auto-respawn/reconnect logic for local/remote MCP servers, with exponential backoff and progress feedback.
@@ -77,19 +97,18 @@ AGENTS.md                # (this file)
 - **Security**: Never log or print secrets or API keys. Use least-privilege principle for subprocesses and I/O. All configuration can include secrets via env variable references only, not hard-coded.
 - **Error/Recovery**: Must auto-attempt reconnection if an MCP server is lost and auto-restart local ones if crashed.
 
-### Agent-Only Execution Model (New)
+#### Agent-Only Execution Model
 - The CLI and core now operate exclusively on an Agent abstraction.
 - `Agent` encapsulates:
   - a preconfigured `LiteLLMClient` with `base_params` (model and generation params),
   - an `ApprovalPolicy` (from merged global+agent MCP approvals),
   - resolved MCP `ToolHandle`s grouped by server (for discovery/listing).
 - Core helpers:
-  - `run_prompt_with_agent(agent, ...)` to execute a turn (with or without tools).
-  - `prepare_stream_params(agent, ...)` to produce streaming params (tools disabled).
+  - `core/runner.run_turn(agent, ...)` unified one-turn execution (streaming or non-streaming). If streamed tool_calls appear but no text, runner falls back to non-stream execution to run tools.
+  - `run_prompt_with_agent(agent, ...)` provides the one-shot turn, used by the runner.
 - `ChatSession.from_agent(agent, ...)` constructs a session using the agent’s `llm` and `policy`.
-- Legacy `run_prompt`/legacy streaming helpers were removed from CLI usage; use the agent APIs instead.
 
-### Agent Resolution
+#### Agent Resolution
 - `build_agent(config, cli_*)` in `core/config_resolver.py`:
   - Resolves provider/agent precedence (CLI > agent > provider).
   - Builds `LiteLLMClient(base_params=...)` from model and generation params.
@@ -97,7 +116,7 @@ AGENTS.md                # (this file)
   - Builds `DefaultApprovalPolicy` via `mcp.api.get_auto_approved_tools`.
   - Returns an `Agent` object used by CLI and core execution.
 
-### MCP Tools
+#### MCP Tools
 - `mcp/tools_resolver.resolve_tools(config, allowed_servers)` discovers available tools and returns `ToolHandle`s.
 - `ToolHandle.invoke(args)` calls back into MCP execution (`execute_tool_async`).
 - LLM tool specs for the chat loop are still produced via `llm/tool_adapter.py` inside `ChatSession`.
@@ -112,7 +131,7 @@ AGENTS.md                # (this file)
 - Black compatibility: E203 and related spacing handled by Ruff config; do not fight Black.
 - Errors/exit codes: map to documented codes (0,1,4,124,130). Raise ToolApprovalDenied for required tools.
 - Logging: never log secrets or headers; use core.logging.setup_logging. Redaction utility is planned.
-- CLI: keep the entrypoint thin—delegate to core.api and core.session.
+- CLI: keep the entrypoint thin—delegate to core.api, core.session and core.utils.
 - Tests: pytest with pytest-asyncio, structure tests near component domains.
 - No license/copyright headers unless requested.
 - Avoid one-letter variable names; prefer descriptive, short names.
@@ -125,7 +144,7 @@ AGENTS.md                # (this file)
   - `UV_CACHE_DIR=.uv-cache uv pip install -e .[dev]`
   - `UV_CACHE_DIR=.uv-cache uv run ruff check`
   - `UV_CACHE_DIR=.uv-cache uv run pytest`
-- Commit discipline: run Ruff and pytest for every change before submitting PRs.
+- Commit discipline: run Ruff and pytest for every change.
 
 ---
 ## Sandbox Guidance
@@ -152,15 +171,6 @@ default_agent: default
 default_provider: openai
 
 progress: true
-timeouts:
-  request_seconds: 60
-stdin:
-  max_bytes: 5242880   # 5 MiB
-  overflow_strategy: summarize  # summarize | truncate
-logging:
-  level: info          # debug|info|warning|error
-  format: text         # text|json
-  redact_keys: ["api_key", "authorization"]
 
 providers:
   openai:
@@ -173,21 +183,6 @@ mcp:
     - ~/.config/gptsh/mcp_servers.json
     - ./.gptsh/mcp_servers.json
   discovery_interval_seconds: 5
-  approvals:
-    allow_patterns: []   # optional whitelist by tool name pattern
-    deny_patterns: []    # optional blacklist by tool name pattern
-    ask_patterns: ["*"]  # list of tools to always ask before calling, by default it will always ask
-  reconnect:
-    initial_backoff: 0.5
-    max_backoff: 30
-    jitter: true
-    max_retries: 0       # 0 = unlimited
-  spawn:
-    enabled: true
-    default_env: {}
-    healthcheck:
-      type: list_tools   # list_tools | http | none
-      timeout: 10
 
 agents:
   default:
@@ -196,16 +191,6 @@ agents:
     prompt:
       system: "You are helpful assistant called gptsh"
       user: null    # Optional user prompt, if set agent will provide output to this user prompt right away
-```
-
-Example per-project config (`.gptsh/config.yml`):
-```yaml
-model: gpt-4o-mini
-stream: true
-litellm:
-  api_key_env: OPENAI_API_KEY
-mcp:
-  tool_choice: required
 ```
 
 Example MCP servers file (Claude-compatible schema):
@@ -226,6 +211,8 @@ Example MCP servers file (Claude-compatible schema):
 }
 ```
 
+For better examples, see examples directory
+
 Notes:
 - A single servers file is selected by precedence: CLI mcp.servers_files (first existing), then ./.gptsh/mcp_servers.json, then ~/.config/gptsh/mcp_servers.json.
 - `${VAR}` inside servers JSON is expanded from the runtime environment (and `${env:VAR}` is normalized to `${VAR}`).
@@ -237,7 +224,7 @@ Notes:
 - Standardize on `asyncio` with `httpx.AsyncClient` for HTTP/SSE and async subprocess for stdio.
 - All long-running calls must accept a timeout (from config) and be cancellable.
 - Graceful shutdown: cancel tasks, close streams/clients, terminate child processes.
-- Streaming: CLI uses `ChatSession.prepare_stream` and `stream_with_params`
+- Streaming: Runner uses `ChatSession.prepare_stream` and `stream_with_params` and logs streamed tool_call deltas; if the model produces no text but tools are requested, it falls back to a non-stream turn to execute tools and print the result.
 
 ---
 ## MCP Lifecycle and Resilience
@@ -362,6 +349,7 @@ gptsh = "gptsh.cli.entrypoint:main"
 - Timeout approval prompts with a default deny.
 
 ---
+ 
 ## CLI Usage
 
 - `gptsh [PROMPT]`         — Request answer using config/default agent; interactive prompt.
@@ -408,15 +396,55 @@ Notes:
 - [uv project](https://github.com/astral-sh/uv)
 
 ---
-## LLM Agent Development Instructions
+## AGENT-FACING GUIDANCE
 
-1. Always keep config, security, and extensibility as priorities in any new code.
-2. Prefer async/await for concurrency — all code that can block must be async.
-3. All MCP server lifecycle handling (spawn, respawn, reconnect) must be resilient — handle restarts and temporary unavailability.
-4. Always read config from both global and per-project sources; project overrides global.
-5. Secrets/API keys must only come from env vars, not static config.
-7. Do not add other dependencies unless absolutely required and review for security/maintainability.
-8. All development, installation, and tests must use `uv`/`uvx` commands.
+### Development Instructions
+
+1) Keep config, security, and extensibility as priorities in any new code.
+2) Prefer async/await for concurrency — any blocking work (HTTP, MCP, subprocess, file IO) must be async.
+3) MCP lifecycle must be resilient (spawn, respawn, reconnect with backoff) and tolerate temporary unavailability.
+4) Read config from both global and per-project sources; project overrides global.
+5) Secrets/API keys must come only from environment variables; never hard-code or log them.
+6) Minimize dependencies; add new ones only if essential and vetted for security/maintainability.
+7) Use `uv`/`uvx` for all dev, install, and test commands.
+
+### Safety Rules
+
+- Approvals: destructive/system-changing tools require explicit user approval unless auto-approved by config. Respect non-TTY auto-deny defaults.
+- Shell execution: never execute shell commands on behalf of tools without passing the approval gate. In CLI agent modes, follow the tool-specific instructions (execute via tool when available, otherwise emit a POSIX-safe command only).
+- Secrets: do not log API keys, headers, request bodies containing secrets, or environment values. Use configured logging utilities and redaction helpers when available.
+- Timeouts and cancellation: ensure long-running operations accept timeouts and are cancellable; fail safe with clear exit codes.
+
+### Memory and Planning
+
+- We are using **serena** tools to work with memories
+- Maintain persistent memories during multi-step work:
+  - project_overview: high-level architecture, modules, recent refactors
+  - refactor_progress: ongoing changes, rationale, and next steps
+  - task_completion_checklist: checklist of goals per task with completion marks
+  - style_and_conventions: linting, typing, logging, and code style rules
+  - suggested_commands: frequently used uv/lint/test commands
+- Create task-specific memories for larger features/PRs and update them at meaningful checkpoints (after refactors, API changes, or CLI behavior updates).
+- Planning: use the **sequentialthinking** tool for multi-step planning, design trade-offs, and verification. Keep plans concise but actionable; verify outcomes before marking done.
+
+### Suggested Commands (Ruff/Pytest/UV)
+
+- Initialize dev env: `UV_CACHE_DIR=.uv-cache uv pip install -e .[dev]`
+- Lint: `UV_CACHE_DIR=.uv-cache uv run ruff check`
+- Tests: `UV_CACHE_DIR=.uv-cache uv run pytest`
+- CLI help: `UV_CACHE_DIR=.uv-cache uv run gptsh --help`
+- Optional auto-fix: `UV_CACHE_DIR=.uv-cache uv run ruff check --fix`
+
+### Task Completion Checklist
+
+- Lint clean: `UV_CACHE_DIR=.uv-cache uv run ruff check` passes (or waivers documented).
+- Tests pass: `UV_CACHE_DIR=.uv-cache uv run pytest`.
+- Docs updated: README.md and AGENTS.md reflect structural/workflow changes.
+- Memories updated
+- Config updated: pyproject.toml for tool config (ruff) and dev deps as needed.
+- Security: no secrets in logs or code; approval prompts are TTY-safe.
+- Architecture: CLI entrypoint remains thin; complex logic in core modules.
+- Code quality: new code is typed and async-safe.
 
 ---
 
