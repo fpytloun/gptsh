@@ -1,11 +1,10 @@
 # TODO
 
 ## Important
-- [ ] System prompt override for agents does not seem to work
 - [x] Fail if attempting to use agent that is not defined
 - [x] Fail if instructing to use config (-c) that does not exist
 - [x] Fail if instructing to use mcp_servers (--mcp-servers) file that does not exist
-- [ ] Fail if mcp.servers is string but not valid JSON
+- [x] Fail if mcp.servers is string but not valid JSON
 
 ## MCP Integration
 - [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)

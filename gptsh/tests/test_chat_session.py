@@ -14,7 +14,10 @@ class FakeLLM:
         return self.responses.pop(0)
 
     async def stream(self, params):  # not used in this test
-        yield ""
+        self.calls.append(params)
+        # Simulate two chunks
+        yield "part1"
+        yield "part2"
 
 
 class FakeMCP:
@@ -128,3 +131,40 @@ async def test_chat_session_multiple_tools():
     out = await session.run("hi", provider_conf={"model": "x"})
     assert out == "combined"
     assert mcp.called == [("fs", "read", {}), ("time", "now", {})]
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_included_in_messages_non_stream():
+    # LLM returns a simple final message
+    resp_final = {"choices": [{"message": {"content": "ok"}}]}
+    llm = FakeLLM([resp_final])
+    session = ChatSession(llm, mcp=None, approval=DefaultApprovalPolicy({}), progress=None, config={})
+    out = await session.run(
+        "hello",
+        provider_conf={"model": "m-test"},
+        agent_conf={"prompt": {"system": "SYS"}},
+        no_tools=True,
+    )
+    assert out == "ok"
+    assert len(llm.calls) == 1
+    msgs = llm.calls[0].get("messages")
+    assert msgs[0] == {"role": "system", "content": "SYS"}
+    assert msgs[-1] == {"role": "user", "content": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_included_in_messages_stream():
+    resp_final = {"choices": [{"message": {"content": "ok"}}]}
+    llm = FakeLLM([resp_final])
+    session = ChatSession(llm, mcp=None, approval=DefaultApprovalPolicy({}), progress=None, config={})
+    # Prepare streaming params (ensures system prompt is built in messages)
+    params, _model = await session.prepare_stream(
+        prompt="hi",
+        provider_conf={"model": "m"},
+        agent_conf={"prompt": {"system": "SYS2"}},
+        cli_model_override=None,
+        history_messages=None,
+    )
+    msgs = params.get("messages")
+    assert msgs[0] == {"role": "system", "content": "SYS2"}
+    assert msgs[-1] == {"role": "user", "content": "hi"}
