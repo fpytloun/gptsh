@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from gptsh.domain.models import (
-    map_config_to_models,
-    pick_effective_agent_provider,
-)
+from gptsh.core.models import map_config_to_models, pick_effective_agent_provider
 
 
 def select_agent_provider_dicts(
@@ -65,4 +62,3 @@ def compute_tools_policy(
         labels = [str(x) for x in tools if x]
         return False, labels
     return False, None
-

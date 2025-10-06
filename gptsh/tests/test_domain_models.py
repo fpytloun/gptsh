@@ -1,4 +1,4 @@
-from gptsh.domain.models import map_config_to_models, pick_effective_agent_provider
+from gptsh.core.models import map_config_to_models, pick_effective_agent_provider
 
 
 def test_map_and_pick_models():
@@ -32,4 +32,3 @@ def test_map_and_pick_models():
     # CLI overrides
     agent2, provider2 = pick_effective_agent_provider(defaults, providers, agents, cli_agent="chat", cli_provider="azure")
     assert provider2.name == "azure"
-
