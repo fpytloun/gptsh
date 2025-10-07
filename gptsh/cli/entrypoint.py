@@ -186,7 +186,6 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             click.echo("No agents configured.")
             sys.exit(0)
 
-        providers_conf = config.get("providers", {}) or {}
         tools_map = {} if no_tools else (list_tools(config) or {})
         _print_agents_listing(config, agents_conf, tools_map, no_tools)
         sys.exit(0)

@@ -136,7 +136,7 @@ async def test_agent_custom_servers_do_not_inherit_global_approvals(monkeypatch)
 
     monkeypatch.setattr("gptsh.mcp.tools_resolver.resolve_tools", fake_resolve_tools)
     from gptsh.mcp.api import get_auto_approved_tools
-    agent = await build_agent(config, cli_agent="dev", cli_provider="openai")
+    await build_agent(config, cli_agent="dev", cli_provider="openai")
     # Compute approvals using effective (agent) config
     approvals = get_auto_approved_tools({**config}, agent_conf=config["agents"]["dev"])  # type: ignore[index]
     # Global approvals for 'global' should not leak into agent-only setup

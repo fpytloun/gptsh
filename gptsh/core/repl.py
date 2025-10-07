@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import click
 
 from gptsh.core.config_api import compute_tools_policy
+from gptsh.mcp import ensure_sessions_started_async as ensure_sessions_started_async  # noqa: F401
 
 
 class ReplExit(Exception):
@@ -126,9 +128,6 @@ def command_no_tools(
         effective_no_tools = False
     else:
         effective_no_tools = not current_no_tools
-
-    import asyncio
-
     # Use a fresh loop to avoid nested run() issues under pytest-asyncio
     # Run coroutine in a dedicated thread to avoid interfering with any running loop
     import threading
@@ -322,7 +321,6 @@ def add_history(readline_module: Any, line: str) -> None:
         pass
 
 
-import asyncio
 
 
 async def run_agent_repl_async(
@@ -352,7 +350,7 @@ async def run_agent_repl_async(
     rl_enabled, rl = setup_readline(lambda: list((config.get("agents") or {}).keys()))
 
     model = (getattr(agent.llm, "_base", {}) or {}).get("model")
-    model_label = str(model or (agent.provider_conf or {}).get("model") or "?").rsplit("/", 1)[-1]
+    # model_label computed by build_prompt
     agent_label = getattr(agent, "name", "default") or "default"
     provider_conf_local: Dict[str, Any] = dict(getattr(agent, "provider_conf", {}) or {})
     agent_conf_local: Dict[str, Any] = dict(getattr(agent, "agent_conf", {}) or {})

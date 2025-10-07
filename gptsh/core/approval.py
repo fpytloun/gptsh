@@ -47,8 +47,6 @@ class DefaultApprovalPolicy(ApprovalPolicy):
         arg_text = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else str(args)
         # Use a subtle dim yellow style for approval prompts
         console = Console()
-        with console.capture() as capture:
-            pass
         # Rich's Confirm.ask doesn’t accept style directly; print a styled preface
         console.print(
             f"[grey50]Allow tool[/grey50] [dim yellow]{server}__{tool}[/dim yellow] [grey50]with args[/grey50] [dim]{arg_text}[/dim]?",

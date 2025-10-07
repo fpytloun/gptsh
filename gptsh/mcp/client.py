@@ -72,7 +72,7 @@ def _parse_servers_value(value: Any) -> Dict[str, Any]:
         try:
             data = json.loads(content)
         except json.JSONDecodeError as e:
-            raise ConfigError(f"Invalid JSON in mcp.servers: {e}")
+            raise ConfigError(f"Invalid JSON in mcp.servers: {e}") from e
         if isinstance(data, dict) and "mcpServers" in data and isinstance(data["mcpServers"], dict):
             return dict(data["mcpServers"])  # unwrap Claude-compatible schema
         if isinstance(data, dict):
@@ -97,15 +97,16 @@ def _compute_effective_servers(config: Dict[str, Any]) -> Dict[str, Any]:
     if cli_paths:
         # Force file-based selection path by setting servers to empty and relying on _select_servers_file
         pass
-    source: str = "none"
+    # Track source for diagnostics only (unused for logic)
+    # source: str = "none"
     # 1) Per-agent override
     if "servers_override" in mcp_conf and mcp_conf["servers_override"] and not cli_paths:
         servers = _parse_servers_value(mcp_conf["servers_override"]) or {}
-        source = "override"
+        pass
     # 2) Global inline servers
     elif "servers" in mcp_conf and mcp_conf["servers"] and not cli_paths:
         servers = _parse_servers_value(mcp_conf["servers"]) or {}
-        source = "inline"
+        pass
     else:
         # 3) File-based fallback
         selected_file = _select_servers_file(config)
@@ -118,7 +119,6 @@ def _compute_effective_servers(config: Dict[str, Any]) -> Dict[str, Any]:
                 data = json.loads(content)
                 servers.update(data.get("mcpServers", {}))
                 logging.getLogger(__name__).debug("Selected MCP servers file: %s", selected_file)
-                source = "file"
             except Exception as e:
                 logging.getLogger(__name__).warning(
                     "Failed to parse MCP servers file %s: %s", selected_file, e, exc_info=True
