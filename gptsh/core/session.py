@@ -156,18 +156,20 @@ class ChatSession:
                     continue
 
                 task_id = None
+                tool_args = None
                 if self._progress is not None:
+                    try:
+                        tool_args = json.dumps(args, ensure_ascii=False)
+                    except Exception:
+                        tool_args = str(args)
+
                     # If we paused earlier for approval, resume before adding a task
                     if paused_here:
                         try:
                             self._progress.resume()
                         except Exception:
                             pass
-                    try:
-                        pretty = json.dumps(args, ensure_ascii=False)
-                    except Exception:
-                        pretty = str(args)
-                    task_id = self._progress.add_task(f"⏳ {server}__{toolname} args={pretty}")
+                    task_id = self._progress.add_task(f"⏳ {server}__{toolname} args={tool_args}")
                 try:
                     result = await self._call_tool(server, toolname, args)
                 except Exception as e:  # pragma: no cover - defensive
@@ -176,7 +178,7 @@ class ChatSession:
                 finally:
                     if self._progress is not None:
                         try:
-                            self._progress.complete_task(task_id, f"✔ {server}__{toolname}")
+                            self._progress.complete_task(task_id, f"✔ {server}__{toolname} args={tool_args}")
                         except Exception:
                             pass
 
