@@ -118,12 +118,7 @@ async def run_turn(
                             "Stream ended with no text but tool deltas were observed: %s",
                             info.get("tool_names"),
                         )
-                        # Stop progress before printing fallback content
-                        if pr is not None:
-                            try:
-                                pr.stop()
-                            except Exception:
-                                pass
+                        # Pause progress before printing fallback content, will resume before tool loop
                         content = await run_prompt_with_agent(
                             agent=agent,
                             prompt=prompt,
@@ -135,6 +130,11 @@ async def run_turn(
                             history_messages=history_messages,
                             progress_reporter=pr,
                         )
+                        if pr is not None:
+                            try:
+                                pr.stop()
+                            except Exception:
+                                pass
                         if output_format == "markdown":
                             console.print(Markdown(content or ""))
                         else:
