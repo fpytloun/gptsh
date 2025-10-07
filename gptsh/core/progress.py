@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Optional
 import sys
-from rich.console import Console
+from typing import Optional
 
+from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from gptsh.interfaces import ProgressReporter

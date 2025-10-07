@@ -9,7 +9,6 @@ from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressReporter
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
 
-
 logger = logging.getLogger(__name__)
 
 

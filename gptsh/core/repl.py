@@ -6,7 +6,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import click
 
 from gptsh.core.config_api import compute_tools_policy
-from gptsh.mcp import ensure_sessions_started_async
 
 
 class ReplExit(Exception):
@@ -324,7 +323,6 @@ def add_history(readline_module: Any, line: str) -> None:
 
 
 import asyncio
-from typing import Any, Dict, List, Optional
 
 
 async def run_agent_repl_async(
@@ -343,16 +341,11 @@ async def run_agent_repl_async(
     - Maintains a simple in-memory history for the current session.
     - Supports /help and /exit.
     """
-    import sys
     import time
 
     import click
     from rich.console import Console
-    from rich.markdown import Markdown
 
-    from gptsh.core.api import run_prompt_with_agent
-    from gptsh.core.progress import RichProgressReporter
-    from gptsh.core.session import ChatSession
 
     console = Console()
     # Readline for history/convenience, provide agent names for completion

@@ -3,7 +3,6 @@ from typing import Any, Dict, List
 
 from gptsh.mcp import discover_tools_detailed_async
 
-
 logger = logging.getLogger(__name__)
 
 

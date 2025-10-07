@@ -9,10 +9,10 @@ import click
 from rich.console import Console
 from rich.markdown import Markdown
 
+from gptsh.core.api import run_prompt_with_agent
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.progress import RichProgressReporter
 from gptsh.core.session import ChatSession
-from gptsh.core.api import run_prompt_with_agent
 
 
 async def run_turn(

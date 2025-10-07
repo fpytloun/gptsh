@@ -6,7 +6,6 @@ from typing import Any, AsyncIterator, Dict
 from gptsh.interfaces import LLMClient
 from gptsh.llm.chunk_utils import extract_text
 
-
 logger = logging.getLogger(__name__)
 
 

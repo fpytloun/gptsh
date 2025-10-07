@@ -4,22 +4,17 @@ import sys
 import warnings
 
 import click
-from rich.console import Console
-from rich.markdown import Markdown
 
-from gptsh.config.loader import load_config
-from gptsh.core.api import run_prompt_with_agent
-from gptsh.core.runner import RunRequest, run_turn, run_turn_with_request
 from gptsh.cli.utils import (
-    resolve_agent_and_settings as _resolve_agent_and_settings,
     print_agents_listing as _print_agents_listing,
     print_tools_listing as _print_tools_listing,
+    resolve_agent_and_settings as _resolve_agent_and_settings,
 )
+from gptsh.config.loader import load_config
 from gptsh.core.config_resolver import build_agent
-from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.logging import setup_logging
-from gptsh.core.progress import RichProgressReporter
 from gptsh.core.repl import run_agent_repl
+from gptsh.core.runner import RunRequest, run_turn_with_request
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
 

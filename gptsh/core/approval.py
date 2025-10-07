@@ -35,8 +35,8 @@ class DefaultApprovalPolicy(ApprovalPolicy):
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             return False
         try:
-            from rich.prompt import Confirm
             from rich.console import Console
+            from rich.prompt import Confirm
         except Exception:
             Confirm = None  # type: ignore
             Console = None  # type: ignore

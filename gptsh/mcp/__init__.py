@@ -1,12 +1,12 @@
 from .client import (
     _discover_tools_detailed_async,
     _execute_tool_async,
-    stop_all_sessions_async as _stop_all_sessions_async,
     discover_tools_detailed,
     ensure_sessions_started_async as _ensure_sessions_started_async,
     execute_tool,
     get_auto_approved_tools,
     list_tools,
+    stop_all_sessions_async as _stop_all_sessions_async,
 )
 
 

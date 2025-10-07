@@ -1,6 +1,6 @@
+
 import pytest
 from click.testing import CliRunner
-import os
 
 
 @pytest.mark.parametrize("tools_map", [
@@ -84,7 +84,6 @@ def test_cli_load_config_failure_default(monkeypatch):
 
 
 def test_cli_load_config_path_with_invalid_yaml(monkeypatch, tmp_path):
-    import gptsh.cli.entrypoint as ep
     from gptsh.cli.entrypoint import main
     # Write an invalid YAML file
     bad = tmp_path / "bad.yml"
@@ -242,6 +241,7 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
 
     # Monkeypatch to simulate denial exception (patch both runner and api paths)
     import gptsh.core.runner as runner_mod
+
     # Simulate tool approval denied by having run_llm path raise it via ChatSession.run
     from gptsh.core.exceptions import ToolApprovalDenied
     class DenySession:

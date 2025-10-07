@@ -16,8 +16,8 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from gptsh.config.loader import _expand_env
-from gptsh.mcp.builtin import get_builtin_servers
 from gptsh.core.exceptions import ConfigError
+from gptsh.mcp.builtin import get_builtin_servers
 
 
 def _select_servers_file(config: Dict[str, Any]) -> Optional[str]:
