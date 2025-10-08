@@ -3,6 +3,7 @@
 ## MCP Integration
 - [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)
 - [ ] Refactor MCP tools, introduce decorator registry and refactor existing builtin modules
+- [ ] Use roots to sandbox tools (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem#method-2-mcp-roots-recommended, https://modelcontextprotocol.io/docs/learn/client-concepts#roots)
 
 ## User Experience
 - [ ] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)

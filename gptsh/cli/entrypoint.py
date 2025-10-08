@@ -68,7 +68,7 @@ DEFAULT_AGENTS = {
 @click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
 @click.option("--list-providers", "list_providers_flag", is_flag=True, default=False, help="List configured providers")
 @click.option("--list-agents", "list_agents_flag", is_flag=True, default=False, help="List configured agents and their tools")
-@click.option("--output", "-o", type=click.Choice(["text", "markdown"]), default="markdown", help="Output format")
+@click.option("--output", "-o", type=click.Choice(["text", "markdown", "default"]), default="default", help="Output format")
 @click.option("--no-tools", is_flag=True, default=False, help="Disable MCP tools (discovery and execution)")
 @click.option("--tools", "tools_filter", default=None, help="Comma/space-separated MCP server labels to allow (others skipped)")
 @click.option("--interactive", "-i", is_flag=True, default=False, help="Run in interactive REPL mode")
@@ -225,6 +225,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             initial_prompt=initial_prompt,
         )
         sys.exit(0)
+
     # Handle prompt or stdin
     stdin_input = None
     if not click.get_text_stream('stdin').isatty():

@@ -33,10 +33,12 @@ def select_agent_provider_dicts(
 def effective_output(output_cli: Optional[str], agent_conf: Optional[Dict[str, Any]]) -> str:
     allowed = {"text", "markdown"}
     if output_cli in allowed:
+        # If not allowed value (eg. default, agent config has precedence)
         return output_cli  # type: ignore[return-value]
     aout = (agent_conf or {}).get("output") if isinstance(agent_conf, dict) else None
     if aout in allowed:
         return str(aout)
+    # Default or unknown resolves as markdown
     return "markdown"
 
 

@@ -2,7 +2,7 @@ chat:
   model: "gpt-5"
   reasoning_effort: "minimal"
   output: markdown
-  #tools: ["time", "shell"]
+  tools: ["time", "shell", "tavily", "sequentialthinking"]
   autoApprove: ["time"]
   prompt:
     system: |
