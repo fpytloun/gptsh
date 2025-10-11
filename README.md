@@ -216,6 +216,20 @@ Config is merged from:
 2) Global snippets: ~/.config/gptsh/config.d/*.yml (merged in lexicographic order)
 3) Project: ./.gptsh/config.yml
 
+Merge semantics:
+- The per-project config is merged into the global config (project overrides global where keys overlap).
+- MCP servers definitions follow precedence (see below) and are not merged across files; the first matching source wins. Practically, a project-local `./.gptsh/mcp_servers.json` takes precedence over the user-level `~/.config/gptsh/mcp_servers.json`.
+
+```mermaid
+flowchart TD
+  B["Load global config (~/.config/gptsh/config.yml)"] --> C["Load global snippets (~/.config/gptsh/config.d/*.yml)"]
+  C --> D["Load project config (./.gptsh/config.yml)"]
+  D --> E["Merge configs (project overrides global)"]
+  E --> F["Expand ${ENV} and process !include"]
+  F --> G{"Select agent (--agent or default_agent)"}
+  G --> H["Resolve provider/model (CLI > agent > provider)"]
+```
+
 Environment variables may be referenced using ${VAR_NAME} (and ${env:VAR_NAME} in mcp_servers.json is normalized to ${VAR_NAME}). YAML also supports a custom !include tag resolved relative to the including file, with wildcard support. For example:
 - agents: !include agents.yml
 - agents: !include agents/*
@@ -227,6 +241,28 @@ You can configure MCP servers inline in YAML or via a Claude-compatible JSON fil
 2) Per-agent inline YAML `agents.<name>.mcp.servers`
 3) Global inline YAML `mcp.servers`
 4) Servers file (first existing): `./.gptsh/mcp_servers.json` then `~/.config/gptsh/mcp_servers.json`
+
+Inline YAML is equivalent in structure to the JSON file and enables self-contained agents: you can define the required MCP servers directly on an agent and avoid relying on global server files. This lets a project ship agents that "just work" without external setup.
+
+```mermaid
+flowchart TD
+  B{"MCP servers source"} --> B1["CLI --mcp-servers PATH"]
+  B --> B2["Agent inline mcp.servers"]
+  B --> B3["Global inline mcp.servers"]
+  B --> B4["Servers file (./.gptsh/mcp_servers.json or ~/.config/gptsh/mcp_servers.json)"]
+  B1 --> C["Servers selected"]
+  B2 --> C
+  B3 --> C
+  B4 --> C
+  C --> D["Add built-ins: time, shell"]
+  D --> E{"Tools policy"}
+  E --> E1["Apply agent.tools allow-list"]
+  E --> E2["Apply CLI --tools override"]
+  E --> E3["--no-tools disables tools"]
+  E1 --> F["Discover tools"]
+  E2 --> F
+  E3 --> F
+```
 
 Inline YAML mapping (preferred):
 ```yaml
@@ -252,6 +288,18 @@ mcp:
 ```
 
 Built-in in-process servers `time` and `shell` are always available and are merged into your configuration (inline or file-based). To limit which servers/tools are used at runtime, use the `tools` allow-list on the agent (e.g., `tools: ["git"]`). This filters the merged set to only those servers. To completely override or effectively disable built-ins for an agent, set `tools` to a list without them.
+
+Per-agent tools allow-list:
+- Define `agents.<name>.tools` as a list of MCP server labels to expose to that agent (e.g., `tools: ["tavily", "serena"]`).
+- This is a filter over all configured MCP servers (from inline/global or servers file). You can override it at runtime with `--tools`.
+
+```mermaid
+flowchart TD
+  A["Config resolved and MCP tools discovered"] --> B["Build approval policy (autoApprove, safety)"]
+  B --> C["Construct Agent (LLM + tools + policy + prompts)"]
+  C --> D["CLI one-shot run"]
+  C --> E["Interactive REPL"]
+```
 
 ### Project Structure (overview)
 
@@ -330,6 +378,9 @@ agents:
     prompt:
       user: "Hello, are you here?"
 ```
+
+Agents at a glance:
+- An agent bundles LLM + tools + prompt. The prompt includes a system prompt and may also include a pre-defined user prompt so you do not have to pass a prompt for routine tasks (e.g., a `changelog` or `committer` agent).
 
 For full example, see `examples` directory.
 
@@ -503,6 +554,15 @@ Project scripts:
 - No tools found: check --mcp-servers path, server definitions, and network access.
 - Stuck spinner: use --no-progress to disable UI or run with --debug for logs.
 - Markdown output looks odd: try -o text to inspect raw content.
+
+---
+## Roadmap
+
+- Session management: persist one-shot and REPL conversations as sessions you can return to later.
+- Workflow orchestration: define runnable workflows composed of steps (shell/Python/agents), similar to invoking targets with simple task runners.
+- SRE copilot focus: practical day-to-day automation with safe approvals and rich tool integrations.
+
+For full roadmap see `TODO.md`
 
 ---
 Feedback and contributions are welcome!
