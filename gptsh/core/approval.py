@@ -32,7 +32,7 @@ class DefaultApprovalPolicy(ApprovalPolicy):
     async def confirm(self, server: str, tool: str, args: Dict[str, Any]) -> bool:
         # Deny in non-interactive environments for safety
         import sys
-        if not sys.stdin.isatty() or not sys.stdout.isatty():
+        if not sys.stdin.isatty() or not sys.stderr.isatty():
             return False
         try:
             from rich.console import Console
@@ -46,10 +46,18 @@ class DefaultApprovalPolicy(ApprovalPolicy):
 
         arg_text = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else str(args)
         # Use a subtle dim yellow style for approval prompts
-        console = Console()
+        console = Console(stderr=True, soft_wrap=True)
         # Rich's Confirm.ask doesn’t accept style directly; print a styled preface
         console.print(
             f"[grey50]Allow tool[/grey50] [dim yellow]{server}__{tool}[/dim yellow] [grey50]with args[/grey50] [dim]{arg_text}[/dim]?",
-            end=" ",
+            end="",
         )
-        return bool(Confirm.ask("[dim yellow][y/N][/dim yellow]", default=False))
+        return bool(
+            Confirm.ask(
+                "[dim yellow][y/N][/dim yellow]",
+                choices=["y", "n"],
+                case_sensitive=False,
+                default=False,
+                console=console,
+            )
+        )

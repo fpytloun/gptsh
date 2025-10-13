@@ -10,9 +10,10 @@ from gptsh.interfaces import ProgressReporter
 
 
 class RichProgressReporter(ProgressReporter):
-    def __init__(self):
+    def __init__(self, console: Optional[Console] = None):
         self._progress: Optional[Progress] = None
         self._paused: bool = False
+        self.console: Console = console or Console(stderr=True, soft_wrap=True)
 
     def start(self) -> None:
         if self._progress is None:
@@ -20,7 +21,7 @@ class RichProgressReporter(ProgressReporter):
             self._progress = Progress(
                 SpinnerColumn(style="green"),
                 TextColumn("{task.description}", style="grey50"),
-                console=Console(file=sys.stderr),
+                console=self.console,
             )
             self._progress.start()
 
