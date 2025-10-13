@@ -66,10 +66,12 @@ async def run_turn(
                 )
             except Exception:
                 pass
+
             wait_label = f"Waiting for {str(chosen_model).rsplit('/', 1)[-1]}"
             if pr is not None:
                 waiting_task_id = pr.add_task(wait_label)
-            md_buffer = "" if output_format == "markdown" else ""
+
+            md_buffer = ""
             first_output_done = False
             full_output = ""
             async for text in session.stream_with_params(params):
@@ -84,22 +86,18 @@ async def run_turn(
                             pr.stop()
                         except Exception:
                             pass
-                        # Ensure stdout starts on a fresh line after stopping progress
-                        if output_format != "markdown":
-                            try:
-                                click.echo()
-                            except Exception:
-                                pass
                     first_output_done = True
+
                 if output_format == "markdown":
                     md_buffer += text
-                    while "\n" in md_buffer:
-                        line, md_buffer = md_buffer.split("\n", 1)
-                        console.print(Markdown(line))
+                    # TODO: disable markdown streaming for now, rework to use Live
+                    #while "\n\n" in md_buffer:
+                    #    line, md_buffer = md_buffer.split("\n\n", 1)
+                    #    console.print(Markdown(line))
                 else:
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
+                    console.print(text)
                 full_output += text
+
             # After stream ends: only print trailing newline for text if something was streamed
             if output_format == "markdown":
                 if md_buffer:
@@ -107,6 +105,7 @@ async def run_turn(
             else:
                 if first_output_done:
                     click.echo()
+
             # If we saw streamed tool deltas but no output, fallback to non-stream
             try:
                 import logging
@@ -138,11 +137,6 @@ async def run_turn(
                         if output_format == "markdown":
                             console.print(Markdown(content or ""))
                         else:
-                            # Ensure separation from any prior progress output
-                            try:
-                                click.echo()
-                            except Exception:
-                                pass
                             click.echo(content or "")
                         if result_sink is not None:
                             try:
