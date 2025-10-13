@@ -100,38 +100,42 @@ flowchart TD
 
 We use uv/uvx for environment management and running:
 
-### Package
+### Python package
+
+#### UV
+
+Best way to install `gptsh` is using `uv tool`
+
+```bash
+uv tool install gptsh-cli
+```
+
+This will put executables into `~/.local/bin` so make sure it is in your `$PATH`
+
+```bash
+export PATH="${PATH}:~/.local/bin"
+```
+
+#### UVX
+
+If you prefer uvx, then use this command:
 
 ```bash
 uvx --from gptsh-cli gptsh --help
 ```
 
 You can also set alias:
+
 ```sh
 alias gptsh="uvx --from gptsh-cli gptsh"
 ```
 
-### Git checkout (development)
+Not pinning version will cause that `uvx` will try to update on each run so it
+will increase startup time. You can set version like this (check for latest
+release first):
 
-```bash
-uv venv
-UV_CACHE_DIR=.uv-cache uv pip install -e .[dev]
-```
-
-Run:
-
-```bash
-UV_CACHE_DIR=.uv-cache uv run gptsh --help
-
-### Linting and Tests
-
-Ruff is configured as the primary linter in `pyproject.toml` (line length 100, isort enabled). Run lint + tests before committing:
-
-```bash
-UV_CACHE_DIR=.uv-cache uv run ruff check
-UV_CACHE_DIR=.uv-cache uv run pytest
-```
-
+```sh
+uvx --from gptsh-cli==<version> gptsh
 ```
 
 ## Quick Start
@@ -538,16 +542,34 @@ gptsh --no-progress "Describe current repo structure"
 
 ## Development
 
-Run tests:
+### Install
 
 ```bash
-uvx pytest -q
+uv venv
+UV_CACHE_DIR=.uv-cache uv pip install -e .[dev]
+```
+
+Run:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run gptsh --help
+``````
+
+### Linting and Tests
+
+Ruff is configured as the primary linter in `pyproject.toml` (line length 100, isort enabled). Run lint + tests before committing:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run ruff check
+UV_CACHE_DIR=.uv-cache uv run pytest
 ```
 
 Project scripts:
 
 - Entry point: gptsh = "gptsh.cli.entrypoint:main"
 - Keep code async; don’t log secrets; prefer uv/uvx for all dev commands.
+
+For full development instructions, read `AGENTS.md`.
 
 ## Troubleshooting
 
