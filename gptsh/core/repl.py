@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -79,6 +80,9 @@ def command_reasoning_effort(
     return agent_conf
 
 
+_log = logging.getLogger(__name__)
+
+
 def command_tools(agent: Any) -> str:
     """Return a formatted list of tools for the current agent.
 
@@ -97,8 +101,8 @@ def command_tools(agent: Any) -> str:
             try:
                 if policy and policy.is_auto_allowed(server, name):
                     badge = " \u2714"  # checkmark for auto-approved
-            except Exception:
-                pass
+            except Exception as e:
+                _log.debug("policy.is_auto_allowed failed for %s/%s: %s", server, name, e)
             lines.append(f"  - {name}{badge}")
     return "\n".join(lines)
 
@@ -204,7 +208,8 @@ def command_agent(
     try:
         nonce = (mcp_cfg.get("_repl_nonce") or 0) + 1
         mcp_cfg["_repl_nonce"] = nonce
-    except Exception:
+    except Exception as e:
+        _log.debug("Failed to bump MCP nonce: %s", e)
         mcp_cfg["_repl_nonce"] = 1
     mgr = None
     prompt_str = build_prompt(
@@ -251,27 +256,44 @@ def command_help() -> str:
 
 
 def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]:
-    """Configure GNU readline with a simple completer for REPL slash-commands.
+    """Configure readline/libedit with a simple completer for REPL slash-commands.
     Returns (enabled, readline_module_or_None).
+
+    Notes:
+    - On macOS Python is often linked against libedit instead of GNU readline.
+      In that case the correct binding for tab completion is
+      "bind ^I rl_complete" instead of "tab: complete".
     """
     try:
         import readline as _readline  # type: ignore
-    except Exception:
+    except Exception as e:
+        _log.warning("readline import failed: %s", e)
         return False, None
     try:
-        _readline.parse_and_bind("tab: complete")
+        try:
+            doc = getattr(_readline, "__doc__", "") or ""
+            if "libedit" in doc.lower():
+                # macOS/libedit: different binding syntax for tab completion
+                _readline.parse_and_bind("bind ^I rl_complete")
+            else:
+                # GNU readline
+                _readline.parse_and_bind("tab: complete")
+        except Exception as e:
+            # Best-effort: log and continue to attempt to set completer
+            _log.debug("readline parse_and_bind failed: %s", e)
         try:
             delims = _readline.get_completer_delims()
             if "/" in delims:
                 _readline.set_completer_delims(delims.replace("/", ""))
-        except Exception:
-            pass
+        except Exception as e:
+            _log.debug("failed to adjust completer delimiters: %s", e)
         commands = get_command_names()
 
         def _completer(text, state):
             try:
                 buf = _readline.get_line_buffer()
-            except Exception:
+            except Exception as e:
+                _log.debug("readline.get_line_buffer failed: %s", e)
                 buf = ""
             if not buf.startswith("/"):
                 return None
@@ -284,13 +306,15 @@ def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]
             arg_prefix = ""
             try:
                 arg_prefix = "" if buf.endswith(" ") else (text or "")
-            except Exception:
+            except Exception as e:
+                _log.debug("computing arg_prefix failed: %s", e)
                 arg_prefix = text or ""
             if cmd == "/agent":
                 names = []
                 try:
                     names = list(get_agent_names() or [])
-                except Exception:
+                except Exception as e:
+                    _log.debug("get_agent_names failed: %s", e)
                     names = []
                 opts = [n for n in names if n.startswith(arg_prefix)]
                 return opts[state] if state < len(opts) else None
@@ -305,10 +329,11 @@ def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]
 
         try:
             _readline.set_completer(_completer)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.debug("set_completer failed: %s", e)
         return True, _readline
-    except Exception:
+    except Exception as e:
+        _log.warning("setup_readline failed: %s", e)
         return False, None
 
 
@@ -317,8 +342,8 @@ def add_history(readline_module: Any, line: str) -> None:
         return
     try:
         readline_module.add_history(line)
-    except Exception:
-        pass
+    except Exception as e:
+        _log.debug("add_history failed: %s", e)
 
 
 
@@ -366,7 +391,8 @@ async def run_agent_repl_async(
     # Heuristic: if agent has no tools, disable tools in non-stream flow
     try:
         no_tools = not any(len(v or []) > 0 for v in (agent.tools or {}).values())
-    except Exception:
+    except Exception as e:
+        _log.debug("Failed to inspect agent tools: %s", e)
         no_tools = True
 
     # Keep a heuristic no_tools flag based on resolved agent tools
@@ -449,8 +475,8 @@ async def run_agent_repl_async(
                 cli_model_override = new_override
                 try:
                     agent.llm._base["model"] = cli_model_override
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log.debug("Failed to update agent base model: %s", e)
                 provider_conf_local["model"] = cli_model_override
                 prompt_str = new_prompt
                 continue
@@ -493,12 +519,14 @@ async def run_agent_repl_async(
                     provider_conf_local["model"] = model
                     prompt_str = prompt_out
                 except Exception as e:
+                    _log.warning("Failed to switch agent: %s", e)
                     click.echo(f"Failed to switch agent: {e}", err=True)
                 continue
             if cmd == "/tools":
                 try:
                     click.echo(command_tools(agent))
                 except Exception as e:
+                    _log.warning("Failed to list tools: %s", e)
                     click.echo(f"Failed to list tools: {e}", err=True)
                 continue
             if cmd == "/no-tools":
@@ -519,6 +547,7 @@ async def run_agent_repl_async(
                     no_tools = _no
                     click.echo(msg)
                 except Exception as e:
+                    _log.warning("Failed to toggle tools: %s", e)
                     click.echo(f"Failed to toggle tools: {e}", err=True)
                 continue
             click.echo("Unknown command", err=True)
