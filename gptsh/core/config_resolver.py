@@ -25,16 +25,21 @@ async def build_agent(
 
     # Build LiteLLMClient with effective base params
     base_params: Dict[str, Any] = {}
+    if provider_conf:
+        # Take provider config first
+        base_params.update(**provider_conf)
+
     # provider model is baseline; agent may override; CLI overrides final
     base_params["model"] = (
         cli_model_override
         or (agent_conf.get("model") if isinstance(agent_conf, dict) else None)
         or provider_conf.get("model")
     )
-    # Merge generation params from agent_conf["params"] if present
-    if isinstance(agent_conf, dict) and isinstance(agent_conf.get("params"), dict):
-        for k, v in agent_conf["params"].items():
-            base_params[k] = v
+
+    # Merge LiteLLM params from agent_conf
+    for param in ["temperature", "reasoning_effort"]:
+        if isinstance(agent_conf, dict) and agent_conf.get(param):
+            base_params[param] = agent_conf.get(param)
     base_params["drop_params"] = True
     llm = LiteLLMClient(base_params=base_params)
 

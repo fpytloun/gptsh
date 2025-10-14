@@ -15,14 +15,13 @@ def select_agent_provider_dicts(
         defaults, providers, agents, cli_agent=cli_agent, cli_provider=cli_provider
     )
     provider_conf: Dict[str, Any] = {"model": provider_dm.model, **(provider_dm.params or {})}
-    if provider_dm.mcp:
-        provider_conf["mcp"] = provider_dm.mcp
     agent_conf: Dict[str, Any] = {
         "provider": agent_dm.provider,
         "model": agent_dm.model,
         "prompt": {"system": agent_dm.prompt.system, "user": agent_dm.prompt.user},
-        "params": agent_dm.params,
         "mcp": agent_dm.mcp,
+        "temperature": agent_dm.temperature,
+        "reasoning_effort": agent_dm.reasoning_effort,
         "tools": agent_dm.tools,
         "no_tools": agent_dm.no_tools,
         "output": agent_dm.output,

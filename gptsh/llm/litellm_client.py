@@ -64,10 +64,7 @@ class LiteLLMClient(LLMClient):
                 pass
             text = extract_text(chunk)
             if text:
-                try:
-                    logger.debug("LLM stream text delta: %r", text[:80])
-                except Exception:
-                    pass
+                logger.debug("LLM stream text delta: %r", text[:80])
             if text:
                 yield text
 

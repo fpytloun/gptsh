@@ -9,7 +9,6 @@ class ProviderConfig:
     name: str
     model: Optional[str] = None
     params: Dict[str, Any] = field(default_factory=dict)
-    mcp: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -23,8 +22,9 @@ class AgentConfig:
     name: str
     provider: Optional[str] = None
     model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    temperature: Optional[float] = None
     prompt: AgentPrompt = field(default_factory=AgentPrompt)
-    params: Dict[str, Any] = field(default_factory=dict)
     mcp: Dict[str, Any] = field(default_factory=dict)
     tools: Optional[List[str]] = None  # None=all, []=disabled, [labels]=allow-list
     no_tools: bool = False
@@ -54,8 +54,7 @@ def map_config_to_models(config: Dict[str, Any]) -> Tuple[Defaults, Dict[str, Pr
         providers[name] = ProviderConfig(
             name=name,
             model=p.get("model"),
-            params=_as_dict(p.get("params")),
-            mcp=_as_dict(p.get("mcp")),
+            params=_as_dict(p),
         )
     agents_conf = _as_dict(config.get("agents"))
     agents: Dict[str, AgentConfig] = {}
@@ -67,9 +66,9 @@ def map_config_to_models(config: Dict[str, Any]) -> Tuple[Defaults, Dict[str, Pr
             name=name,
             provider=a.get("provider"),
             model=a.get("model"),
+            reasoning_effort=a.get("reasoning_effort"),
+            temperature=a.get("temperature"),
             prompt=AgentPrompt(system=prompt_cfg.get("system"), user=prompt_cfg.get("user")),
-            params=_as_dict(a.get("params")),
-            mcp=_as_dict(a.get("mcp")),
             tools=list(a.get("tools")) if isinstance(a.get("tools"), list) else None,
             no_tools=bool(a.get("no_tools", False)),
             output=a.get("output"),
