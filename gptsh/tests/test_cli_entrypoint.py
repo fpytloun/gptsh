@@ -125,17 +125,14 @@ def test_cli_stream_no_tools(monkeypatch):
     # Monkeypatch ChatSession to control streaming (patch the runner module)
     import gptsh.core.runner as runner_mod
     class DummySession:
-        def __init__(self, *a, **k):
-            pass
-        @classmethod
-        def from_agent(cls, agent, *, progress, config, mcp=None):
-            return cls()
-        async def prepare_stream(self, prompt, provider_conf, agent_conf, cli_model_override, history_messages):
-            params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
-            return params, provider_conf.get("model")
-        async def stream_with_params(self, params):
-            yield "hello "
-            yield "world"
+            def __init__(self, *a, **k):
+                pass
+            @classmethod
+            def from_agent(cls, agent, *, progress, config, mcp=None):
+                return cls()
+            async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
+                yield "hello "
+                yield "world"
 
     monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
     # Also stub build_agent to avoid dependency on providers
@@ -175,10 +172,7 @@ def test_cli_agent_provider_selection(monkeypatch):
         @classmethod
         def from_agent(cls, agent, *, progress, config, mcp=None):
             return cls()
-        async def prepare_stream(self, prompt, provider_conf, agent_conf, cli_model_override, history_messages):
-            params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
-            return params, provider_conf.get("model")
-        async def stream_with_params(self, params):
+        async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
             yield "x"
         async def start(self):
             pass
@@ -252,14 +246,12 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
             return cls()
         async def start(self):
             pass
-        async def prepare_stream(self, *a, **k):
-            return ({"model": "m1", "messages": []}, "m1")
-        async def run(self, *a, **k):
-            raise ToolApprovalDenied("fs__delete")
-        # Provide stream_with_params to satisfy runner's streaming path
-        async def stream_with_params(self, params):
+        async def stream_turn(self, *a, **k):
             if False:
                 yield ""  # pragma: no cover
+        async def run(self, *a, **k):
+            raise ToolApprovalDenied("fs__delete")
+        # stream_with_params removed in favor of stream_turn
     monkeypatch.setattr(runner_mod, "ChatSession", DenySession)
     import gptsh.core.api as api
     monkeypatch.setattr(api, "ChatSession", DenySession)
@@ -302,9 +294,7 @@ def test_cli_timeout_exit_code(monkeypatch):
             return cls()
         async def start(self):
             pass
-        async def prepare_stream(self, *a, **k):
-            return ({"model": "m1", "messages": []}, "m1")
-        def stream_with_params(self, params):
+        def stream_turn(self, *a, **k):
             # Simulate a timeout by raising from an async generator
             async def _gen():
                 import asyncio

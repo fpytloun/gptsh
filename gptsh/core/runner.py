@@ -9,10 +9,10 @@ import click
 from rich.console import Console
 from rich.markdown import Markdown
 
-from gptsh.core.api import run_prompt_with_agent
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.progress import RichProgressReporter
 from gptsh.core.session import ChatSession
+from gptsh.mcp.manager import MCPManager
 
 
 async def run_turn(
@@ -45,55 +45,44 @@ async def run_turn(
 
     waiting_task_id: Optional[int] = None
     try:
-        session = ChatSession.from_agent(agent, progress=pr, config=config)
-        params, chosen_model = await session.prepare_stream(
-            prompt=prompt,
-            provider_conf=provider_conf,
-            agent_conf=agent_conf,
-            cli_model_override=cli_model_override,
-            history_messages=history_messages,
-        )
-        try:
-            import logging
-
-            _logger = logging.getLogger(__name__)
-            _logger.debug(
-                "Streaming with model=%s tools=%d choice=%s",
-                str(chosen_model).rsplit("/", 1)[-1],
-                len(params.get("tools") or []),
-                params.get("tool_choice"),
-            )
-        except Exception:
-            pass
-
-        wait_label = f"Waiting for {str(chosen_model).rsplit('/', 1)[-1]}"
+        session = ChatSession.from_agent(agent, progress=pr, config=config, mcp=MCPManager(config) if not no_tools else None)
+        # Prepare progress
+        wait_label = "Working"
         if pr is not None:
             waiting_task_id = pr.add_task(wait_label)
 
         buffer = ""
         first_output_done = False
         full_output = ""
-        async for text in session.stream_with_params(params):
+
+        async for text in session.stream_turn(
+            prompt=prompt,
+            provider_conf=provider_conf,
+            agent_conf=agent_conf,
+            cli_model_override=cli_model_override,
+            no_tools=no_tools,
+            history_messages=history_messages,
+        ):
             if not text:
                 continue
 
-            if stream and not first_output_done:
-                if pr is not None:
-                    if waiting_task_id is not None:
-                        pr.complete_task(waiting_task_id)
-                        waiting_task_id = None
-                    pr.stop()
-                first_output_done = True
-
             full_output += text
             buffer += text
+
             if stream:
+                if not first_output_done:
+                    if pr is not None:
+                        if waiting_task_id is not None:
+                            pr.complete_task(waiting_task_id)
+                            waiting_task_id = None
+                        pr.stop()
+                    first_output_done = True
+
                 if output_format == "markdown":
-                    # TODO: dummy way how to stream markdown output
+                    # simple chunking for markdown paragraphs
                     while "\n\n" in buffer:
                         line, buffer = buffer.split("\n\n", 1)
                         console.print(Markdown(line))
-                    pass
                 else:
                     while len(buffer) > 3:
                         console.print(buffer, end="")
@@ -113,50 +102,7 @@ async def run_turn(
             console.print(buffer)
 
         # If we saw streamed tool deltas but no output, fallback to non-stream
-        try:
-            import logging
-
-            info = session.get_last_stream_info()
-            if isinstance(info, dict):
-                if not full_output and info.get("saw_tool_delta"):
-                    logging.getLogger(__name__).debug(
-                        "Stream ended with no text but tool deltas were observed: %s",
-                        info.get("tool_names"),
-                    )
-                    # Pause progress before printing fallback content, will resume before tool loop
-                    content = await run_prompt_with_agent(
-                        agent=agent,
-                        prompt=prompt,
-                        config=config,
-                        provider_conf=provider_conf,
-                        agent_conf=agent_conf,
-                        cli_model_override=cli_model_override,
-                        no_tools=False,
-                        history_messages=history_messages,
-                        progress_reporter=pr,
-                    )
-
-                    if pr is not None:
-                        if waiting_task_id is not None:
-                            pr.complete_task(waiting_task_id)
-                            waiting_task_id = None
-                        pr.stop()
-
-                    if output_format == "markdown":
-                        console.print(Markdown(content or ""))
-                    else:
-                        click.echo(content or "")
-                    if result_sink is not None:
-                        try:
-                            result_sink.append(content or "")
-                        except Exception:
-                            pass
-                    return
-        except ToolApprovalDenied as e:
-            click.echo(f"Tool approval denied: {e}", err=True)
-            sys.exit(4)
-        except Exception:
-            pass
+        # stream_turn already executed tools and finalized output.
 
         if result_sink is not None:
             try:
@@ -166,6 +112,9 @@ async def run_turn(
     except asyncio.TimeoutError:
         click.echo("Operation timed out", err=True)
         sys.exit(124)
+    except ToolApprovalDenied as e:
+        click.echo(f"Tool approval denied: {e}", err=True)
+        sys.exit(4)
     except KeyboardInterrupt:
         if exit_on_interrupt:
             click.echo("", err=True)

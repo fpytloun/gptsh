@@ -158,11 +158,13 @@ async def test_system_prompt_included_in_messages_stream():
     llm = FakeLLM([resp_final])
     session = ChatSession(llm, mcp=None, approval=DefaultApprovalPolicy({}), progress=None, config={})
     # Prepare streaming params (ensures system prompt is built in messages)
-    params, _model = await session.prepare_stream(
+    # Use internal param preparation to validate message construction
+    params, _has_tools, _model = await session._prepare_params(  # type: ignore[attr-defined]
         prompt="hi",
         provider_conf={"model": "m"},
         agent_conf={"prompt": {"system": "SYS2"}},
         cli_model_override=None,
+        no_tools=False,
         history_messages=None,
     )
     msgs = params.get("messages")

@@ -49,8 +49,8 @@ async def test_core_prepare_stream_params(monkeypatch):
         @classmethod
         def from_agent(cls, agent, *, progress, config, mcp=None):
             return cls()
-        async def prepare_stream(self, *a, **k):
-            return ({"model": "m"}, "m")
+        async def _prepare_params(self, *a, **k):
+            return ({"model": "m"}, False, "m")
 
     monkeypatch.setattr(api, "ChatSession", DummySession)
 

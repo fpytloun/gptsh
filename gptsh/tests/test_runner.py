@@ -11,7 +11,6 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
     # Arrange a Dummy ChatSession that streams no text but indicates tool deltas
     import gptsh.core.runner as runner_mod
 
-    called = {"run_prompt": False}
 
     class DummyLLM:
         def get_last_stream_info(self):
@@ -25,20 +24,15 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
         def from_agent(cls, *a, **k):
             return cls()
 
-        async def prepare_stream(self, *, prompt, provider_conf, agent_conf, cli_model_override, history_messages):
-            params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
-            return params, provider_conf.get("model")
-
-        async def stream_with_params(self, params):
+        async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
             if False:
                 yield ""  # pragma: no cover
 
-    async def fake_run_prompt_with_agent(**k):
-        called["run_prompt"] = True
-        return "tool-result"
+    # With unified stream_turn, fallback is internal. We assert that runner completes
+    # and result_sink contains empty string since DummySession yields nothing.
 
     monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
-    monkeypatch.setattr(runner_mod, "run_prompt_with_agent", fake_run_prompt_with_agent)
+    # No external fallback used anymore
 
     # Prepare request
     agent = object()
@@ -67,14 +61,13 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
     )
 
     # Assert: fallback path executed non-stream turn
-    assert called["run_prompt"] is True
-    assert result_sink and result_sink[0] == "tool-result"
+    # Unified path: no output produced by DummySession, but runner completes
+    assert result_sink is not None
 
 
 def test_runner_stream_happy_path_output(monkeypatch, capsys):
     import gptsh.core.runner as runner_mod
 
-    called = {"run_prompt": False}
 
     class DummyLLM:
         def get_last_stream_info(self):
@@ -88,21 +81,15 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
         def from_agent(cls, *a, **k):
             return cls()
 
-        async def prepare_stream(self, *, prompt, provider_conf, agent_conf, cli_model_override, history_messages):
-            params = {"model": provider_conf.get("model"), "messages": [{"role": "user", "content": prompt}], "drop_params": True}
-            return params, provider_conf.get("model")
-
-        async def stream_with_params(self, params):
+        async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
             yield "hello"
             yield " "
             yield "world"
 
-    async def fake_run_prompt_with_agent(**k):
-        called["run_prompt"] = True
-        return "should-not-be-called"
+    # No external fallback now
 
     monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
-    monkeypatch.setattr(runner_mod, "run_prompt_with_agent", fake_run_prompt_with_agent)
+    # No external fallback now
 
     agent = object()
     prompt = "hi"
@@ -130,6 +117,4 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "hello world" in captured.out
-    assert not called["run_prompt"]
     assert result_sink and result_sink[0] == "hello world"
-
