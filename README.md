@@ -313,7 +313,6 @@ gptsh/
     entrypoint.py        # thin CLI, defers to core
     utils.py             # CLI helpers: agent resolution, listings
   core/
-    api.py               # run_prompt_with_agent
     approval.py          # DefaultApprovalPolicy
     config_api.py        # config helpers (now use core.models)
     config_resolver.py   # build_agent

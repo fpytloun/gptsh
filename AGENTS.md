@@ -54,7 +54,6 @@ gptsh/
   config/
     loader.py            # config loading, env expansion, !include support
   core/
-    api.py               # agent-only helpers (run_prompt_with_agent)
     approval.py          # DefaultApprovalPolicy (wildcards + TTY-aware confirm)
     config_api.py        # helpers to resolve agent/provider, outputs, tools policy (uses core.models)
     agent.py             # Agent dataclass and ToolHandle abstraction
