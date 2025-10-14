@@ -1,6 +1,7 @@
 [project]
 name = "gptsh-cli"
 version = "0.6.8"
+license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
   "click",
