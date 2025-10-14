@@ -5,3 +5,8 @@ class ToolApprovalDenied(Exception):
 class ConfigError(Exception):
     """Raised for invalid or conflicting configuration options."""
     pass
+
+
+class ReplExit(Exception):
+    """Exit from REPL loop"""
+    pass

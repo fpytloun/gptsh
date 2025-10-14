@@ -8,11 +8,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import click
 
 from gptsh.core.config_api import compute_tools_policy
+from gptsh.core.exceptions import ReplExit
 from gptsh.mcp import ensure_sessions_started_async as ensure_sessions_started_async  # noqa: F401
-
-
-class ReplExit(Exception):
-    pass
 
 
 def build_prompt(
@@ -421,33 +418,30 @@ async def run_agent_repl_async(
         )
         return (sink[0] if sink else "")
 
-    if initial_prompt and str(initial_prompt).strip():
-        try:
-            user_msg = {"role": "user", "content": initial_prompt}
-            content = await _run_once(initial_prompt)
-            history_messages.extend([user_msg, {"role": "assistant", "content": content}])
-        except KeyboardInterrupt:
-            last_interrupt = time.monotonic()
-            click.echo("Cancelled.", err=True)
-
     while True:
-        try:
-            line = input(prompt_str)
-        except KeyboardInterrupt:
-            now = time.monotonic()
-            if now - last_interrupt <= 1.5:
+        if initial_prompt:
+            line = initial_prompt
+            initial_prompt = None
+        else:
+            try:
+                line = input(prompt_str)
+            except KeyboardInterrupt:
+                now = time.monotonic()
+                if now - last_interrupt <= 1.5:
+                    click.echo("", err=True)
+                    break
+                last_interrupt = now
+                click.echo("(^C) Press Ctrl-C again to exit", err=True)
+                continue
+            except EOFError:
                 click.echo("", err=True)
                 break
-            last_interrupt = now
-            click.echo("(^C) Press Ctrl-C again to exit", err=True)
-            continue
-        except EOFError:
-            click.echo("", err=True)
-            break
 
         sline = line.strip()
         if not sline:
             continue
+
+        add_history(rl, sline)
 
         if sline.startswith("/"):
             parts = sline.split(None, 1)
@@ -553,7 +547,6 @@ async def run_agent_repl_async(
             click.echo("Unknown command", err=True)
             continue
 
-        add_history(rl, sline)
         try:
             user_msg = {"role": "user", "content": sline}
             content = await _run_once(sline)
