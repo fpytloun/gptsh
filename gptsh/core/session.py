@@ -312,3 +312,16 @@ class ChatSession:
     async def stream_with_params(self, params: Dict[str, Any]):
         async for chunk in self._llm.stream(params):
             yield chunk
+
+    def get_last_stream_info(self) -> Dict[str, Any]:
+        """Return metadata collected by the underlying LLM stream, if any.
+
+        This encapsulates access to the client-specific implementation detail
+        and lets callers (runner) decide on fallback behavior without
+        depending on private attributes.
+        """
+        try:
+            getter = getattr(self._llm, "get_last_stream_info", None)
+            return getter() if callable(getter) else {}
+        except Exception:
+            return {}

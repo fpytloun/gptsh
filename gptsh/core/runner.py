@@ -116,7 +116,7 @@ async def run_turn(
         try:
             import logging
 
-            info = getattr(session._llm, "get_last_stream_info", lambda: {})()  # type: ignore[attr-defined]
+            info = session.get_last_stream_info()
             if isinstance(info, dict):
                 if not full_output and info.get("saw_tool_delta"):
                     logging.getLogger(__name__).debug(
