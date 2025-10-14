@@ -424,7 +424,8 @@ async def run_agent_repl_async(
             initial_prompt = None
         else:
             try:
-                line = input(prompt_str)
+                click.echo(prompt_str, nl=False)
+                line = input()
             except KeyboardInterrupt:
                 now = time.monotonic()
                 if now - last_interrupt <= 1.5:
