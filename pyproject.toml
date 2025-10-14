@@ -3,13 +3,14 @@ name = "gptsh-cli"
 version = "0.6.8"
 requires-python = ">=3.10"
 dependencies = [
-  "litellm",
   "click",
+  "gnureadline",
+  "httpx",
+  "litellm",
+  "mcp>=1.15.0",
+  "python-dotenv",
   "pyyaml",
   "rich",
-  "httpx",
-  "python-dotenv",
-  "mcp>=1.15.0",
 ]
 
 [project.optional-dependencies]

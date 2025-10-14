@@ -5,3 +5,4 @@ mcp
 python-dotenv
 pyyaml
 rich
+gnureadline

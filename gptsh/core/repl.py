@@ -262,7 +262,10 @@ def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]
       "bind ^I rl_complete" instead of "tab: complete".
     """
     try:
-        import readline as _readline  # type: ignore
+        try:
+            import gnureadline as _readline  # type: ignore
+        except ImportError:
+            import readline as _readline  # type: ignore
     except Exception as e:
         _log.warning("readline import failed: %s", e)
         return False, None
@@ -270,11 +273,18 @@ def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]
         try:
             doc = getattr(_readline, "__doc__", "") or ""
             if "libedit" in doc.lower():
+                print("libedit")
                 # macOS/libedit: different binding syntax for tab completion
                 _readline.parse_and_bind("bind ^I rl_complete")
+                # Enable incremental reverse search on Ctrl-R (and forward on Ctrl-S)
+                _readline.parse_and_bind("bind ^R em-inc-search-prev")
+                _readline.parse_and_bind("bind ^S em-inc-search-next")
             else:
                 # GNU readline
                 _readline.parse_and_bind("tab: complete")
+                # Enable reverse/forward history search
+                _readline.parse_and_bind('"\\C-r": reverse-search-history')
+                _readline.parse_and_bind('"\\C-s": forward-search-history')
         except Exception as e:
             # Best-effort: log and continue to attempt to set completer
             _log.debug("readline parse_and_bind failed: %s", e)
@@ -424,8 +434,13 @@ async def run_agent_repl_async(
             initial_prompt = None
         else:
             try:
-                click.echo(prompt_str, nl=False)
-                line = input()
+                doc = getattr(rl, "__doc__", "") or ""
+                if "libedit" in doc.lower():
+                    # MacOS non-GNU readline compatibility
+                    click.echo(prompt_str, nl=False)
+                    line = input()
+                else:
+                    line = input(prompt_str)
             except KeyboardInterrupt:
                 now = time.monotonic()
                 if now - last_interrupt <= 1.5:
