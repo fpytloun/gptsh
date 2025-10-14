@@ -164,16 +164,25 @@ class ChatSession:
           performs a non-streaming complete() to retrieve calls, executes them,
           and loops until final assistant text is produced.
         """
+
+
         params, has_tools, _model = await self._prepare_params(
             prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages
         )
         conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
+
+        # Prepare progress
+        working_task_id: Optional[int] = None
+        working_task_label = f"Waiting for {_model}"
         while True:
             params["messages"] = conversation
             if has_tools and self._tool_specs:
                 params["tools"] = self._tool_specs
                 params.setdefault("tool_choice", "auto")
 
+            if self._progress:
+                self._progress.start()
+                working_task_id = self._progress.add_task(working_task_label)
             # Stream this assistant turn
             full_text = ""
             async for chunk in self._llm.stream(params):
@@ -181,6 +190,9 @@ class ChatSession:
                 if text:
                     full_text += text
                     yield text
+            if self._progress:
+                self._progress.complete_task(working_task_id)
+                self._progress.stop()
 
             # After streaming, check whether tool calls were requested
             info: Dict[str, Any] = {}
@@ -229,21 +241,9 @@ class ChatSession:
                 except Exception:
                     args = {}
                 allowed = self._approval.is_auto_allowed(server, toolname)
-                paused_here = False
                 if not allowed:
-                    if self._progress is not None:
-                        try:
-                            self._progress.pause()
-                            paused_here = True
-                        except Exception:
-                            paused_here = False
                     allowed = await self._approval.confirm(server, toolname, args)
                 if not allowed:
-                    if paused_here and self._progress is not None:
-                        try:
-                            self._progress.resume()
-                        except Exception:
-                            pass
                     conversation.append(
                         {
                             "role": "tool",
@@ -263,11 +263,7 @@ class ChatSession:
                         tool_args = json.dumps(args, ensure_ascii=False)
                     except Exception:
                         tool_args = str(args)
-                    if paused_here:
-                        try:
-                            self._progress.resume()
-                        except Exception:
-                            pass
+                    self._progress.start()
                     task_id = self._progress.add_task(f"\u23f3 {server}__{toolname} args={tool_args}")
                 try:
                     result = await self._call_tool(server, toolname, args)
@@ -278,6 +274,7 @@ class ChatSession:
                     if self._progress is not None:
                         try:
                             self._progress.complete_task(task_id, f"\u2714 {server}__{toolname} args={tool_args}")
+                            self._progress.stop()
                         except Exception:
                             pass
                 conversation.append(

@@ -9,18 +9,30 @@ from gptsh.interfaces import ProgressReporter
 
 
 class RichProgressReporter(ProgressReporter):
-    def __init__(self, console: Optional[Console] = None):
+    def __init__(self, console: Optional[Console] = None, transient: bool = True):
         self._progress: Optional[Progress] = None
         self._paused: bool = False
+        self._transient: bool = transient or False
         self.console: Console = console or Console(stderr=True, soft_wrap=True)
 
-    def start(self) -> None:
+    # Context manager support to ensure progress lifecycle is managed safely
+    def __enter__(self) -> "RichProgressReporter":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        # Always stop the progress on exit; do not suppress exceptions
+        self.stop()
+        return False
+
+    def start(self, transient: Optional[bool] = False) -> None:
         if self._progress is None:
             # Render progress to stderr. Spinner green; text gray for subtlety.
             self._progress = Progress(
                 SpinnerColumn(style="green"),
                 TextColumn("{task.description}", style="grey50"),
                 console=self.console,
+                transient=self._transient,
             )
             self._progress.start()
 

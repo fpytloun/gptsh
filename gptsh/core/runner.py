@@ -41,18 +41,10 @@ async def run_turn(
     console = Console()
     if progress and click.get_text_stream("stderr").isatty():
         pr = RichProgressReporter()
-        pr.start()
 
-    waiting_task_id: Optional[int] = None
     try:
         session = ChatSession.from_agent(agent, progress=pr, config=config, mcp=MCPManager(config) if not no_tools else None)
-        # Prepare progress
-        wait_label = "Working"
-        if pr is not None:
-            waiting_task_id = pr.add_task(wait_label)
-
         buffer = ""
-        first_output_done = False
         full_output = ""
 
         async for text in session.stream_turn(
@@ -70,13 +62,9 @@ async def run_turn(
             buffer += text
 
             if stream:
-                if not first_output_done:
-                    if pr is not None:
-                        if waiting_task_id is not None:
-                            pr.complete_task(waiting_task_id)
-                            waiting_task_id = None
-                        pr.stop()
-                    first_output_done = True
+                if progress:
+                    # Progress must pause before printing output
+                    session._progress.pause()
 
                 if output_format == "markdown":
                     # simple chunking for markdown paragraphs
@@ -89,12 +77,9 @@ async def run_turn(
                         buffer = ""
 
         if not stream:
-            # Stop progress in non-stream before printing output
-            if pr is not None:
-                if waiting_task_id is not None:
-                    pr.complete_task(waiting_task_id)
-                    waiting_task_id = None
-                pr.stop()
+            if progress:
+                # Progress must stop before printing output
+                session._progress.pause()
 
         if output_format == "markdown":
             console.print(Markdown(buffer))
@@ -129,9 +114,7 @@ async def run_turn(
                 pass
         sys.exit(1)
     finally:
-        if waiting_task_id is not None and pr is not None:
-            pr.complete_task(waiting_task_id)
-            waiting_task_id = None
+        if pr is not None:
             pr.stop()
 
 
