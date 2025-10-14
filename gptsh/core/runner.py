@@ -62,7 +62,7 @@ async def run_turn(
             buffer += text
 
             if stream:
-                if progress:
+                if session._progress:
                     # Progress must pause before printing output
                     session._progress.pause()
 
@@ -77,7 +77,7 @@ async def run_turn(
                         buffer = ""
 
         if not stream:
-            if progress:
+            if session._progress:
                 # Progress must stop before printing output
                 session._progress.pause()
 

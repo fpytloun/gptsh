@@ -125,14 +125,15 @@ def test_cli_stream_no_tools(monkeypatch):
     # Monkeypatch ChatSession to control streaming (patch the runner module)
     import gptsh.core.runner as runner_mod
     class DummySession:
-            def __init__(self, *a, **k):
-                pass
-            @classmethod
-            def from_agent(cls, agent, *, progress, config, mcp=None):
-                return cls()
-            async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
-                yield "hello "
-                yield "world"
+        def __init__(self, *a, **k):
+            self._progress = None
+            pass
+        @classmethod
+        def from_agent(cls, agent, *, progress, config, mcp=None):
+            return cls()
+        async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
+            yield "hello "
+            yield "world"
 
     monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
     # Stub resolver path used by entrypoint
@@ -169,6 +170,7 @@ def test_cli_agent_provider_selection(monkeypatch):
     import gptsh.core.runner as runner_mod
     class DummySession:
         def __init__(self, *a, **k):
+            self._progress = None
             pass
         @classmethod
         def from_agent(cls, agent, *, progress, config, mcp=None):
@@ -242,6 +244,7 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
     from gptsh.core.exceptions import ToolApprovalDenied
     class DenySession:
         def __init__(self, *a, **k):
+            self._progress = None
             pass
         @classmethod
         def from_agent(cls, agent, *, progress, config, mcp=None):

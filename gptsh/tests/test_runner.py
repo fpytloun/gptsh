@@ -18,6 +18,7 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
 
     class DummySession:
         def __init__(self, *a, **k):
+            self._progress = None
             self._llm = DummyLLM()
 
         @classmethod
@@ -75,6 +76,7 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
 
     class DummySession:
         def __init__(self, *a, **k):
+            self._progress = None
             self._llm = DummyLLM()
 
         @classmethod
