@@ -4,6 +4,8 @@ import json
 import logging
 from typing import Any, AsyncIterator, Dict, List, Optional
 
+from rich.console import Console
+
 from gptsh.core.agent import Agent
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressReporter
@@ -171,6 +173,8 @@ class ChatSession:
         )
         conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
 
+        console_log = Console(stderr=True)
+
         # Prepare progress
         working_task_id: Optional[int] = None
         working_task_label = f"Waiting for {_model}"
@@ -240,6 +244,13 @@ class ChatSession:
                     args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 except Exception:
                     args = {}
+
+                tool_args = None
+                try:
+                    tool_args = json.dumps(args, ensure_ascii=False)
+                except Exception:
+                    tool_args = str(args)
+
                 allowed = self._approval.is_auto_allowed(server, toolname)
                 if not allowed:
                     allowed = await self._approval.confirm(server, toolname, args)
@@ -252,28 +263,26 @@ class ChatSession:
                             "content": f"Denied by user: {fullname}",
                         }
                     )
+                    console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args}[/dim][/grey50]")
                     if (self._config.get("mcp", {}) or {}).get("tool_choice") == "required":
                         raise ToolApprovalDenied(fullname)
                     continue
 
                 task_id = None
-                tool_args = None
                 if self._progress is not None:
-                    try:
-                        tool_args = json.dumps(args, ensure_ascii=False)
-                    except Exception:
-                        tool_args = str(args)
                     self._progress.start()
-                    task_id = self._progress.add_task(f"\u23f3 {server}__{toolname} args={tool_args}")
+                    task_id = self._progress.add_task(f"Executing tool {server}__{toolname} args={tool_args}")
                 try:
                     result = await self._call_tool(server, toolname, args)
+                    tool_failed = False
                 except Exception as e:  # pragma: no cover - defensive
                     logger.warning("Tool execution error: %s: %s", fullname, e, exc_info=True)
                     result = f"Tool execution failed: {e}"
+                    tool_failed = True
                 finally:
                     if self._progress is not None:
                         try:
-                            self._progress.complete_task(task_id, f"\u2714 {server}__{toolname} args={tool_args}")
+                            self._progress.complete_task (task_id, f"{'[red]✖[/red]' if tool_failed else '[green]✔[/green]'} {server}__{toolname} args={tool_args}")
                             self._progress.stop()
                         except Exception:
                             pass
@@ -285,4 +294,4 @@ class ChatSession:
                         "content": result,
                     }
                 )
-            # Loop back to stream assistant response that follows tool outputs
+                console_log.print(f"{'[red]✖[/red]' if tool_failed else '[green]✔[/green]'} [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args}[/dim][/grey50]")

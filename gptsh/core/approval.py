@@ -45,19 +45,17 @@ class DefaultApprovalPolicy(ApprovalPolicy):
         import json
 
         arg_text = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else str(args)
-        # Use a subtle dim yellow style for approval prompts
         console = Console(stderr=True, soft_wrap=True)
-        # Rich's Confirm.ask doesn’t accept style directly; print a styled preface
-        console.print(
+        choice = Confirm.ask(
             f"[grey50]Allow tool[/grey50] [dim yellow]{server}__{tool}[/dim yellow] [grey50]with args[/grey50] [dim]{arg_text}[/dim]?",
-            end="",
+            choices=["y", "n"],
+            case_sensitive=False,
+            default=False,
+            console=console,
         )
-        return bool(
-            Confirm.ask(
-                "[dim yellow][y/N][/dim yellow]",
-                choices=["y", "n"],
-                case_sensitive=False,
-                default=False,
-                console=console,
-            )
-        )
+
+        # Cleanup confirm prompt
+        console.file.write("\x1b[1A\r\x1b[2K")
+        console.file.flush()
+
+        return bool(choice)
