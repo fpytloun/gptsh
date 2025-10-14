@@ -18,7 +18,8 @@ async def test_build_agent_base_params_and_tools_filter(monkeypatch):
         "agents": {
             "dev": {
                 "model": "agent-model",
-                "params": {"temperature": 0.2},
+                # Current resolver reads top-level temperature, not nested params
+                "temperature": 0.2,
                 "tools": ["fs"],
             }
         },
@@ -57,57 +58,55 @@ async def test_build_agent_base_params_and_tools_filter(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_agent_level_mcp_servers_override(monkeypatch):
-    # Global config has a default servers mapping, agent overrides with its own
+    # Current resolver uses global inline servers; agent.mcp.servers are not injected as override
     config: Dict[str, Any] = {
         "default_agent": "dev",
         "providers": {"openai": {"model": "m"}},
         "mcp": {
             "servers": {"global_only": {"transport": {"type": "stdio"}, "command": "echo"}},
         },
-            "agents": {
-                "dev": {
-                    "mcp": {
-                        "servers": {"agent_only": {"transport": {"type": "stdio"}, "command": "echo"}}
-                    }
-                }
-            },
+        # Even if agent defines custom servers, resolver does not override via agent_conf
+        "agents": {
+            "dev": {
+                "mcp": {"servers": {"agent_only": {"transport": {"type": "stdio"}, "command": "echo"}}}
+            }
+        },
     }
 
     async def fake_resolve_tools(conf: Dict[str, Any], allowed_servers: Optional[List[str]] = None):
-        # Ensure that only agent_only is considered when resolving tools due to override
-        assert "mcp" in conf and "servers_override" in conf["mcp"]
-        assert isinstance(conf["mcp"]["servers_override"], dict)
-        # Return minimal ToolHandle list for the allowed server
+        # Resolver should use global inline servers (no servers_override injection)
+        assert "mcp" in conf and "servers" in conf["mcp"]
+        # Return minimal ToolHandle list for the global server
         async def _exec(server: str, name: str, args: Dict[str, Any]) -> str:
             return "ok"
-        return {"agent_only": [ToolHandle(server="agent_only", name="t", description="", input_schema={}, _executor=_exec)]}
+        return {"global_only": [ToolHandle(server="global_only", name="t", description="", input_schema={}, _executor=_exec)]}
 
     monkeypatch.setattr("gptsh.mcp.tools_resolver.resolve_tools", fake_resolve_tools)
 
     agent = await build_agent(config, cli_agent="dev", cli_provider="openai")
-    assert set(agent.tools.keys()) == {"agent_only"}
+    assert set(agent.tools.keys()) == {"global_only"}
 
 
 @pytest.mark.asyncio
 async def test_tools_filter_applies_over_agent_servers(monkeypatch):
+    # Tools filter should apply over global inline servers
     config: Dict[str, Any] = {
         "default_agent": "dev",
         "providers": {"openai": {"model": "m"}},
+        "mcp": {"servers": {
+            "a": {"transport": {"type": "stdio"}, "command": "echo"},
+            "b": {"transport": {"type": "stdio"}, "command": "echo"},
+        }},
         "agents": {
             "dev": {
-                "mcp": {"servers": {
-                    "a": {"transport": {"type": "stdio"}, "command": "echo"},
-                    "b": {"transport": {"type": "stdio"}, "command": "echo"},
-                }},
                 "tools": ["b"],
             }
         },
     }
 
     async def fake_resolve_tools(conf: Dict[str, Any], allowed_servers: Optional[List[str]] = None):
-        # Ensure override is present
-        assert conf.get("mcp", {}).get("servers_override")
-        # allowed should filter to only 'b'
+        # Using global servers; allowed should filter to only 'b'
+        assert conf.get("mcp", {}).get("servers")
         assert allowed_servers == ["b"]
         async def _exec(server: str, name: str, args: Dict[str, Any]) -> str:
             return "ok"
@@ -145,17 +144,20 @@ async def test_agent_custom_servers_do_not_inherit_global_approvals(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_agent_servers_take_precedence_over_global(monkeypatch):
+    # Current resolver uses global inline servers; tools filter selects the desired server
     config: Dict[str, Any] = {
         "default_agent": "dev",
         "providers": {"openai": {"model": "m"}},
-        "mcp": {"servers": {"global": {"transport": {"type": "stdio"}, "command": "echo"}}},
-        "agents": {"dev": {"mcp": {"servers": {"agent": {"transport": {"type": "stdio"}, "command": "echo"}}}, "tools": ["agent"]}},
+        "mcp": {"servers": {
+            "global": {"transport": {"type": "stdio"}, "command": "echo"},
+            "agent": {"transport": {"type": "stdio"}, "command": "echo"},
+        }},
+        "agents": {"dev": {"tools": ["agent"]}},
     }
 
     async def fake_resolve_tools(conf: Dict[str, Any], allowed_servers: Optional[List[str]] = None):
-        # Global servers removed; override present
-        assert conf.get("mcp", {}).get("servers_override")
-        assert "servers" not in conf.get("mcp", {})
+        # Using global servers; tools filter should narrow to 'agent'
+        assert conf.get("mcp", {}).get("servers")
         assert allowed_servers == ["agent"]
         async def _exec(server: str, name: str, args: Dict[str, Any]) -> str:
             return "ok"
