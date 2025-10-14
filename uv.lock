@@ -442,7 +442,7 @@ wheels = [
 
 [[package]]
 name = "gptsh-cli"
-version = "0.6.7"
+version = "0.6.8"
 source = { virtual = "." }
 dependencies = [
     { name = "click" },
