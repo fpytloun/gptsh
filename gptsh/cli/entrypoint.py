@@ -82,6 +82,10 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             click.echo(f"Failed to load configuration: {e}")
             sys.exit(2)
 
+    if not _is_tty(stream="stderr"):
+        # If stderr is not a tty, disable progress bar
+        progress = False
+
     if mcp_servers:
         # Allow comma or whitespace-separated list of paths
         parts = [p for raw in mcp_servers.split(",") for p in raw.split() if p]

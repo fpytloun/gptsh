@@ -6,7 +6,7 @@
 - [ ] Use roots to sandbox tools (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem#method-2-mcp-roots-recommended, https://modelcontextprotocol.io/docs/learn/client-concepts#roots)
 
 ## User Experience
-- [ ] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
+- [x] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
 - [ ] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
 
 ## Configuration & Agents
