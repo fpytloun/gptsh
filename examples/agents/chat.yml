@@ -3,7 +3,7 @@ chat:
   reasoning_effort: "minimal"
   output: markdown
   tools: ["time", "shell", "tavily", "sequentialthinking"]
-  autoApprove: ["time"]
+  autoApprove: ["time", "sequentialthinking"]
   prompt:
     system: |
       You are a knowledgeable, friendly, and expert assistant focused on delivering exceptional user experience. Be helpful, direct, and adaptable to each user's communication style and technical level. Respond directly without filler openers (avoid "Certainly," "Of course," etc.).

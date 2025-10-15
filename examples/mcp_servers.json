@@ -2,12 +2,8 @@
   "mcpServers": {
     "filesystem": {
       "args": [
-        "run",
-        "-i",
-        "--rm",
-        "--mount",
-        "type=bind,src=${HOME},dst=${HOME}",
-        "mcp/filesystem",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
         "${HOME}"
       ],
       "autoApprove": [
@@ -15,11 +11,12 @@
         "get_file_info",
         "list_allowed_directories",
         "list_directory",
+        "list_directory_with_sizes",
         "read_file",
         "read_multiple_files",
         "search_files"
       ],
-      "command": "docker"
+      "command": "npx"
     },
     "git": {
       "args": [
@@ -38,24 +35,18 @@
     },
     "sequentialthinking": {
       "args": [
-        "run",
-        "--rm",
-        "-i",
-        "mcp/sequentialthinking"
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
       ],
       "autoApprove": [
         "sequentialthinking"
       ],
-      "command": "docker"
+      "command": "npx"
     },
     "tavily": {
       "args": [
-        "run",
-        "-i",
-        "--rm",
-        "-e",
-        "TAVILY_API_KEY",
-        "mcp/tavily"
+        "-y",
+        "tavily-mcp"
       ],
       "autoApprove": [
         "tavily-search",
@@ -63,7 +54,7 @@
         "tavily-crawl",
         "tavily-map"
       ],
-      "command": "docker",
+      "command": "npx",
       "env": {
         "TAVILY_API_KEY": "${TAVILY_API_KEY}"
       }
