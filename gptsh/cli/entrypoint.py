@@ -6,6 +6,7 @@ import warnings
 import click
 
 from gptsh.cli.utils import (
+    is_tty as _is_tty,
     print_agents_listing as _print_agents_listing,
     print_tools_listing as _print_tools_listing,
     resolve_agent_and_settings as _resolve_agent_and_settings,
@@ -34,20 +35,6 @@ warnings.filterwarnings(
     message=r".*coroutine 'close_litellm_async_clients' was never awaited.*",
     category=RuntimeWarning,
 )
-
-def _is_tty(assume_tty: bool = False) -> bool:
-    """Return True if we should treat the session as attached to a TTY.
-
-    When assume_tty is True, always return True (useful for tests/CI).
-    Otherwise, check Click's stdout stream for TTY capability.
-    """
-    if assume_tty:
-        return True
-    try:
-        stream = click.get_text_stream('stdout')
-    except Exception:
-        stream = sys.stdout
-    return bool(getattr(stream, 'isatty', lambda: False)())
 
 DEFAULT_AGENTS = {
     "default": {}
@@ -190,31 +177,45 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         _print_agents_listing(config, agents_conf, tools_map, no_tools)
         sys.exit(0)
 
-    # Ensure a default agent always exists by merging built-ins into config (done earlier for validation)
+    # Resolve agent
+    agent_obj, agent_conf, provider_conf, output_effective, no_tools_effective, _ = asyncio.run(
+        _resolve_agent_and_settings(
+            config=config,
+            agent_name=agent,
+            provider_name=provider,
+            model_override=model,
+            tools_filter_labels=tools_filter_labels,
+            no_tools_flag=no_tools,
+            output_format=output,
+        )
+    )
+
+    # Initial prompt from arg and/or stdin
+    stdin_input = None
+    if not _is_tty(stream="stdin"):
+        # Stdin is not TTY so read stdin first
+        try:
+            stdin_input = read_stdin()
+        except UnicodeDecodeError as e:
+            raise click.ClickException("Failed to decode input. Please ensure UTF-8 encoding.") from e
+
+        # We consumed something from stdin and have tty on stderr so session seems interactive, open /dev/tty for interactive inputs (tool approvals)
+        if stdin_input and _is_tty(stream="stderr"):
+            try:
+                sys.stdin = open("/dev/tty", "r", encoding="utf-8", errors="replace")
+            except OSError:
+                # We cannot re-open stdin so assume session is not interactive
+                pass
+
+    # Construct prompt
+    prompt = prompt or agent_conf.get("prompt", {}).get("user")
+    initial_prompt = f"{prompt}\n\n---\nInput:\n{stdin_input}" if (prompt and stdin_input) else (prompt or stdin_input)
 
     # Interactive REPL mode
     if interactive:
-        # Allow stdin to carry an initial prompt; require a TTY on stdout for REPL display
-        if not _is_tty(assume_tty=assume_tty):
-            raise click.ClickException("Interactive mode requires a TTY on stdout.")
-        # Initial prompt from arg and/or stdin
-        try:
-            stdin_input = None if click.get_text_stream('stdin').isatty() else read_stdin()
-        except Exception:
-            stdin_input = None
-        initial_prompt = f"{prompt}\n\n---\nInput:\n{stdin_input}" if (prompt and stdin_input) else (prompt or stdin_input)
-        # Agent overrides and building via shared utils
-        agent_obj, agent_conf, provider_conf, output_effective, no_tools_effective, allowed = asyncio.run(
-            _resolve_agent_and_settings(
-                config=config,
-                agent_name=agent,
-                provider_name=provider,
-                model_override=model,
-                tools_filter_labels=tools_filter_labels,
-                no_tools_flag=no_tools,
-                output_format=output,
-            )
-        )
+        if not (_is_tty(assume_tty=assume_tty, stream="stdout") and _is_tty(assume_tty=assume_tty, stream="stdin")):
+            raise click.ClickException("Interactive mode requires a TTY.")
+
         # Hand off to agent-only REPL
         run_agent_repl(
             agent=agent_obj,
@@ -226,46 +227,24 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         )
         sys.exit(0)
 
-    # Handle prompt or stdin
-    stdin_input = None
-    if not click.get_text_stream('stdin').isatty():
-        stdin_input = read_stdin()
-    # Try to get prompt from agent config
-    # Pull agent user-prompt (if any) directly from config for fallback usage
-    selected_agent = agent or (config.get("default_agent") or "default")
-    agent_prompt = ((config.get("agents") or {}).get(selected_agent, {}) or {}).get("prompt", {}).get("user")
-    # Combine prompt and piped stdin if both are provided
-    if prompt and stdin_input:
-        prompt_given = f"{prompt}\n\n---\nInput:\n{stdin_input}"
-    else:
-        prompt_given = prompt or stdin_input or agent_prompt
-    if prompt_given:
-        # Resolve agent, output, tools policy; then run within a single loop
-        async def _run_once():
-            agent_obj, agent_conf_local, provider_conf_local, output_effective, no_tools_effective, allowed = await _resolve_agent_and_settings(
-                config=config,
-                agent_name=agent,
-                provider_name=provider,
-                model_override=model,
-                tools_filter_labels=tools_filter_labels,
-                no_tools_flag=no_tools,
-                output_format=output,
-            )
-            await run_llm(
-                prompt=prompt_given,
-                provider_conf=provider_conf_local,
-                agent_conf=agent_conf_local,
-                cli_model_override=model,
-                stream=stream,
-                progress=progress,
-                output_format=output_effective,
-                no_tools=no_tools_effective,
-                config=config,
-                logger=logger,
-                agent_obj=agent_obj,
-            )
+    # Non-interactive
+    if initial_prompt:
+        async def _run_llm_once(*args, **kwargs):
+            await run_llm(*args, **kwargs)
 
-        asyncio.run(_run_once())
+        asyncio.run(_run_llm_once(
+            prompt=initial_prompt,
+            provider_conf=provider_conf,
+            agent_conf=agent_conf,
+            cli_model_override=model,
+            stream=stream,
+            progress=progress,
+            output_format=output_effective,
+            no_tools=no_tools_effective,
+            config=config,
+            logger=logger,
+            agent_obj=agent_obj,
+        ))
     else:
         raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+import sys
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import click
 
@@ -105,3 +106,17 @@ def print_agents_listing(
             else:
                 click.echo("      (no tools found or discovery failed)")
 
+
+def is_tty(assume_tty: bool = False, stream: Literal["stdin", "stdout", "stderr"] = "stdout") -> bool:
+    """Return True if we should treat the session as attached to a TTY.
+
+    When assume_tty is True, always return True (useful for tests/CI).
+    Otherwise, check Click's stdout stream for TTY capability.
+    """
+    if assume_tty:
+        return True
+    try:
+        iostream = click.get_text_stream(stream)
+    except Exception:
+        iostream = getattr(sys, stream)
+    return bool(getattr(iostream, 'isatty', lambda: False)())
