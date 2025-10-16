@@ -23,6 +23,28 @@ async def build_agent(
     # Compute allowed servers and no_tools based on agent + CLI
     no_tools, allowed = compute_tools_policy(agent_conf, cli_tools_filter, cli_no_tools)
 
+    # Prepare a transient config copy to inject per-agent MCP servers override, if any.
+    # We'll use this both for tool resolution and to fetch MCP server instructions.
+    eff_config: Dict[str, Any] = dict(config or {})
+    mcp_cfg: Dict[str, Any] = dict((eff_config.get("mcp") or {}))
+    # Agent-level inline servers override: agent_conf.mcp.servers
+    try:
+        agent_mcp = (agent_conf or {}).get("mcp") if isinstance(agent_conf, dict) else None
+        if isinstance(agent_mcp, dict) and "servers" in agent_mcp:
+            # Agent-level inline servers take precedence; tools list further filters them
+            mcp_cfg["servers_override"] = agent_mcp.get("servers")
+            # When agent overrides servers, do not use CLI-provided servers files
+            mcp_cfg.pop("servers_files_cli", None)
+            mcp_cfg.pop("servers_files", None)
+            # Ensure global inline servers don't interfere with override resolution
+            if "servers" in mcp_cfg:
+                mcp_cfg.pop("servers", None)
+    except Exception:
+        pass
+    # Respect allowed servers filter when provided
+    mcp_cfg["allowed_servers"] = list(allowed or [])
+    eff_config["mcp"] = mcp_cfg
+
     # Build LiteLLMClient with effective base params
     base_params: Dict[str, Any] = {}
     if provider_conf:
@@ -48,29 +70,36 @@ async def build_agent(
     if no_tools:
         tools = {}
         tool_specs = []
+        eff_config["mcp"] = {}
     else:
-        # Prepare a transient config copy to inject per-agent MCP servers override, if any
-        eff_config: Dict[str, Any] = dict(config or {})
-        mcp_cfg: Dict[str, Any] = dict((eff_config.get("mcp") or {}))
-        # Agent-level inline servers override: agent_conf.mcp.servers
-        try:
-            agent_mcp = (agent_conf or {}).get("mcp") if isinstance(agent_conf, dict) else None
-            if isinstance(agent_mcp, dict) and "servers" in agent_mcp:
-                # Agent-level inline servers take precedence; tools list further filters them
-                mcp_cfg["servers_override"] = agent_mcp.get("servers")
-                # When agent overrides servers, do not use CLI-provided servers files
-                mcp_cfg.pop("servers_files_cli", None)
-                mcp_cfg.pop("servers_files", None)
-                # Ensure global inline servers don't interfere with override resolution
-                if "servers" in mcp_cfg:
-                    mcp_cfg.pop("servers", None)
-        except Exception:
-            pass
-        eff_config["mcp"] = mcp_cfg
-
         from gptsh.mcp.tools_resolver import resolve_tools as _resolve_tools
         tools = await _resolve_tools(eff_config, allowed_servers=allowed)
         tool_specs = build_llm_tools_from_handles(tools)
+
+        # Always fetch MCP initialize().instructions (async) and append to the agent system prompt
+        try:
+            from gptsh.mcp.client import _discover_server_instructions_async as _discover_server_instructions_async
+            instructions_map = await _discover_server_instructions_async(eff_config)
+        except Exception:
+            instructions_map = {}
+
+        if instructions_map:
+            # Build a single appended guidance block
+            blocks: List[str] = []
+            for srv, text in instructions_map.items():
+                if not text:
+                    continue
+                blocks.append(f"[Server: {srv}]\n{text.strip()}")
+            if blocks:
+                mcp_guidance = "\n\n---\n\nMCP server instructions (apply only when using these servers' tools):\n\n" + "\n\n".join(blocks)
+                # Append to existing system prompt or create it
+                if isinstance(agent_conf, dict):
+                    prompt_obj = dict(agent_conf.get("prompt") or {})
+                    base_system = (prompt_obj.get("system") or "")
+                    prompt_obj["system"] = (base_system + mcp_guidance) if base_system else mcp_guidance
+                    # Write back into agent_conf
+                    agent_conf = dict(agent_conf)
+                    agent_conf["prompt"] = prompt_obj
 
     # Build approval policy (merge global + agent approvals)
     try:

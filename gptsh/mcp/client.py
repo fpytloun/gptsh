@@ -163,6 +163,8 @@ class _MCPManager:
         self._ready_events: Dict[str, asyncio.Event] = {}
         self._stop_events: Dict[str, asyncio.Event] = {}
         self.started: bool = False
+        # Capture initialize().instructions per server, if provided by MCP implementation
+        self.server_instructions: Dict[str, str] = {}
 
     async def start(self) -> None:
         if self.started:
@@ -221,7 +223,11 @@ class _MCPManager:
                     ) as (read, write):
                         async with ClientSession(read, write) as session:
                             try:
-                                await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                init_resp = await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                # Capture optional server-level instructions from initialize response
+                                instr = getattr(init_resp, "instructions", None)
+                                if isinstance(instr, str) and instr.strip():
+                                    self.server_instructions[name] = instr.strip()
                                 if self._hc_type == "list_tools":
                                     try:
                                         await asyncio.wait_for(session.list_tools(), timeout=self._hc_timeout)
@@ -256,7 +262,10 @@ class _MCPManager:
                         async with sse_client(url, headers=headers) as (read, write):
                             async with ClientSession(read, write) as session:
                                 try:
-                                    await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                    init_resp = await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                    instr = getattr(init_resp, "instructions", None)
+                                    if isinstance(instr, str) and instr.strip():
+                                        self.server_instructions[name] = instr.strip()
                                     if self._hc_type == "list_tools":
                                         try:
                                             await asyncio.wait_for(session.list_tools(), timeout=self._hc_timeout)
@@ -278,7 +287,10 @@ class _MCPManager:
                             async with streamablehttp_client(url, headers=headers) as (read, write, _):
                                 async with ClientSession(read, write) as session:
                                     try:
-                                        await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                        init_resp = await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                        instr = getattr(init_resp, "instructions", None)
+                                        if isinstance(instr, str) and instr.strip():
+                                            self.server_instructions[name] = instr.strip()
                                         if self._hc_type == "list_tools":
                                             try:
                                                 await asyncio.wait_for(session.list_tools(), timeout=self._hc_timeout)
@@ -299,7 +311,10 @@ class _MCPManager:
                             async with sse_client(url, headers=headers) as (read, write):
                                 async with ClientSession(read, write) as session:
                                     try:
-                                        await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                        init_resp = await asyncio.wait_for(session.initialize(), timeout=self._hc_timeout)
+                                        instr = getattr(init_resp, "instructions", None)
+                                        if isinstance(instr, str) and instr.strip():
+                                            self.server_instructions[name] = instr.strip()
                                         if self._hc_type == "list_tools":
                                             try:
                                                 await asyncio.wait_for(session.list_tools(), timeout=self._hc_timeout)
@@ -460,6 +475,10 @@ class _MCPManager:
             return out
         raise RuntimeError(f"MCP server '{server}' not configured or not connected")
 
+    async def get_server_instructions(self) -> Dict[str, str]:
+        """Return per-server initialize().instructions captured at startup."""
+        return dict(self.server_instructions)
+
 async def ensure_sessions_started_async(config: Dict[str, Any]) -> _MCPManager:
     loop_id = id(asyncio.get_running_loop())
     servers = _compute_effective_servers(config)
@@ -597,6 +616,15 @@ async def _execute_tool_async(server: str, tool: str, arguments: Dict[str, Any],
     # Execute using persistent session for the given server
     mgr = await ensure_sessions_started_async(config)
     return await mgr.call_tool(server, tool, arguments)
+
+async def _discover_server_instructions_async(config: Dict[str, Any]) -> Dict[str, str]:
+    """Return { server_name: instructions } captured during initialize for active servers."""
+    mgr = await ensure_sessions_started_async(config)
+    return await mgr.get_server_instructions()
+
+def discover_server_instructions(config: Dict[str, Any]) -> Dict[str, str]:
+    """Synchronous helper to fetch server instructions using a new event loop."""
+    return asyncio.run(_discover_server_instructions_async(config))
 
 def get_auto_approved_tools(config: Dict[str, Any], agent_conf: Optional[Dict[str, Any]] = None) -> Dict[str, List[str]]:
     """
