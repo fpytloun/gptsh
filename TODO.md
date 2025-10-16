@@ -4,6 +4,7 @@
 - [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)
 - [ ] Refactor MCP tools, introduce decorator registry and refactor existing builtin modules
 - [ ] Use roots to sandbox tools (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem#method-2-mcp-roots-recommended, https://modelcontextprotocol.io/docs/learn/client-concepts#roots)
+- [ ] Add progress for MCP initialization
 
 #### Tool approval
 - [ ] Option to enter reason when denying tool execution (eg. instruct LLM to use tool differently)
@@ -12,6 +13,7 @@
 ## User Experience
 - [x] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
 - [ ] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
+- [ ] First ctrl+c or esc should stop ongoing request
 
 ## Configuration & Agents
 - [ ] Implement log redaction for secrets and sensitive data
