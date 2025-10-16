@@ -31,6 +31,8 @@ async def run_turn(
     exit_on_interrupt: bool = True,
     history_messages: Optional[List[Dict[str, Any]]] = None,
     result_sink: Optional[List[str]] = None,
+    messages_sink: Optional[List[Dict[str, Any]]] = None,
+    mcp_manager: Optional[MCPManager] = None,
 ) -> None:
     """Execute a single turn using an Agent with optional streaming and tools.
 
@@ -43,9 +45,15 @@ async def run_turn(
         pr = RichProgressReporter()
 
     try:
-        session = ChatSession.from_agent(agent, progress=pr, config=config, mcp=MCPManager(config) if not no_tools else None)
+        session = ChatSession.from_agent(
+            agent,
+            progress=pr,
+            config=config,
+            mcp=(None if no_tools else (mcp_manager or MCPManager(config))),
+        )
         buffer = ""
         full_output = ""
+        initial_hist_len = len(history_messages) if isinstance(history_messages, list) else None
 
         async for text in session.stream_turn(
             prompt=prompt,
@@ -94,6 +102,14 @@ async def run_turn(
                 result_sink.append(full_output)
             except Exception:
                 pass
+
+        # Populate structured message deltas if requested and history was provided
+        if messages_sink is not None and isinstance(history_messages, list) and initial_hist_len is not None:
+            try:
+                new_msgs = history_messages[initial_hist_len:]
+                messages_sink.extend(new_msgs)
+            except Exception:
+                pass
     except asyncio.TimeoutError:
         click.echo("Operation timed out", err=True)
         sys.exit(124)
@@ -134,6 +150,8 @@ class RunRequest:
     exit_on_interrupt: bool = True
     history_messages: Optional[List[Dict[str, Any]]] = None
     result_sink: Optional[List[str]] = None
+    messages_sink: Optional[List[Dict[str, Any]]] = None
+    mcp_manager: Optional[MCPManager] = None
 
 
 async def run_turn_with_request(req: RunRequest) -> None:
@@ -152,4 +170,6 @@ async def run_turn_with_request(req: RunRequest) -> None:
         exit_on_interrupt=req.exit_on_interrupt,
         history_messages=req.history_messages,
         result_sink=req.result_sink,
+        messages_sink=req.messages_sink,
+        mcp_manager=req.mcp_manager,
     )

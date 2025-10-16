@@ -4,7 +4,6 @@ import logging
 from typing import Any, AsyncIterator, Dict
 
 from gptsh.interfaces import LLMClient
-from gptsh.llm.chunk_utils import extract_text
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,7 @@ class LiteLLMClient(LLMClient):
         merged: Dict[str, Any] = {**self._base, **(params or {})}
         return await acompletion(**merged)
 
-    async def stream(self, params: Dict[str, Any]) -> AsyncIterator[str]:
+    async def stream(self, params: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
         from litellm import acompletion  # lazy import for testability
 
         merged: Dict[str, Any] = {**self._base, **(params or {})}
@@ -62,11 +61,8 @@ class LiteLLMClient(LLMClient):
                             pass
             except Exception:
                 pass
-            text = extract_text(chunk)
-            if text:
-                logger.debug("LLM stream text delta: %r", text[:80])
-            if text:
-                yield text
+            # Yield raw chunk; the session handles text extraction and rendering
+            yield chunk
 
     def get_last_stream_info(self) -> Dict[str, Any]:
         return dict(self._last_stream_info)

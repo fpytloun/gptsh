@@ -172,6 +172,8 @@ class ChatSession:
             prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages
         )
         conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
+        # Capture turn-level deltas to propagate back into provided history_messages
+        turn_deltas: List[Dict[str, Any]] = []
 
         console_log = Console(stderr=True)
 
@@ -198,14 +200,27 @@ class ChatSession:
                 self._progress.complete_task(working_task_id)
                 self._progress.stop()
 
-            # After streaming, check whether tool calls were requested
+            # After streaming, determine if a tool round is needed
             info: Dict[str, Any] = {}
             try:
                 info = getattr(self._llm, "get_last_stream_info", lambda: {})()
             except Exception:
                 info = {}
-            if not has_tools or not info.get("saw_tool_delta"):
+            need_tool_round = has_tools and (
+                bool(info.get("saw_tool_delta")) or (full_text.strip() == "")
+            )
+            if not need_tool_round:
                 # No tools requested; finalize with streamed text
+                if full_text.strip():
+                    final_msg = {"role": "assistant", "content": full_text}
+                    conversation.append(final_msg)
+                    turn_deltas.append(final_msg)
+                # Persist deltas into caller-provided history, if any
+                if history_messages is not None:
+                    try:
+                        history_messages.extend(turn_deltas)
+                    except Exception:
+                        pass
                 return
 
             # Retrieve concrete tool calls via non-stream complete
@@ -231,7 +246,9 @@ class ChatSession:
                         "function": {"name": fn, "arguments": args_json},
                     }
                 )
-            conversation.append({"role": "assistant", "content": None, "tool_calls": assistant_tool_calls})
+            assistant_stub = {"role": "assistant", "content": None, "tool_calls": assistant_tool_calls}
+            conversation.append(assistant_stub)
+            turn_deltas.append(assistant_stub)
 
             # Execute tools and append results
             for call in calls:
@@ -280,18 +297,18 @@ class ChatSession:
                     result = f"Tool execution failed: {e}"
                     tool_failed = True
                 finally:
-                    if self._progress is not None:
+                    if self._progress is not None and task_id is not None:
                         try:
-                            self._progress.complete_task (task_id, f"{'[red]✖[/red]' if tool_failed else '[green]✔[/green]'} {server}__{toolname} args={tool_args}")
+                            self._progress.complete_task(task_id, f"{'[red]✖[/red]' if tool_failed else '[green]✔[/green]'} {server}__{toolname} args={tool_args}")
                             self._progress.stop()
                         except Exception:
                             pass
-                conversation.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.get("id"),
-                        "name": fullname,
-                        "content": result,
-                    }
-                )
+                tool_msg = {
+                    "role": "tool",
+                    "tool_call_id": call.get("id"),
+                    "name": fullname,
+                    "content": result,
+                }
+                conversation.append(tool_msg)
+                turn_deltas.append(tool_msg)
                 console_log.print(f"{'[red]✖[/red]' if tool_failed else '[green]✔[/green]'} [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args}[/dim][/grey50]")

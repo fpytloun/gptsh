@@ -16,6 +16,7 @@ from gptsh.core.config_resolver import build_agent
 from gptsh.core.logging import setup_logging
 from gptsh.core.repl import run_agent_repl
 from gptsh.core.runner import RunRequest, run_turn_with_request
+from gptsh.mcp.manager import MCPManager
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
 
@@ -253,7 +254,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
 
 
-async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Optional[Dict[str, Any]], cli_model_override: Optional[str], stream: bool, progress: bool, output_format: str, no_tools: bool, config: Dict[str, Any], logger: Any, exit_on_interrupt: bool = True, preinitialized_mcp: bool = False, history_messages: Optional[List[Dict[str, Any]]] = None, result_sink: Optional[List[str]] = None, agent_obj: Optional[Any] = None) -> None:
+async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Optional[Dict[str, Any]], cli_model_override: Optional[str], stream: bool, progress: bool, output_format: str, no_tools: bool, config: Dict[str, Any], logger: Any, exit_on_interrupt: bool = True, preinitialized_mcp: bool = False, history_messages: Optional[List[Dict[str, Any]]] = None, result_sink: Optional[List[str]] = None, messages_sink: Optional[List[Dict[str, Any]]] = None, agent_obj: Optional[Any] = None, mcp_manager: Optional[MCPManager] = None) -> None:
     req = RunRequest(
         agent=agent_obj,
         prompt=prompt,
@@ -269,6 +270,8 @@ async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Opt
         exit_on_interrupt=exit_on_interrupt,
         history_messages=history_messages,
         result_sink=result_sink,
+        messages_sink=messages_sink,
+        mcp_manager=mcp_manager,
     )
     await run_turn_with_request(req)
 

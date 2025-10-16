@@ -273,7 +273,7 @@ def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]
         try:
             doc = getattr(_readline, "__doc__", "") or ""
             if "libedit" in doc.lower():
-                print("libedit")
+                _log.debug("readline: libedit detected")
                 # macOS/libedit: different binding syntax for tab completion
                 _readline.parse_and_bind("bind ^I rl_complete")
                 # Enable incremental reverse search on Ctrl-R (and forward on Ctrl-S)
@@ -406,6 +406,12 @@ async def run_agent_repl_async(
 
     history_messages: List[Dict[str, Any]] = []
     last_interrupt = 0.0
+    # Persistent MCP manager for the REPL session (reused across turns)
+    try:
+        from gptsh.mcp.manager import MCPManager as _MCPManager
+    except Exception:  # pragma: no cover - fallback
+        _MCPManager = None  # type: ignore
+    mcp_manager = (None if no_tools or _MCPManager is None else _MCPManager(config))
 
     async def _run_once(user_text: str) -> str:
         # Reuse CLI run_llm to ensure consistent streaming fallback and tool behavior
@@ -425,6 +431,7 @@ async def run_agent_repl_async(
             history_messages=history_messages,
             result_sink=sink,
             agent_obj=agent,
+            mcp_manager=mcp_manager,
         )
         return (sink[0] if sink else "")
 
@@ -528,6 +535,9 @@ async def run_agent_repl_async(
                     cli_model_override = model
                     provider_conf_local["model"] = model
                     prompt_str = prompt_out
+                    # Update MCP manager based on new no_tools state
+                    if _MCPManager is not None:
+                        mcp_manager = (None if no_tools else (_MCPManager(config)))
                 except Exception as e:
                     _log.warning("Failed to switch agent: %s", e)
                     click.echo(f"Failed to switch agent: {e}", err=True)
@@ -556,6 +566,9 @@ async def run_agent_repl_async(
                     agent = new_agent
                     no_tools = _no
                     click.echo(msg)
+                    # Update persistent MCP manager
+                    if _MCPManager is not None:
+                        mcp_manager = (None if no_tools else (_MCPManager(config)))
                 except Exception as e:
                     _log.warning("Failed to toggle tools: %s", e)
                     click.echo(f"Failed to toggle tools: {e}", err=True)
@@ -566,7 +579,9 @@ async def run_agent_repl_async(
         try:
             user_msg = {"role": "user", "content": sline}
             content = await _run_once(sline)
-            history_messages.extend([user_msg, {"role": "assistant", "content": content}])
+            # ChatSession/run_llm already appends assistant/tool messages into history_messages.
+            # We only need to record the user's message for this turn.
+            history_messages.append(user_msg)
         except KeyboardInterrupt:
             last_interrupt = time.monotonic()
             click.echo("Cancelled.", err=True)
