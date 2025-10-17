@@ -28,10 +28,18 @@ def get_builtin_servers() -> Dict[str, Any]:
             try:
                 mod = importlib.import_module(module_path)
                 if all(hasattr(mod, attr) for attr in ("list_tools", "list_tools_detailed", "execute")):
-                    result[name] = {
+                    cfg = {
                         "transport": {"type": "stdio"},
                         "module": module_path,
                     }
+                    # Propagate builtin default approvals if present
+                    try:
+                        defaults = getattr(mod, "AUTO_APPROVE_DEFAULT", None)
+                        if isinstance(defaults, (list, tuple)):
+                            cfg["autoApprove"] = list(defaults)
+                    except Exception:
+                        pass
+                    result[name] = cfg
             except Exception:
                 # Skip modules that fail to import or validate
                 continue
