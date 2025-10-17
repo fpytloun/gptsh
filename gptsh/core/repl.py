@@ -578,7 +578,7 @@ async def run_agent_repl_async(
 
         try:
             user_msg = {"role": "user", "content": sline}
-            content = await _run_once(sline)
+            await _run_once(sline)
             # ChatSession/run_llm already appends assistant/tool messages into history_messages.
             # We only need to record the user's message for this turn.
             history_messages.append(user_msg)

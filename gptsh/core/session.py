@@ -181,7 +181,7 @@ class ChatSession:
         working_task_id: Optional[int] = None
         working_task_label = f"Waiting for {_model}"
         while True:
-            params["messages"] = conversation
+            params["messages"] = list(conversation)
             if has_tools and self._tool_specs:
                 params["tools"] = self._tool_specs
                 params.setdefault("tool_choice", "auto")

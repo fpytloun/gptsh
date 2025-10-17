@@ -16,9 +16,9 @@ from gptsh.core.config_resolver import build_agent
 from gptsh.core.logging import setup_logging
 from gptsh.core.repl import run_agent_repl
 from gptsh.core.runner import RunRequest, run_turn_with_request
-from gptsh.mcp.manager import MCPManager
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
+from gptsh.mcp.manager import MCPManager
 
 # Ensure LiteLLM async HTTPX clients are closed cleanly on loop shutdown
 try:

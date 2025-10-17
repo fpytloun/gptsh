@@ -78,7 +78,9 @@ async def build_agent(
 
         # Always fetch MCP initialize().instructions (async) and append to the agent system prompt
         try:
-            from gptsh.mcp.client import _discover_server_instructions_async as _discover_server_instructions_async
+            from gptsh.mcp.client import (
+                _discover_server_instructions_async as _discover_server_instructions_async,
+            )
             instructions_map = await _discover_server_instructions_async(eff_config)
         except Exception:
             instructions_map = {}
