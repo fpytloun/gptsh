@@ -104,16 +104,16 @@ class ChatSession:
         # Close MCP first so background tasks shut down
         try:
             if self._mcp is not None:
-                if hasattr(self._mcp, "aclose") and callable(getattr(self._mcp, "aclose")):
+                if hasattr(self._mcp, "aclose") and callable(self._mcp.aclose):
                     await self._mcp.aclose()  # type: ignore[no-any-return]
-                elif hasattr(self._mcp, "stop") and callable(getattr(self._mcp, "stop")):
+                elif hasattr(self._mcp, "stop") and callable(self._mcp.stop):
                     await self._mcp.stop()  # type: ignore[no-any-return]
         except Exception:
             # Do not raise during shutdown
             pass
         # Close LLM client if it supports async close
         try:
-            if hasattr(self._llm, "aclose") and callable(getattr(self._llm, "aclose")):
+            if hasattr(self._llm, "aclose") and callable(self._llm.aclose):
                 await self._llm.aclose()  # type: ignore[no-any-return]
         except Exception:
             pass

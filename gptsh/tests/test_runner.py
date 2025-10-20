@@ -3,7 +3,8 @@ import asyncio
 
 async def _call_run_turn(**kwargs):
     from gptsh.core.runner import run_turn
-
+    # Backward-compat: older tests passed 'progress', which runner no longer accepts
+    kwargs.pop("progress", None)
     await run_turn(**kwargs)
 
 

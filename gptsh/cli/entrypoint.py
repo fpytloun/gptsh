@@ -222,7 +222,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             raise click.ClickException("Interactive mode requires a TTY.")
 
         # Initialize a single ProgressReporter for the REPL session and pass it down
-        from gptsh.core.progress import RichProgressReporter, NoOpProgressReporter
+        from gptsh.core.progress import NoOpProgressReporter, RichProgressReporter
         reporter = (
             RichProgressReporter(transient=False) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
         )
@@ -250,7 +250,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             await run_llm(*args, **kwargs)
 
         # Initialize a ProgressReporter once here and thread it through
-        from gptsh.core.progress import RichProgressReporter, NoOpProgressReporter
+        from gptsh.core.progress import NoOpProgressReporter, RichProgressReporter
         reporter = (
             RichProgressReporter(transient=True) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
         )
