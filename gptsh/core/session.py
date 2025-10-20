@@ -100,12 +100,7 @@ class ChatSession:
         if self._closed:
             return
         self._closed = True
-        # Ensure any progress spinners are stopped
-        try:
-            if self._progress is not None:
-                self._progress.stop()
-        except Exception:
-            pass
+        # Do not stop the shared ProgressReporter here; REPL owns its lifecycle.
         # Close MCP first so background tasks shut down
         try:
             if self._mcp is not None:
@@ -272,6 +267,11 @@ class ChatSession:
                 # Complete the waiting task when finishing the turn
                 if self._progress and working_task_id is not None:
                     self._progress.complete_task(working_task_id)
+                    # Remove and reset so the spinner can reappear cleanly on the next cycle/turn
+                    try:
+                        self._progress.remove_task(working_task_id)
+                    finally:
+                        working_task_id = None
 
                 # After streaming, determine if a tool round is needed
                 info: Dict[str, Any] = (
@@ -291,6 +291,12 @@ class ChatSession:
                     # Persist deltas into caller-provided history, if any
                     if history_messages is not None:
                         history_messages.extend(turn_deltas)
+                    # Ensure any stray progress task is removed before exiting
+                    if self._progress and working_task_id is not None:
+                        try:
+                            self._progress.remove_task(working_task_id)
+                        finally:
+                            working_task_id = None
                     return
 
                 # Prefer concrete tool calls from the streamed deltas; fallback to non-stream if absent
@@ -376,21 +382,23 @@ class ChatSession:
                     # IO guard manages progress lifecycle; no manual resume here
 
                     # Debounced per-tool progress task via progress helper
-                    handle: Optional[int] = None
-                    if self._progress:
-                        handle = self._progress.start_debounced_task(
-                            f"Executing tool {server}__{toolname} args={tool_args_str}",
-                            delay=0.2,
-                        )
+                    # TODO: Disabled, garbles output
+                    # handle: Optional[int] = None
+                    #if self._progress:
+                    #    handle = self._progress.start_debounced_task(
+                    #        f"Executing tool {server}__{toolname} args={tool_args_str}",
+                    #        delay=0.2,
+                    #    )
 
                     try:
                         result = await self._call_tool(server, toolname, args)
                     finally:
-                        if self._progress and handle is not None:
-                            self._progress.complete_debounced_task(
-                                handle,
-                                f"[green]✔[/green] {server}__{toolname} args={tool_args_str}",
-                            )
+                        pass
+                        #if self._progress and handle is not None:
+                        #    self._progress.complete_debounced_task(
+                        #        handle,
+                        #        f"[green]✔[/green] {server}__{toolname} args={tool_args_str}",
+                        #    )
 
                     # Pause progress before console output
                     if self._progress:

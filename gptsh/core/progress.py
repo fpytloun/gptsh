@@ -115,7 +115,11 @@ class RichProgressReporter(ProgressReporter):
 
     def add_task(self, description: str) -> Optional[int]:
         if self._progress is None:
-            return None
+            # Lazily start progress so REPL turns can recreate the spinner
+            self.start()
+        if self._paused:
+            # Ensure rendering is active before adding a task
+            self.resume()
         return int(self._progress.add_task(description, total=None))
 
     def complete_task(self, task_id: Optional[int], description: Optional[str] = None) -> None:
@@ -218,9 +222,22 @@ class RichProgressReporter(ProgressReporter):
             finally:
                 self._paused = False
 
+    def _live(self):
+        """Best-effort access to underlying Live renderer for pause support."""
+        try:
+            return getattr(self._progress, "live", None) if self._progress is not None else None
+        except Exception:
+            return None
+
     @contextmanager
     def io(self):
         """Synchronous IO guard: pause progress before output and resume after."""
+        live = self._live()
+        if live is not None and hasattr(live, "pause"):
+            with live.pause():
+                yield
+            return
+        # Fallback to start/stop-based pause if Live.pause not available
         try:
             self.pause()
             yield
@@ -234,20 +251,37 @@ class RichProgressReporter(ProgressReporter):
             outermost = (self._io_depth == 0)
             self._io_depth += 1
             try:
-                if outermost:
-                    # For transient UX, fully stop progress so it disappears during IO
-                    self.pause()  # pause() mapped to stop() per current policy
-                yield
+                live = self._live()
+                if outermost and live is not None and hasattr(live, "pause"):
+                    # Prefer Rich Live.pause which cleanly suspends rendering
+                    cm = live.pause()
+                    cm.__enter__()
+                    try:
+                        yield
+                    finally:
+                        try:
+                            cm.__exit__(None, None, None)
+                        finally:
+                            pass
+                else:
+                    if outermost:
+                        # Fallback: stop rendering and resume after
+                        self.pause()
+                    yield
             finally:
                 self._io_depth = max(0, self._io_depth - 1)
                 if self._io_depth == 0:
-                    # Debounce resume to coalesce adjacent IO sections
-                    try:
-                        if self._resume_task is not None:
-                            self._resume_task.cancel()
-                    except Exception:
+                    if self._live() is not None and hasattr(self._live(), "resume"):
+                        # If using Live.pause(), context manager already resumed.
                         pass
-                    self._resume_task = asyncio.create_task(self._delayed_resume())
+                    else:
+                        # Debounce resume to coalesce adjacent IO sections
+                        try:
+                            if self._resume_task is not None:
+                                self._resume_task.cancel()
+                        except Exception:
+                            pass
+                        self._resume_task = asyncio.create_task(self._delayed_resume())
 
     async def _delayed_resume(self) -> None:
         try:
