@@ -4,7 +4,7 @@
 - [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)
 - [ ] Refactor MCP tools, introduce decorator registry and refactor existing builtin modules
 - [ ] Use roots to sandbox tools (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem#method-2-mcp-roots-recommended, https://modelcontextprotocol.io/docs/learn/client-concepts#roots)
-- [ ] Add progress for MCP initialization
+- [ ] Add progress for MCP initialization, increase logging to INFO
 
 #### Tool approval
 - [ ] Option to enter reason when denying tool execution (eg. instruct LLM to use tool differently)
@@ -14,6 +14,12 @@
 - [x] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
 - [ ] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
 - [ ] First ctrl+c or esc should stop ongoing request
+- [ ] Add /info command that will show current model (and settings like temperature, reasoning_effort) and context usage
+- [ ] Add /compact command that will compact history to reduce context window size
+- [ ] Warn (change prompt color) when context window is getting full (eg. above 80%) in REPL mode
+- [ ] Add desktop notifications and/or bell to notify when LLM work is done
+- [ ] Handle large stdin to avoid overflow of context window, compact or process in batches
+- [ ] Add support for prompts, executable in REPL via `/prompt` or in normal mode via `--prompt PROMPT`. Also add `--list-prompts` argument. Prompt can be defined in `prompts` key (utilizing `!include prompts/*.yml` similar to agents) or then can be also agent-specific (eg. `agents.myagent.prompts.myprompt`). Also support loading prompts provided by MCP client.
 
 ## Configuration & Agents
 - [ ] Implement log redaction for secrets and sensitive data
