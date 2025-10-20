@@ -10,6 +10,49 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from gptsh.interfaces import ProgressReporter
 
 
+class NoOpProgressReporter(ProgressReporter):
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def __enter__(self) -> "NoOpProgressReporter":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    def start(self, transient: Optional[bool] = False) -> None:
+        return
+
+    def stop(self) -> None:
+        return
+
+    def add_task(self, description: str) -> Optional[int]:
+        return None
+
+    def complete_task(self, task_id: Optional[int], description: Optional[str] = None) -> None:
+        return
+
+    def update_task(self, task_id: Optional[int], description: Optional[str] = None) -> None:
+        return
+
+    def remove_task(self, task_id: Optional[int]) -> None:
+        return
+
+    def pause(self) -> None:
+        return
+
+    def resume(self) -> None:
+        return
+
+    @contextmanager
+    def io(self):
+        yield
+
+    @asynccontextmanager
+    async def aio_io(self):
+        yield
+
+
 class RichProgressReporter(ProgressReporter):
     def __init__(self, console: Optional[Console] = None, transient: bool = True):
         self._progress: Optional[Progress] = None

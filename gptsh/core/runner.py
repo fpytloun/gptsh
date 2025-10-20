@@ -24,7 +24,6 @@ async def run_turn(
     agent_conf: Optional[Dict[str, Any]] = None,
     cli_model_override: Optional[str] = None,
     stream: bool = True,
-    progress: bool = True,
     output_format: str = "markdown",
     no_tools: bool = False,
     logger: Any = None,
@@ -33,18 +32,15 @@ async def run_turn(
     result_sink: Optional[List[str]] = None,
     messages_sink: Optional[List[Dict[str, Any]]] = None,
     mcp_manager: Optional[MCPManager] = None,
+    progress_reporter: Optional[RichProgressReporter] = None,
 ) -> None:
     """Execute a single turn using an Agent with optional streaming and tools.
 
     This centralizes the CLI and REPL execution paths, including the streaming
     fallback when models stream tool_call deltas but produce no visible text.
     """
-    pr: Optional[RichProgressReporter] = None
+    pr: Optional[RichProgressReporter] = progress_reporter
     console = Console()
-    if progress and click.get_text_stream("stderr").isatty():
-        pr = RichProgressReporter()
-        # Start the progress once for the whole turn
-        pr.start()
 
     try:
         session = ChatSession.from_agent(
@@ -161,8 +157,8 @@ async def run_turn(
                 pass
         sys.exit(1)
     finally:
-        if pr is not None:
-            pr.stop()
+        # Do not stop here; lifecycle is managed by the caller (CLI entrypoint/REPL)
+        pass
 
 
 @dataclass
@@ -174,7 +170,6 @@ class RunRequest:
     agent_conf: Optional[Dict[str, Any]] = None
     cli_model_override: Optional[str] = None
     stream: bool = True
-    progress: bool = True
     output_format: str = "markdown"
     no_tools: bool = False
     logger: Any = None
@@ -183,6 +178,7 @@ class RunRequest:
     result_sink: Optional[List[str]] = None
     messages_sink: Optional[List[Dict[str, Any]]] = None
     mcp_manager: Optional[MCPManager] = None
+    progress_reporter: Optional[RichProgressReporter] = None
 
 
 async def run_turn_with_request(req: RunRequest) -> None:
@@ -194,7 +190,6 @@ async def run_turn_with_request(req: RunRequest) -> None:
         agent_conf=req.agent_conf,
         cli_model_override=req.cli_model_override,
         stream=req.stream,
-        progress=req.progress,
         output_format=req.output_format,
         no_tools=req.no_tools,
         logger=req.logger,
@@ -203,4 +198,5 @@ async def run_turn_with_request(req: RunRequest) -> None:
         result_sink=req.result_sink,
         messages_sink=req.messages_sink,
         mcp_manager=req.mcp_manager,
+        progress_reporter=req.progress_reporter,
     )

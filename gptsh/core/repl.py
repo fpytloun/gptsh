@@ -361,8 +361,8 @@ async def run_agent_repl_async(
     config: Dict[str, Any],
     output_format: str,
     stream: bool,
-    progress: bool,
     initial_prompt: Optional[str] = None,
+    progress_reporter: Optional[Any] = None,
 ) -> None:
     """Interactive REPL loop using only a resolved Agent.
 
@@ -423,7 +423,6 @@ async def run_agent_repl_async(
             agent_conf=agent_conf_local,
             cli_model_override=cli_model_override,
             stream=stream,
-            progress=progress,
             output_format=output_format,
             no_tools=no_tools,
             config=config,
@@ -432,6 +431,7 @@ async def run_agent_repl_async(
             result_sink=sink,
             agent_obj=agent,
             mcp_manager=mcp_manager,
+            progress_reporter=progress_reporter,
         )
         return (sink[0] if sink else "")
 
@@ -594,8 +594,8 @@ def run_agent_repl(
     config: Dict[str, Any],
     output_format: str,
     stream: bool,
-    progress: bool,
     initial_prompt: Optional[str] = None,
+    progress_reporter: Optional[Any] = None,
 ) -> None:
     asyncio.run(
         run_agent_repl_async(
@@ -603,7 +603,7 @@ def run_agent_repl(
             config=config,
             output_format=output_format,
             stream=stream,
-            progress=progress,
             initial_prompt=initial_prompt,
+            progress_reporter=progress_reporter,
         )
     )

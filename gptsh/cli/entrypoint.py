@@ -221,15 +221,27 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         if not (_is_tty(assume_tty=assume_tty, stream="stdout") and _is_tty(assume_tty=assume_tty, stream="stdin")):
             raise click.ClickException("Interactive mode requires a TTY.")
 
-        # Hand off to agent-only REPL
-        run_agent_repl(
-            agent=agent_obj,
-            config=config,
-            output_format=output_effective,
-            stream=stream,
-            progress=progress,
-            initial_prompt=initial_prompt,
+        # Initialize a single ProgressReporter for the REPL session and pass it down
+        from gptsh.core.progress import RichProgressReporter, NoOpProgressReporter
+        reporter = (
+            RichProgressReporter(transient=False) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
         )
+        reporter.start()
+        try:
+            # Hand off to agent-only REPL
+            run_agent_repl(
+                agent=agent_obj,
+                config=config,
+                output_format=output_effective,
+                stream=stream,
+                initial_prompt=initial_prompt,
+                progress_reporter=reporter,
+            )
+        finally:
+            try:
+                reporter.stop()
+            except Exception:
+                pass
         sys.exit(0)
 
     # Non-interactive
@@ -237,24 +249,35 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         async def _run_llm_once(*args, **kwargs):
             await run_llm(*args, **kwargs)
 
+        # Initialize a ProgressReporter once here and thread it through
+        from gptsh.core.progress import RichProgressReporter, NoOpProgressReporter
+        reporter = (
+            RichProgressReporter(transient=True) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
+        )
+        reporter.start()
+
         asyncio.run(_run_llm_once(
             prompt=initial_prompt,
             provider_conf=provider_conf,
             agent_conf=agent_conf,
             cli_model_override=model,
             stream=stream,
-            progress=progress,
             output_format=output_effective,
             no_tools=no_tools_effective,
             config=config,
             logger=logger,
             agent_obj=agent_obj,
+            progress_reporter=reporter,
         ))
+        try:
+            reporter.stop()
+        except Exception:
+            pass
     else:
         raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
 
 
-async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Optional[Dict[str, Any]], cli_model_override: Optional[str], stream: bool, progress: bool, output_format: str, no_tools: bool, config: Dict[str, Any], logger: Any, exit_on_interrupt: bool = True, preinitialized_mcp: bool = False, history_messages: Optional[List[Dict[str, Any]]] = None, result_sink: Optional[List[str]] = None, messages_sink: Optional[List[Dict[str, Any]]] = None, agent_obj: Optional[Any] = None, mcp_manager: Optional[MCPManager] = None) -> None:
+async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Optional[Dict[str, Any]], cli_model_override: Optional[str], stream: bool, output_format: str, no_tools: bool, config: Dict[str, Any], logger: Any, exit_on_interrupt: bool = True, preinitialized_mcp: bool = False, history_messages: Optional[List[Dict[str, Any]]] = None, result_sink: Optional[List[str]] = None, messages_sink: Optional[List[Dict[str, Any]]] = None, agent_obj: Optional[Any] = None, mcp_manager: Optional[MCPManager] = None, progress_reporter: Optional[Any] = None) -> None:
     req = RunRequest(
         agent=agent_obj,
         prompt=prompt,
@@ -263,7 +286,6 @@ async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Opt
         agent_conf=agent_conf,
         cli_model_override=cli_model_override,
         stream=stream,
-        progress=progress,
         output_format=output_format,
         no_tools=no_tools,
         logger=logger,
@@ -272,6 +294,7 @@ async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Opt
         result_sink=result_sink,
         messages_sink=messages_sink,
         mcp_manager=mcp_manager,
+        progress_reporter=progress_reporter,
     )
     await run_turn_with_request(req)
 
