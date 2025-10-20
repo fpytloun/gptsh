@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import json
-import logging
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from rich.console import Console
@@ -12,11 +12,27 @@ from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressRepor
 from gptsh.llm.chunk_utils import extract_text
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
 
-logger = logging.getLogger(__name__)
-
 
 class ChatSession:
     """High-level orchestrator for a single prompt turn with optional tool use."""
+
+    def __init__(
+        self,
+        llm: LLMClient,
+        mcp: Optional[MCPClient],
+        approval: ApprovalPolicy,
+        progress: Optional[ProgressReporter],
+        config: Dict[str, Any],
+        *,
+        tool_specs: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        self._llm = llm
+        self._mcp = mcp
+        self._approval = approval
+        self._progress = progress
+        self._config = config
+        self._tool_specs: List[Dict[str, Any]] = list(tool_specs or [])
+        self._closed: bool = False
 
     @staticmethod
     def _normalize_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -60,23 +76,6 @@ class ChatSession:
             i += 1
         return result
 
-    def __init__(
-        self,
-        llm: LLMClient,
-        mcp: Optional[MCPClient],
-        approval: ApprovalPolicy,
-        progress: Optional[ProgressReporter],
-        config: Dict[str, Any],
-        *,
-        tool_specs: Optional[List[Dict[str, Any]]] = None,
-    ) -> None:
-        self._llm = llm
-        self._mcp = mcp
-        self._approval = approval
-        self._progress = progress
-        self._config = config
-        self._tool_specs: List[Dict[str, Any]] = list(tool_specs or [])
-
     @classmethod
     def from_agent(
         cls,
@@ -93,6 +92,41 @@ class ChatSession:
         if self._mcp is not None:
             await self._mcp.start()
 
+    async def aclose(self) -> None:
+        """Close resources held by the session (MCP, LLM) in a best-effort, idempotent way."""
+        if self._closed:
+            return
+        self._closed = True
+        # Ensure any progress spinners are stopped
+        try:
+            if self._progress is not None:
+                self._progress.stop()
+        except Exception:
+            pass
+        # Close MCP first so background tasks shut down
+        try:
+            if self._mcp is not None:
+                if hasattr(self._mcp, "aclose") and callable(getattr(self._mcp, "aclose")):
+                    await self._mcp.aclose()  # type: ignore[no-any-return]
+                elif hasattr(self._mcp, "stop") and callable(getattr(self._mcp, "stop")):
+                    await self._mcp.stop()  # type: ignore[no-any-return]
+        except Exception:
+            # Do not raise during shutdown
+            pass
+        # Close LLM client if it supports async close
+        try:
+            if hasattr(self._llm, "aclose") and callable(getattr(self._llm, "aclose")):
+                await self._llm.aclose()  # type: ignore[no-any-return]
+        except Exception:
+            pass
+
+    async def __aenter__(self) -> "ChatSession":
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.aclose()
+
     async def _prepare_params(
         self,
         prompt: str,
@@ -102,12 +136,6 @@ class ChatSession:
         no_tools: bool,
         history_messages: Optional[List[Dict[str, Any]]],
     ) -> tuple[Dict[str, Any], bool, str]:
-        logger.debug(
-            "Preparing params: no_tools=%s provider_keys=%s agent_keys=%s",
-            no_tools,
-            list((provider_conf or {}).keys()),
-            list((agent_conf or {}).keys()) if agent_conf else [],
-        )
         # Base params from provider
         params: Dict[str, Any] = {k: v for k, v in dict(provider_conf).items() if k not in {"model", "name"}}
         chosen_model = (
@@ -173,19 +201,14 @@ class ChatSession:
                 specs = await build_llm_tools(merged_conf)
                 if not specs:
                     specs = await build_llm_tools(self._config)
+                if specs:
+                    # Cache for the remainder of this session
+                    self._tool_specs = specs
             if specs:
                 params["tools"] = specs
                 if "tool_choice" not in params:
                     params["tool_choice"] = "auto"
                 has_tools = True
-        logger.debug(
-            "Prepared params: model=%s has_tools=%s tools_count=%d",
-            chosen_model,
-            has_tools,
-            len(params.get("tools") or []),
-        )
-
-        params["drop_params"] = True
         return params, has_tools, chosen_model
 
     async def _call_tool(self, server: str, tool: str, args: Dict[str, Any]) -> str:
@@ -210,150 +233,151 @@ class ChatSession:
           and loops until final assistant text is produced.
         """
 
-
-        params, has_tools, _model = await self._prepare_params(
-            prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages
-        )
-        conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
-        # Capture turn-level deltas to propagate back into provided history_messages
-        turn_deltas: List[Dict[str, Any]] = []
-
-        console_log = Console(stderr=True)
-
-        # Prepare progress
-        working_task_id: Optional[int] = None
-        working_task_label = f"Waiting for {_model}"
-        while True:
-            # Normalize message history before each request
-            params["messages"] = self._normalize_messages(list(conversation))
-            if has_tools and self._tool_specs:
-                params["tools"] = self._tool_specs
-                params.setdefault("tool_choice", "auto")
-
-            if self._progress:
-                self._progress.start()
-                working_task_id = self._progress.add_task(working_task_label)
-            # Stream this assistant turn
-            full_text = ""
-            async for chunk in self._llm.stream(params):
-                text = extract_text(chunk)
-                if text:
-                    full_text += text
-                    yield text
-            if self._progress:
-                self._progress.complete_task(working_task_id)
-                self._progress.stop()
-
-            # After streaming, determine if a tool round is needed
-            info: Dict[str, Any] = {}
-            try:
-                info = getattr(self._llm, "get_last_stream_info", lambda: {})()
-            except Exception:
-                info = {}
-            need_tool_round = has_tools and (
-                bool(info.get("saw_tool_delta")) or (full_text.strip() == "")
+        # Ensure background resources are started and later shut down
+        await self.start()
+        try:
+            params, has_tools, _model = await self._prepare_params(
+                prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages
             )
-            if not need_tool_round:
-                # No tools requested; finalize with streamed text
-                if full_text.strip():
-                    final_msg = {"role": "assistant", "content": full_text}
-                    conversation.append(final_msg)
-                    turn_deltas.append(final_msg)
-                # Persist deltas into caller-provided history, if any
-                if history_messages is not None:
-                    try:
-                        history_messages.extend(turn_deltas)
-                    except Exception:
-                        pass
-                return
+            conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
+            # Capture turn-level deltas to propagate back into provided history_messages
+            turn_deltas: List[Dict[str, Any]] = []
 
-            # Retrieve concrete tool calls via non-stream complete
-            resp = await self._llm.complete(params)
-            calls = parse_tool_calls(resp)
-            if not calls:
-                # No calls parsed; treat streamed text as final
-                return
+            console_log = Console(stderr=True)
 
-            assistant_tool_calls: List[Dict[str, Any]] = []
-            for c in calls:
-                fn = c["name"]
-                args_json = c.get("arguments")
-                if not isinstance(args_json, str):
-                    try:
-                        args_json = json.dumps(args_json or {})
-                    except Exception:
-                        args_json = "{}"
-                assistant_tool_calls.append(
-                    {
-                        "id": c.get("id"),
-                        "type": "function",
-                        "function": {"name": fn, "arguments": args_json},
-                    }
+            # Prepare progress
+            working_task_id: Optional[int] = None
+            working_task_label = f"Waiting for {_model}"
+            while True:
+                # Normalize message history before each request
+                params["messages"] = self._normalize_messages(list(conversation))
+                if has_tools and self._tool_specs:
+                    params["tools"] = self._tool_specs
+                    params.setdefault("tool_choice", "auto")
+
+                if self._progress:
+                    self._progress.start()
+                    working_task_id = self._progress.add_task(working_task_label)
+                # Stream this assistant turn
+                full_text = ""
+                async for chunk in self._llm.stream(params):
+                    text = extract_text(chunk)
+                    if text:
+                        full_text += text
+                        yield text
+                if self._progress:
+                    self._progress.complete_task(working_task_id)
+                    self._progress.stop()
+
+                # After streaming, determine if a tool round is needed
+                info: Dict[str, Any] = (
+                    self._llm.get_last_stream_info()  # type: ignore[attr-defined]
+                    if hasattr(self._llm, "get_last_stream_info")
+                    else {}
                 )
-            assistant_stub = {"role": "assistant", "content": None, "tool_calls": assistant_tool_calls}
-            conversation.append(assistant_stub)
-            turn_deltas.append(assistant_stub)
+                need_tool_round = has_tools and (
+                    bool(info.get("saw_tool_delta")) or (full_text.strip() == "")
+                )
+                if not need_tool_round:
+                    # No tools requested; finalize with streamed text
+                    if full_text.strip():
+                        final_msg = {"role": "assistant", "content": full_text}
+                        conversation.append(final_msg)
+                        turn_deltas.append(final_msg)
+                    # Persist deltas into caller-provided history, if any
+                    if history_messages is not None:
+                        history_messages.extend(turn_deltas)
+                    return
 
-            # Execute tools and append results
-            for call in calls:
-                fullname = call["name"]
-                if "__" not in fullname:
-                    continue
-                server, toolname = fullname.split("__", 1)
-                raw_args = call.get("arguments") or "{}"
-                try:
+                # Prefer concrete tool calls from the streamed deltas; fallback to non-stream if absent
+                calls: List[Dict[str, Any]] = []
+                streamed_calls: List[Dict[str, Any]] = (
+                    self._llm.get_last_stream_calls()  # type: ignore[attr-defined]
+                    if hasattr(self._llm, "get_last_stream_calls")
+                    else []
+                )
+                if streamed_calls:
+                    for c in streamed_calls:
+                        name = c.get("name")
+                        if not name:
+                            continue
+                        args_json = c.get("arguments") or "{}"
+                        calls.append({"id": c.get("id"), "name": name, "arguments": args_json})
+                else:
+                    resp = await self._llm.complete(params)
+                    calls = parse_tool_calls(resp)
+                    if not calls:
+                        # No calls parsed; treat streamed text as final
+                        return
+
+                assistant_tool_calls: List[Dict[str, Any]] = []
+                for c in calls:
+                    fn = c["name"]
+                    args_json = c.get("arguments")
+                    if not isinstance(args_json, str):
+                        args_json = json.dumps(args_json or {}, default=str)
+                    assistant_tool_calls.append(
+                        {
+                            "id": c.get("id"),
+                            "type": "function",
+                            "function": {"name": fn, "arguments": args_json},
+                        }
+                    )
+                assistant_stub = {"role": "assistant", "content": None, "tool_calls": assistant_tool_calls}
+                conversation.append(assistant_stub)
+                turn_deltas.append(assistant_stub)
+
+                # Execute tools concurrently and append results in order
+                async def _exec_one(call: Dict[str, Any]) -> Dict[str, Any]:
+                    fullname = call.get("name", "")
+                    if "__" not in fullname:
+                        return {
+                            "role": "tool",
+                            "tool_call_id": call.get("id"),
+                            "name": fullname,
+                            "content": f"Invalid tool name: {fullname}",
+                        }
+                    server, toolname = fullname.split("__", 1)
+                    raw_args = call.get("arguments") or "{}"
                     args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
-                except Exception:
-                    args = {}
 
-                tool_args = None
-                try:
-                    tool_args = json.dumps(args, ensure_ascii=False)
-                except Exception:
-                    tool_args = str(args)
+                    tool_args_str = json.dumps(args, ensure_ascii=False, default=str)
 
-                allowed = self._approval.is_auto_allowed(server, toolname)
-                if not allowed:
-                    allowed = await self._approval.confirm(server, toolname, args)
-                if not allowed:
-                    denied_tool_msg = {
+                    allowed = self._approval.is_auto_allowed(server, toolname)
+                    if not allowed:
+                        allowed = await self._approval.confirm(server, toolname, args)
+                    if not allowed:
+                        console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                        if (self._config.get("mcp", {}) or {}).get("tool_choice") == "required":
+                            raise ToolApprovalDenied(fullname)
+                        return {
+                            "role": "tool",
+                            "tool_call_id": call.get("id"),
+                            "name": fullname,
+                            "content": f"Denied by user: {fullname}",
+                        }
+
+                    task_id = None
+                    if self._progress is not None:
+                        self._progress.start()
+                        task_id = self._progress.add_task(f"Executing tool {server}__{toolname} args={tool_args_str}")
+                    result = await self._call_tool(server, toolname, args)
+                    if self._progress is not None and task_id is not None:
+                        self._progress.complete_task(task_id, f"[green]✔[/green] {server}__{toolname} args={tool_args_str}")
+                        self._progress.stop()
+
+                    console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                    return {
                         "role": "tool",
                         "tool_call_id": call.get("id"),
                         "name": fullname,
-                        "content": f"Denied by user: {fullname}",
+                        "content": result,
                     }
-                    conversation.append(denied_tool_msg)
-                    # Ensure this denial is also reflected in persisted history
-                    turn_deltas.append(denied_tool_msg)
-                    console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args}[/dim][/grey50]")
-                    if (self._config.get("mcp", {}) or {}).get("tool_choice") == "required":
-                        raise ToolApprovalDenied(fullname)
-                    continue
 
-                task_id = None
-                if self._progress is not None:
-                    self._progress.start()
-                    task_id = self._progress.add_task(f"Executing tool {server}__{toolname} args={tool_args}")
-                try:
-                    result = await self._call_tool(server, toolname, args)
-                    tool_failed = False
-                except Exception as e:  # pragma: no cover - defensive
-                    logger.warning("Tool execution error: %s: %s", fullname, e, exc_info=True)
-                    result = f"Tool execution failed: {e}"
-                    tool_failed = True
-                finally:
-                    if self._progress is not None and task_id is not None:
-                        try:
-                            self._progress.complete_task(task_id, f"{'[red]✖[/red]' if tool_failed else '[green]✔[/green]'} {server}__{toolname} args={tool_args}")
-                            self._progress.stop()
-                        except Exception:
-                            pass
-                tool_msg = {
-                    "role": "tool",
-                    "tool_call_id": call.get("id"),
-                    "name": fullname,
-                    "content": result,
-                }
-                conversation.append(tool_msg)
-                turn_deltas.append(tool_msg)
-                console_log.print(f"{'[red]✖[/red]' if tool_failed else '[green]✔[/green]'} [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args}[/dim][/grey50]")
+                results = await asyncio.gather(*[_exec_one(c) for c in calls])
+                for tool_msg in results:
+                    conversation.append(tool_msg)
+                    turn_deltas.append(tool_msg)
+        finally:
+            # Ensure background tasks are torn down to avoid pending task warnings
+            await self.aclose()

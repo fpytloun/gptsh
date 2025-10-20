@@ -362,7 +362,7 @@ class _MCPManager:
             results = await asyncio.gather(*waiters, return_exceptions=True)
             for name, res in zip(order, results, strict=False):
                 if isinstance(res, Exception):
-                    logger.warning("MCP server '%s' readiness timed out after %.1fs", name, self._hc_timeout)
+                    logger.warning("MCP server '%s' readiness timed out after %.1fs", name, self.timeout_seconds)
                 else:
                     logger.debug("MCP server '%s' signaled ready", name)
 
