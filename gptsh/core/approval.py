@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from gptsh.interfaces import ApprovalPolicy
@@ -7,6 +8,21 @@ from gptsh.interfaces import ApprovalPolicy
 
 def _canon(n: str) -> str:
     return str(n).lower().replace("-", "_").strip()
+
+
+def _best_effort_flush_stdin() -> None:
+    """Discard any pending keystrokes (e.g., stray newlines) before prompting.
+
+    Uses termios.tcflush on TTYs (Unix). No-op on unsupported platforms or errors.
+    """
+    import sys
+    try:
+        if sys.stdin.isatty():
+            import termios  # Unix-only
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except Exception as e:
+        # Best-effort: log at debug and continue if unavailable or any error occurs.
+        logging.debug("stdin flush skipped (termios/tty unavailable): %s", e, exc_info=True)
 
 
 class DefaultApprovalPolicy(ApprovalPolicy):
@@ -46,6 +62,8 @@ class DefaultApprovalPolicy(ApprovalPolicy):
 
         arg_text = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else str(args)
         console = Console(stderr=True, soft_wrap=True)
+        # Clear any pending input (e.g., stray Enters) before asking
+        _best_effort_flush_stdin()
         choice = Confirm.ask(
             f"[grey50]Allow tool[/grey50] [dim yellow]{server}__{tool}[/dim yellow] [grey50]with args[/grey50] [dim]{arg_text}[/dim]?",
             choices=["y", "n"],

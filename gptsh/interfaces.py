@@ -7,8 +7,12 @@ class LLMClient(Protocol):
     async def complete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Perform a non-streaming completion and return the raw response."""
 
-    async def stream(self, params: Dict[str, Any]) -> AsyncIterator[str]:
-        """Yield text chunks for a streaming completion."""
+    async def stream(self, params: Dict[str, Any]) -> AsyncIterator[Any]:
+        """Yield provider stream chunks (dicts/objects) or text deltas.
+
+        The session layer is responsible for extracting text and handling tool-call
+        deltas from raw provider chunks.
+        """
 
 
 class MCPClient(Protocol):
