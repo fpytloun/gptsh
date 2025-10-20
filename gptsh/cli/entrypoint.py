@@ -226,7 +226,6 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         reporter = (
             RichProgressReporter(transient=False) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
         )
-        reporter.start()
         try:
             # Hand off to agent-only REPL
             run_agent_repl(
@@ -254,7 +253,6 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         reporter = (
             RichProgressReporter(transient=True) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
         )
-        reporter.start()
 
         asyncio.run(_run_llm_once(
             prompt=initial_prompt,

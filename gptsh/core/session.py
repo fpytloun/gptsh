@@ -256,11 +256,23 @@ class ChatSession:
                 if has_tools and self._tool_specs:
                     params["tools"] = self._tool_specs
                     params.setdefault("tool_choice", "auto")
+
                 # Stream this assistant turn
                 full_text = ""
+                emitted_text = True
                 async for chunk in self._llm.stream(params):
                     text = extract_text(chunk)
                     if text:
+                        if emitted_text == True:
+                            # Complete the waiting task before output
+                            if self._progress and working_task_id is not None:
+                                self._progress.complete_task(working_task_id)
+                                # Remove and reset so the spinner can reappear cleanly on the next cycle/turn
+                                try:
+                                    self._progress.remove_task(working_task_id)
+                                finally:
+                                    working_task_id = None
+                            emitted_text = False
                         full_text += text
                         yield text
 
