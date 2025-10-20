@@ -124,6 +124,10 @@ class RichProgressReporter(ProgressReporter):
         if description is not None:
             self._progress.update(task_id, description=description)
         self._progress.update(task_id, completed=True)
+        try:
+            self._progress.refresh()
+        except Exception:
+            pass
 
     def update_task(self, task_id: Optional[int], description: Optional[str] = None) -> None:
         """Update an existing task's description without completing it."""
@@ -200,6 +204,10 @@ class RichProgressReporter(ProgressReporter):
                 self._progress.stop()
             finally:
                 self._paused = True
+            try:
+                self._progress.refresh()
+            except Exception:
+                pass
 
     def resume(self) -> None:
         # Resume live rendering if previously paused

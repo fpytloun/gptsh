@@ -251,17 +251,16 @@ class ChatSession:
             # Prepare progress: single task for the whole turn
             working_task_id: Optional[int] = None
             working_task_label = f"Waiting for {_model}"
-            if self._progress and working_task_id is None:
-                working_task_id = self._progress.add_task(working_task_label)
             while True:
+                # Ensure waiting task exists for each LLM request
+                if self._progress and working_task_id is None:
+                    working_task_id = self._progress.add_task(working_task_label)
+
                 # Normalize message history before each request
                 params["messages"] = self._normalize_messages(list(conversation))
                 if has_tools and self._tool_specs:
                     params["tools"] = self._tool_specs
                     params.setdefault("tool_choice", "auto")
-                # Ensure waiting task exists for each LLM request
-                if self._progress and working_task_id is None:
-                    working_task_id = self._progress.add_task(working_task_label)
                 # Stream this assistant turn
                 full_text = ""
                 async for chunk in self._llm.stream(params):
@@ -270,6 +269,9 @@ class ChatSession:
                         full_text += text
                         yield text
 
+                # Complete the waiting task when finishing the turn
+                if self._progress and working_task_id is not None:
+                    self._progress.complete_task(working_task_id)
 
                 # After streaming, determine if a tool round is needed
                 info: Dict[str, Any] = (
@@ -289,14 +291,7 @@ class ChatSession:
                     # Persist deltas into caller-provided history, if any
                     if history_messages is not None:
                         history_messages.extend(turn_deltas)
-                    # Complete the waiting task when finishing the turn
-                    if self._progress and working_task_id is not None:
-                        self._progress.complete_task(working_task_id)
                     return
-                # We're about to run tools; complete the waiting task so it doesn't spin during execution
-                if self._progress and working_task_id is not None:
-                    self._progress.complete_task(working_task_id)
-                    working_task_id = None
 
                 # Prefer concrete tool calls from the streamed deltas; fallback to non-stream if absent
                 calls: List[Dict[str, Any]] = []
@@ -385,7 +380,7 @@ class ChatSession:
                     if self._progress:
                         handle = self._progress.start_debounced_task(
                             f"Executing tool {server}__{toolname} args={tool_args_str}",
-                            delay=0.05,
+                            delay=0.2,
                         )
 
                     try:
@@ -396,7 +391,6 @@ class ChatSession:
                                 handle,
                                 f"[green]✔[/green] {server}__{toolname} args={tool_args_str}",
                             )
-                        #self._progress.stop()
 
                     # Pause progress before console output
                     if self._progress:
