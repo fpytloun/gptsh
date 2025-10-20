@@ -18,6 +18,48 @@ logger = logging.getLogger(__name__)
 class ChatSession:
     """High-level orchestrator for a single prompt turn with optional tool use."""
 
+    @staticmethod
+    def _normalize_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Normalize a messages list for provider compatibility.
+
+        - Coerce None content to empty strings for roles that require content.
+        - Remove assistant messages with tool_calls that are not followed by matching tool outputs.
+        """
+        # Coerce None content
+        norm: List[Dict[str, Any]] = []
+        for m in messages:
+            m2 = dict(m)
+            if m2.get("content") is None:
+                # Providers often reject null content on messages (including those with tool_calls)
+                m2["content"] = ""
+            norm.append(m2)
+
+        # Remove incomplete assistant tool_calls (no following tool message with matching id)
+        result: List[Dict[str, Any]] = []
+        i = 0
+        while i < len(norm):
+            cur = norm[i]
+            if cur.get("role") == "assistant" and cur.get("tool_calls"):
+                # Collect expected tool_call_ids
+                call_ids = [tc.get("id") for tc in cur.get("tool_calls") or [] if isinstance(tc, dict)]
+                j = i + 1
+                seen_ids = set()
+                while j < len(norm):
+                    nxt = norm[j]
+                    if nxt.get("role") != "tool":
+                        break
+                    tcid = nxt.get("tool_call_id")
+                    if tcid:
+                        seen_ids.add(tcid)
+                    j += 1
+                if call_ids and not set(call_ids).issubset(seen_ids):
+                    # Incomplete tool_calls sequence; drop the assistant tool_calls message
+                    i += 1
+                    continue
+            result.append(cur)
+            i += 1
+        return result
+
     def __init__(
         self,
         llm: LLMClient,
@@ -85,7 +127,8 @@ class ChatSession:
         messages.append({"role": "user", "content": prompt})
 
         params["model"] = chosen_model
-        params["messages"] = messages
+        # Normalize messages for provider compatibility
+        params["messages"] = self._normalize_messages(messages)
 
         # Agent params merge
         agent_params: Dict[str, Any] = {}
@@ -181,7 +224,8 @@ class ChatSession:
         working_task_id: Optional[int] = None
         working_task_label = f"Waiting for {_model}"
         while True:
-            params["messages"] = list(conversation)
+            # Normalize message history before each request
+            params["messages"] = self._normalize_messages(list(conversation))
             if has_tools and self._tool_specs:
                 params["tools"] = self._tool_specs
                 params.setdefault("tool_choice", "auto")
@@ -272,14 +316,15 @@ class ChatSession:
                 if not allowed:
                     allowed = await self._approval.confirm(server, toolname, args)
                 if not allowed:
-                    conversation.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call.get("id"),
-                            "name": fullname,
-                            "content": f"Denied by user: {fullname}",
-                        }
-                    )
+                    denied_tool_msg = {
+                        "role": "tool",
+                        "tool_call_id": call.get("id"),
+                        "name": fullname,
+                        "content": f"Denied by user: {fullname}",
+                    }
+                    conversation.append(denied_tool_msg)
+                    # Ensure this denial is also reflected in persisted history
+                    turn_deltas.append(denied_tool_msg)
                     console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args}[/dim][/grey50]")
                     if (self._config.get("mcp", {}) or {}).get("tool_choice") == "required":
                         raise ToolApprovalDenied(fullname)
