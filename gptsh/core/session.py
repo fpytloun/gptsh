@@ -12,6 +12,9 @@ from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressRepor
 from gptsh.llm.chunk_utils import extract_text
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
 
+# Serialize interactive approval prompts across concurrent tool tasks
+PROMPT_LOCK: asyncio.Lock = asyncio.Lock()
+
 
 class ChatSession:
     """High-level orchestrator for a single prompt turn with optional tool use."""
@@ -245,18 +248,19 @@ class ChatSession:
 
             console_log = Console(stderr=True)
 
-            # Prepare progress
+            # Prepare progress: single task for the whole turn
             working_task_id: Optional[int] = None
             working_task_label = f"Waiting for {_model}"
+            if self._progress and working_task_id is None:
+                working_task_id = self._progress.add_task(working_task_label)
             while True:
                 # Normalize message history before each request
                 params["messages"] = self._normalize_messages(list(conversation))
                 if has_tools and self._tool_specs:
                     params["tools"] = self._tool_specs
                     params.setdefault("tool_choice", "auto")
-
-                if self._progress:
-                    self._progress.start()
+                # Ensure waiting task exists for each LLM request
+                if self._progress and working_task_id is None:
                     working_task_id = self._progress.add_task(working_task_label)
                 # Stream this assistant turn
                 full_text = ""
@@ -265,9 +269,7 @@ class ChatSession:
                     if text:
                         full_text += text
                         yield text
-                if self._progress:
-                    self._progress.complete_task(working_task_id)
-                    self._progress.stop()
+
 
                 # After streaming, determine if a tool round is needed
                 info: Dict[str, Any] = (
@@ -287,7 +289,14 @@ class ChatSession:
                     # Persist deltas into caller-provided history, if any
                     if history_messages is not None:
                         history_messages.extend(turn_deltas)
+                    # Complete the waiting task when finishing the turn
+                    if self._progress and working_task_id is not None:
+                        self._progress.complete_task(working_task_id)
                     return
+                # We're about to run tools; complete the waiting task so it doesn't spin during execution
+                if self._progress and working_task_id is not None:
+                    self._progress.complete_task(working_task_id)
+                    working_task_id = None
 
                 # Prefer concrete tool calls from the streamed deltas; fallback to non-stream if absent
                 calls: List[Dict[str, Any]] = []
@@ -345,9 +354,21 @@ class ChatSession:
 
                     allowed = self._approval.is_auto_allowed(server, toolname)
                     if not allowed:
-                        allowed = await self._approval.confirm(server, toolname, args)
+                        # Pause progress and serialize approval prompts globally
+                        if self._progress:
+                            async with PROMPT_LOCK:
+                                async with self._progress.aio_io():
+                                    allowed = await self._approval.confirm(server, toolname, args)
+                        else:
+                            async with PROMPT_LOCK:
+                                allowed = await self._approval.confirm(server, toolname, args)
                     if not allowed:
-                        console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                        # Pause progress before console output
+                        if self._progress:
+                            async with self._progress.aio_io():
+                                console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                        else:
+                            console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
                         if (self._config.get("mcp", {}) or {}).get("tool_choice") == "required":
                             raise ToolApprovalDenied(fullname)
                         return {
@@ -357,16 +378,32 @@ class ChatSession:
                             "content": f"Denied by user: {fullname}",
                         }
 
-                    task_id = None
-                    if self._progress is not None:
-                        self._progress.start()
-                        task_id = self._progress.add_task(f"Executing tool {server}__{toolname} args={tool_args_str}")
-                    result = await self._call_tool(server, toolname, args)
-                    if self._progress is not None and task_id is not None:
-                        self._progress.complete_task(task_id, f"[green]✔[/green] {server}__{toolname} args={tool_args_str}")
-                        self._progress.stop()
+                    # IO guard manages progress lifecycle; no manual resume here
 
-                    console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                    # Debounced per-tool progress task via progress helper
+                    handle: Optional[int] = None
+                    if self._progress:
+                        handle = self._progress.start_debounced_task(
+                            f"Executing tool {server}__{toolname} args={tool_args_str}",
+                            delay=0.05,
+                        )
+
+                    try:
+                        result = await self._call_tool(server, toolname, args)
+                    finally:
+                        if self._progress and handle is not None:
+                            self._progress.complete_debounced_task(
+                                handle,
+                                f"[green]✔[/green] {server}__{toolname} args={tool_args_str}",
+                            )
+                        #self._progress.stop()
+
+                    # Pause progress before console output
+                    if self._progress:
+                        async with self._progress.aio_io():
+                            console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                    else:
+                        console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
                     return {
                         "role": "tool",
                         "tool_call_id": call.get("id"),

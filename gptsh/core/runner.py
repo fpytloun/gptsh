@@ -43,6 +43,8 @@ async def run_turn(
     console = Console()
     if progress and click.get_text_stream("stderr").isatty():
         pr = RichProgressReporter()
+        # Start the progress once for the whole turn
+        pr.start()
 
     try:
         session = ChatSession.from_agent(
@@ -70,29 +72,46 @@ async def run_turn(
             buffer += text
 
             if stream:
-                if session._progress:
-                    # Progress must pause before printing output
-                    session._progress.pause()
-
-                if output_format == "markdown":
-                    # simple chunking for markdown paragraphs
-                    while "\n\n" in buffer:
-                        line, buffer = buffer.split("\n\n", 1)
-                        console.print(Markdown(line))
+                if pr is not None:
+                    if output_format == "markdown":
+                        # Print full paragraphs only
+                        while "\n\n" in buffer:
+                            line, buffer = buffer.split("\n\n", 1)
+                            async with pr.aio_io():
+                                console.print(Markdown(line))
+                    else:
+                        # Only print full lines to avoid mid-line restarts
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            async with pr.aio_io():
+                                console.print(line)
                 else:
-                    while len(buffer) > 3:
-                        console.print(buffer, end="")
-                        buffer = ""
+                    if output_format == "markdown":
+                        while "\n\n" in buffer:
+                            line, buffer = buffer.split("\n\n", 1)
+                            console.print(Markdown(line))
+                    else:
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            console.print(line)
 
-        if not stream:
-            if session._progress:
-                # Progress must stop before printing output
-                session._progress.pause()
+        # Ensure any remaining buffered content is printed under IO guard
 
-        if output_format == "markdown":
-            console.print(Markdown(buffer))
+        if pr is not None:
+            async with pr.aio_io():
+                if output_format == "markdown":
+                    if buffer:
+                        console.print(Markdown(buffer))
+                else:
+                    if buffer:
+                        console.print(buffer)
         else:
-            console.print(buffer)
+            if output_format == "markdown":
+                if buffer:
+                    console.print(Markdown(buffer))
+            else:
+                if buffer:
+                    console.print(buffer)
 
         # If we saw streamed tool deltas but no output, fallback to non-stream
         # stream_turn already executed tools and finalized output.
@@ -111,14 +130,26 @@ async def run_turn(
             except Exception:
                 pass
     except asyncio.TimeoutError:
-        click.echo("Operation timed out", err=True)
+        if pr is not None:
+            async with pr.aio_io():
+                click.echo("Operation timed out", err=True)
+        else:
+            click.echo("Operation timed out", err=True)
         sys.exit(124)
     except ToolApprovalDenied as e:
-        click.echo(f"Tool approval denied: {e}", err=True)
+        if pr is not None:
+            async with pr.aio_io():
+                click.echo(f"Tool approval denied: {e}", err=True)
+        else:
+            click.echo(f"Tool approval denied: {e}", err=True)
         sys.exit(4)
     except KeyboardInterrupt:
         if exit_on_interrupt:
-            click.echo("", err=True)
+            if pr is not None:
+                async with pr.aio_io():
+                    click.echo("", err=True)
+            else:
+                click.echo("", err=True)
             sys.exit(130)
         else:
             raise
