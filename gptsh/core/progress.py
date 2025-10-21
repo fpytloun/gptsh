@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager, contextmanager
 from typing import Optional
 
 from rich.console import Console
+from rich.control import Control, ControlType
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from gptsh.interfaces import ProgressReporter
@@ -62,7 +63,7 @@ class RichProgressReporter(ProgressReporter):
         self._io_lock: asyncio.Lock = asyncio.Lock()
         self._io_depth: int = 0
         self._resume_task: Optional[asyncio.Task] = None
-        self._resume_delay_s: float = 0.1  # debounce to coalesce rapid IO bursts
+        self._resume_delay_s: float = 0.05  # debounce to coalesce rapid IO bursts
         # Debounced per-task helpers
         self._debounced_next: int = 0
         # handle -> {"timer": asyncio.Task, "task_id": Optional[int], "description": str}
@@ -155,28 +156,43 @@ class RichProgressReporter(ProgressReporter):
             # Be tolerant if task_id was already removed
             pass
 
-    def start_debounced_task(self, description: str, delay: float = 0.15) -> int:
+    def _erase_line(self):
+        self.console.control(
+            Control.move(y=-1),
+            Control.move_to_column(0),
+            Control((ControlType.ERASE_IN_LINE, 2)),
+        )
+
+    def start_debounced_task(self, description: str, delay: float = 0.1) -> int:
         """Begin a task and return a handle for later completion.
 
-        For simplicity and visibility, create the progress task immediately.
+        Debounce creation: only materialize a visible progress task if the
+        operation lasts longer than `delay`. This prevents flicker and avoids
+        interfering with interactive approval prompts.
         """
-        # Ensure progress is visible if it was paused due to IO debounce
-        if self._progress is not None and self._paused:
-            try:
-                if self._resume_task is not None:
-                    self._resume_task.cancel()
-            except Exception:
-                pass
-            finally:
-                self._resume_task = None
-            try:
-                self._progress.start()
-            finally:
-                self._paused = False
         self._debounced_next += 1
         handle = self._debounced_next
-        task_id = self.add_task(description)
-        self._debounced[handle] = {"timer": None, "task_id": task_id, "description": description}
+        # Ensure Progress instance exists (but don't force resume)
+        if self._progress is None:
+            self.start()
+
+        # If no IO guard is active, ensure we're rendering; if paused, resume now (safe)
+        if self._progress is not None and self._io_depth == 0 and self._paused:
+            self.resume()
+
+        # If not paused and no IO guard is active, create immediately for quicker feedback
+        if self._progress is not None and not self._paused and self._io_depth == 0:
+            task_id = self.add_task(description)
+            # Force a refresh so the spinner appears promptly
+            try:
+                self._progress.refresh()
+            except Exception:
+                pass
+            self._debounced[handle] = {"timer": None, "task_id": task_id, "description": description}
+        else:
+            # Schedule delayed creation of the visible task; do not auto-resume rendering.
+            timer = asyncio.create_task(self._delayed_create_task(handle, description, delay))
+            self._debounced[handle] = {"timer": timer, "task_id": None, "description": description}
         return handle
 
     def complete_debounced_task(self, handle: int, final_description: Optional[str] = None) -> None:
@@ -200,12 +216,42 @@ class RichProgressReporter(ProgressReporter):
             self.complete_task(task_id, final_description)
             self.remove_task(task_id)
 
+    async def _delayed_create_task(self, handle: int, description: str, delay: float) -> None:
+        """Create a visible progress task after a delay if still pending.
+
+        This avoids creating tasks for very short operations and reduces prompt garbling.
+        """
+        try:
+            await asyncio.sleep(delay)
+            entry = self._debounced.get(handle)
+            if entry is None or entry.get("task_id") is not None:
+                return
+            # Ensure Progress exists but do not force resume while paused
+            if self._progress is None:
+                self.start()
+            if self._progress is None:
+                return
+            task_id = int(self._progress.add_task(description, total=None))
+            entry["task_id"] = task_id
+            # Promptly refresh to render the spinner
+            try:
+                self._progress.refresh()
+            except Exception:
+                pass
+            # If no IO guard is active and we are paused, resume immediately for faster render
+            if self._io_depth == 0 and self._paused:
+                self.resume()
+        except asyncio.CancelledError:
+            # Timer cancelled because task finished quickly
+            pass
+
     def pause(self) -> None:
         # Temporarily stop live rendering to allow interactive prompts on stdout
         if self._progress is not None and not self._paused:
             try:
                 # Hide the live progress without dropping the instance or tasks
                 self._progress.stop()
+                self._erase_line()
             finally:
                 self._paused = True
             try:
@@ -222,22 +268,9 @@ class RichProgressReporter(ProgressReporter):
             finally:
                 self._paused = False
 
-    def _live(self):
-        """Best-effort access to underlying Live renderer for pause support."""
-        try:
-            return getattr(self._progress, "live", None) if self._progress is not None else None
-        except Exception:
-            return None
-
     @contextmanager
     def io(self):
         """Synchronous IO guard: pause progress before output and resume after."""
-        live = self._live()
-        if live is not None and hasattr(live, "pause"):
-            with live.pause():
-                yield
-            return
-        # Fallback to start/stop-based pause if Live.pause not available
         try:
             self.pause()
             yield
@@ -251,37 +284,20 @@ class RichProgressReporter(ProgressReporter):
             outermost = (self._io_depth == 0)
             self._io_depth += 1
             try:
-                live = self._live()
-                if outermost and live is not None and hasattr(live, "pause"):
-                    # Prefer Rich Live.pause which cleanly suspends rendering
-                    cm = live.pause()
-                    cm.__enter__()
-                    try:
-                        yield
-                    finally:
-                        try:
-                            cm.__exit__(None, None, None)
-                        finally:
-                            pass
-                else:
-                    if outermost:
-                        # Fallback: stop rendering and resume after
-                        self.pause()
-                    yield
+                if outermost:
+                    # Stop rendering and resume after
+                    self.pause()
+                yield
             finally:
                 self._io_depth = max(0, self._io_depth - 1)
                 if self._io_depth == 0:
-                    if self._live() is not None and hasattr(self._live(), "resume"):
-                        # If using Live.pause(), context manager already resumed.
+                    # Debounce resume to coalesce adjacent IO sections
+                    try:
+                        if self._resume_task is not None:
+                            self._resume_task.cancel()
+                    except Exception:
                         pass
-                    else:
-                        # Debounce resume to coalesce adjacent IO sections
-                        try:
-                            if self._resume_task is not None:
-                                self._resume_task.cancel()
-                        except Exception:
-                            pass
-                        self._resume_task = asyncio.create_task(self._delayed_resume())
+                    self._resume_task = asyncio.create_task(self._delayed_resume())
 
     async def _delayed_resume(self) -> None:
         try:

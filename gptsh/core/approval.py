@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict
+from rich.control import Control, ControlType
 
 from gptsh.interfaces import ApprovalPolicy
 
@@ -73,7 +74,10 @@ class DefaultApprovalPolicy(ApprovalPolicy):
         )
 
         # Cleanup confirm prompt
-        console.file.write("\x1b[1A\r\x1b[2K")
-        console.file.flush()
+        console.control(
+            Control.move(y=-1),
+            Control.move_to_column(0),
+            Control((ControlType.ERASE_IN_LINE, 2)),
+        )
 
         return bool(choice)

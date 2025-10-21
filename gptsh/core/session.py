@@ -259,27 +259,14 @@ class ChatSession:
 
                 # Stream this assistant turn
                 full_text = ""
-                emitted_text = True
                 async for chunk in self._llm.stream(params):
                     text = extract_text(chunk)
                     if text:
-                        if emitted_text == True:
-                            # Complete the waiting task before output
-                            if self._progress and working_task_id is not None:
-                                self._progress.complete_task(working_task_id)
-                                # Remove and reset so the spinner can reappear cleanly on the next cycle/turn
-                                try:
-                                    self._progress.remove_task(working_task_id)
-                                finally:
-                                    working_task_id = None
-                            emitted_text = False
                         full_text += text
                         yield text
 
                 # Complete the waiting task when finishing the turn
                 if self._progress and working_task_id is not None:
-                    self._progress.complete_task(working_task_id)
-                    # Remove and reset so the spinner can reappear cleanly on the next cycle/turn
                     try:
                         self._progress.remove_task(working_task_id)
                     finally:
@@ -391,26 +378,22 @@ class ChatSession:
                             "content": f"Denied by user: {fullname}",
                         }
 
-                    # IO guard manages progress lifecycle; no manual resume here
-
                     # Debounced per-tool progress task via progress helper
-                    # TODO: Disabled, garbles output
-                    # handle: Optional[int] = None
-                    #if self._progress:
-                    #    handle = self._progress.start_debounced_task(
-                    #        f"Executing tool {server}__{toolname} args={tool_args_str}",
-                    #        delay=0.2,
-                    #    )
+                    handle: Optional[int] = None
+                    if self._progress:
+                        handle = self._progress.start_debounced_task(
+                            f"Executing tool {server}__{toolname} args={tool_args_str}",
+                            delay=0.5
+                        )
 
                     try:
                         result = await self._call_tool(server, toolname, args)
                     finally:
-                        pass
-                        #if self._progress and handle is not None:
-                        #    self._progress.complete_debounced_task(
-                        #        handle,
-                        #        f"[green]✔[/green] {server}__{toolname} args={tool_args_str}",
-                        #    )
+                        if self._progress and handle is not None:
+                            self._progress.complete_debounced_task(
+                                handle,
+                                f"[green]✔[/green] {server}__{toolname} args={tool_args_str}",
+                            )
 
                     # Pause progress before console output
                     if self._progress:
