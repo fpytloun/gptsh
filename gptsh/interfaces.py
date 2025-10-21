@@ -50,9 +50,29 @@ class ProgressReporter(Protocol):
     def complete_task(self, task_id: Optional[int], description: Optional[str] = None) -> None:
         """Mark a task as completed and optionally update its description."""
 
+    def update_task(self, task_id: Optional[int], description: Optional[str] = None) -> None:
+        """Update a task's description without completing it (no-op if unsupported)."""
+
+    def remove_task(self, task_id: Optional[int]) -> None:
+        """Remove a task from display (no-op if unsupported)."""
+
     def pause(self) -> None:  # pragma: no cover - UI concern
         ...
 
     def resume(self) -> None:  # pragma: no cover - UI concern
+        ...
+
+    # IO guards used throughout runner/session to prevent garbled output while spinners render
+    def io(self):  # returns a context manager
+        ...
+
+    async def aio_io(self):  # returns an async context manager
+        ...
+
+    # Debounced per-task helpers used around MCP tool execution
+    def start_debounced_task(self, description: str, delay: float = 0.1) -> int:
+        ...
+
+    def complete_debounced_task(self, handle: int, final_description: Optional[str] = None) -> None:
         ...
 

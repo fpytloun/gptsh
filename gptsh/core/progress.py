@@ -54,6 +54,14 @@ class NoOpProgressReporter(ProgressReporter):
     async def aio_io(self):
         yield
 
+    # Provide debounced task API used by ChatSession when tools run,
+    # returning a dummy handle and performing no operations.
+    def start_debounced_task(self, description: str, delay: float = 0.1) -> int:
+        return 0
+
+    def complete_debounced_task(self, handle: int, final_description: Optional[str] = None) -> None:
+        return
+
 
 class RichProgressReporter(ProgressReporter):
     def __init__(self, console: Optional[Console] = None, transient: bool = True):

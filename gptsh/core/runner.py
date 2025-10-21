@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from gptsh.core.exceptions import ToolApprovalDenied
-from gptsh.core.progress import RichProgressReporter
+from gptsh.interfaces import ProgressReporter
 from gptsh.core.session import ChatSession
 from gptsh.mcp.manager import MCPManager
 
@@ -32,14 +32,14 @@ async def run_turn(
     result_sink: Optional[List[str]] = None,
     messages_sink: Optional[List[Dict[str, Any]]] = None,
     mcp_manager: Optional[MCPManager] = None,
-    progress_reporter: Optional[RichProgressReporter] = None,
+    progress_reporter: ProgressReporter = None,  # always provided by caller (real or NoOp)
 ) -> None:
     """Execute a single turn using an Agent with optional streaming and tools.
 
     This centralizes the CLI and REPL execution paths, including the streaming
     fallback when models stream tool_call deltas but produce no visible text.
     """
-    pr: Optional[RichProgressReporter] = progress_reporter
+    pr: ProgressReporter = progress_reporter
     console = Console()
 
     try:
@@ -68,50 +68,29 @@ async def run_turn(
             buffer += text
 
             if stream:
-                if pr is not None:
-                    if output_format == "markdown":
-                        # Print full paragraphs only
-                        while "\n\n" in buffer:
-                            line, buffer = buffer.split("\n\n", 1)
-                            async with pr.aio_io():
-                                console.print(Markdown(line))
-                    else:
-                        # Only print full lines to avoid mid-line restarts
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
-                            async with pr.aio_io():
-                                console.print(line)
-                else:
-                    if output_format == "markdown":
-                        while "\n\n" in buffer:
-                            line, buffer = buffer.split("\n\n", 1)
+                if output_format == "markdown":
+                    # Print full paragraphs only
+                    while "\n\n" in buffer:
+                        line, buffer = buffer.split("\n\n", 1)
+                        async with pr.aio_io():
                             console.print(Markdown(line))
-                    else:
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
+                else:
+                    # Only print full lines to avoid mid-line restarts
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        async with pr.aio_io():
                             console.print(line)
 
         # Ensure any remaining buffered content is printed under IO guard
-
-        if pr is not None:
+        if buffer:
             async with pr.aio_io():
                 if output_format == "markdown":
-                    if buffer:
-                        console.print(Markdown(buffer))
-                else:
-                    if buffer:
-                        console.print(buffer)
-        else:
-            if output_format == "markdown":
-                if buffer:
                     console.print(Markdown(buffer))
-            else:
-                if buffer:
+                else:
                     console.print(buffer)
 
         # If we saw streamed tool deltas but no output, fallback to non-stream
         # stream_turn already executed tools and finalized output.
-
         if result_sink is not None:
             try:
                 result_sink.append(full_output)
@@ -126,25 +105,16 @@ async def run_turn(
             except Exception:
                 pass
     except asyncio.TimeoutError:
-        if pr is not None:
-            async with pr.aio_io():
-                click.echo("Operation timed out", err=True)
-        else:
+        async with pr.aio_io():
             click.echo("Operation timed out", err=True)
         sys.exit(124)
     except ToolApprovalDenied as e:
-        if pr is not None:
-            async with pr.aio_io():
-                click.echo(f"Tool approval denied: {e}", err=True)
-        else:
+        async with pr.aio_io():
             click.echo(f"Tool approval denied: {e}", err=True)
         sys.exit(4)
     except KeyboardInterrupt:
         if exit_on_interrupt:
-            if pr is not None:
-                async with pr.aio_io():
-                    click.echo("", err=True)
-            else:
+            async with pr.aio_io():
                 click.echo("", err=True)
             sys.exit(130)
         else:
@@ -178,7 +148,7 @@ class RunRequest:
     result_sink: Optional[List[str]] = None
     messages_sink: Optional[List[Dict[str, Any]]] = None
     mcp_manager: Optional[MCPManager] = None
-    progress_reporter: Optional[RichProgressReporter] = None
+    progress_reporter: ProgressReporter = None
 
 
 async def run_turn_with_request(req: RunRequest) -> None:
