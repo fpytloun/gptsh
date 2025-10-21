@@ -265,7 +265,7 @@ class RichProgressReporter(ProgressReporter):
             try:
                 # Hide the live progress without dropping the instance or tasks
                 self._progress.stop()
-                if self._transient == True:
+                if self._transient:
                     self._erase_line()
             finally:
                 self._paused = True

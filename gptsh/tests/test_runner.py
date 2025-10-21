@@ -3,8 +3,12 @@ import asyncio
 
 async def _call_run_turn(**kwargs):
     from gptsh.core.runner import run_turn
+    from gptsh.core.progress import NoOpProgressReporter
     # Backward-compat: older tests passed 'progress', which runner no longer accepts
     kwargs.pop("progress", None)
+    # Ensure a progress reporter is always provided (runner expects one)
+    if kwargs.get("progress_reporter") is None:
+        kwargs["progress_reporter"] = NoOpProgressReporter()
     await run_turn(**kwargs)
 
 

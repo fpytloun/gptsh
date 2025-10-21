@@ -10,8 +10,8 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from gptsh.core.exceptions import ToolApprovalDenied
-from gptsh.interfaces import ProgressReporter
 from gptsh.core.session import ChatSession
+from gptsh.interfaces import ProgressReporter
 from gptsh.mcp.manager import MCPManager
 
 
@@ -97,10 +97,10 @@ class MarkdownBuffer:
                     lines = self._buf.splitlines(keepends=True)
                     acc = ""
                     closed = False
-                    for i, l in enumerate(lines):
-                        acc += l
+                    for i, line in enumerate(lines):
+                        acc += line
                         # Closing fence line: must start with marker
-                        if l.lstrip().startswith(self._fence_marker or "") and i != 0:
+                        if line.lstrip().startswith(self._fence_marker or "") and i != 0:
                             closed = True
                             # Include the fence line fully; then flush the fenced block
                             # and keep any remainder in buffer
