@@ -7,6 +7,7 @@ from typing import Optional
 from rich.console import Console
 from rich.control import Control, ControlType
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.table import Column
 
 from gptsh.interfaces import ProgressReporter
 
@@ -84,9 +85,14 @@ class RichProgressReporter(ProgressReporter):
             # Render progress to stderr. Spinner green; text gray for subtlety.
             self._progress = Progress(
                 SpinnerColumn(style="green"),
-                TextColumn("{task.description}", style="grey50"),
+                TextColumn(
+                    "{task.description}",
+                    style="grey50",
+                    table_column=Column(ratio=1, no_wrap=True, overflow="ellipsis"),
+                ),
                 console=self.console,
-                transient=self._transient,
+                transient=False,
+                expand=True,
             )
             self._progress.start()
 
@@ -251,7 +257,8 @@ class RichProgressReporter(ProgressReporter):
             try:
                 # Hide the live progress without dropping the instance or tasks
                 self._progress.stop()
-                self._erase_line()
+                if self._transient == True:
+                    self._erase_line()
             finally:
                 self._paused = True
             try:

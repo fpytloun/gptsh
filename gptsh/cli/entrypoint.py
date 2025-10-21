@@ -216,16 +216,18 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     prompt = prompt or agent_conf.get("prompt", {}).get("user")
     initial_prompt = f"{prompt}\n\n---\nInput:\n{stdin_input}" if (prompt and stdin_input) else (prompt or stdin_input)
 
+
+    # Initialize a single ProgressReporter for the REPL session and pass it down
+    from gptsh.core.progress import NoOpProgressReporter, RichProgressReporter
+    reporter = (
+        RichProgressReporter(transient=True) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
+    )
+
     # Interactive REPL mode
     if interactive:
         if not (_is_tty(assume_tty=assume_tty, stream="stdout") and _is_tty(assume_tty=assume_tty, stream="stdin")):
             raise click.ClickException("Interactive mode requires a TTY.")
 
-        # Initialize a single ProgressReporter for the REPL session and pass it down
-        from gptsh.core.progress import NoOpProgressReporter, RichProgressReporter
-        reporter = (
-            RichProgressReporter(transient=False) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
-        )
         try:
             # Hand off to agent-only REPL
             run_agent_repl(
@@ -247,12 +249,6 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
     if initial_prompt:
         async def _run_llm_once(*args, **kwargs):
             await run_llm(*args, **kwargs)
-
-        # Initialize a ProgressReporter once here and thread it through
-        from gptsh.core.progress import NoOpProgressReporter, RichProgressReporter
-        reporter = (
-            RichProgressReporter(transient=True) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
-        )
 
         asyncio.run(_run_llm_once(
             prompt=initial_prompt,

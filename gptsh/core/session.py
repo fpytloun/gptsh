@@ -351,6 +351,11 @@ class ChatSession:
                     args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
 
                     tool_args_str = json.dumps(args, ensure_ascii=False, default=str)
+                    # Crop args for console output to avoid overly long lines
+                    _max_args_len = 500
+                    display_args = (
+                        tool_args_str if len(tool_args_str) <= _max_args_len else tool_args_str[: _max_args_len - 1] + "…"
+                    )
 
                     allowed = self._approval.is_auto_allowed(server, toolname)
                     if not allowed:
@@ -366,9 +371,9 @@ class ChatSession:
                         # Pause progress before console output
                         if self._progress:
                             async with self._progress.aio_io():
-                                console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                                console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
                         else:
-                            console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                              console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
                         if (self._config.get("mcp", {}) or {}).get("tool_choice") == "required":
                             raise ToolApprovalDenied(fullname)
                         return {
@@ -398,9 +403,9 @@ class ChatSession:
                     # Pause progress before console output
                     if self._progress:
                         async with self._progress.aio_io():
-                            console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                            console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
                     else:
-                        console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{tool_args_str}[/dim][/grey50]")
+                        console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
                     return {
                         "role": "tool",
                         "tool_call_id": call.get("id"),
