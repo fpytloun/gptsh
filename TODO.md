@@ -5,6 +5,24 @@
 - [ ] Refactor MCP tools, introduce decorator registry and refactor existing builtin modules
 - [ ] Use roots to sandbox tools (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem#method-2-mcp-roots-recommended, https://modelcontextprotocol.io/docs/learn/client-concepts#roots)
 - [ ] Add progress for MCP initialization, increase logging to INFO
+- [ ] Implement sandbox for MCP tools using Bubblewrap or Python namespaces. Example Bubblewrap invocation:
+  ```bash
+  bwrap \
+    --ro-bind "$PWD" "$PWD" \
+    --bind "$PWD/_scratch" "$PWD/_scratch" \
+    --unshare-user \
+    --uid 1000 \
+    --gid 1000 \
+    --map /proc/self/uid_map=0:1000:1 \
+    --map /proc/self/gid_map=0:1000:1 \
+    --dev /dev \
+    --proc /proc \
+    --ro-bind /usr /usr \
+    --ro-bind /lib /lib \
+    --ro-bind /lib64 /lib64 \
+    --unshare-all \
+    -- "$@"
+  ```
 
 #### Tool approval
 - [ ] Option to enter reason when denying tool execution (eg. instruct LLM to use tool differently)
@@ -24,6 +42,7 @@
 ## Configuration & Agents
 - [ ] Implement log redaction for secrets and sensitive data
 - [ ] Support logging into file
+- [ ] Support for reading instructions (eg. AGENTS.md)
 
 ## Workflows
 - [ ] Add support for Workflows.
