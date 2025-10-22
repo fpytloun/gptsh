@@ -319,6 +319,11 @@ class ChatSession:
                         history_messages.extend(turn_deltas)
                     return
 
+                # Ensure any lead-in assistant text is flushed to stdout before tool logs
+                if isinstance(full_text, str) and full_text.strip():
+                    # Runner's MarkdownBuffer flushes on blank lines; emit one to preserve ordering
+                    yield "\n\n"
+
                 if streamed_calls:
                     for c in streamed_calls:
                         name = c.get("name")
@@ -368,22 +373,27 @@ class ChatSession:
                 conversation.append(assistant_stub)
                 turn_deltas.append(assistant_stub)
 
-                # Execute tools concurrently and append results in order
-                async def _exec_one(call: Dict[str, Any]) -> Dict[str, Any]:
+                # Phase 1: collect approvals serially to avoid progress + prompt interleaving
+                approved_calls: List[Dict[str, Any]] = []
+                denied_tool_msgs: List[Dict[str, Any]] = []
+                logs_to_print: List[str] = []
+                enriched: List[Dict[str, Any]] = []  # keep parsed fields for execution phase
+                for call in calls:
                     fullname = call.get("name", "")
                     if "__" not in fullname:
-                        return {
-                            "role": "tool",
-                            "tool_call_id": call.get("id"),
-                            "name": fullname,
-                            "content": f"Invalid tool name: {fullname}",
-                        }
+                        denied_tool_msgs.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call.get("id"),
+                                "name": fullname,
+                                "content": f"Invalid tool name: {fullname}",
+                            }
+                        )
+                        continue
                     server, toolname = fullname.split("__", 1)
                     raw_args = call.get("arguments") or "{}"
                     args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
-
                     tool_args_str = json.dumps(args, ensure_ascii=False, default=str)
-                    # Crop args for console output to avoid overly long lines
                     _max_args_len = 500
                     display_args = (
                         tool_args_str if len(tool_args_str) <= _max_args_len else tool_args_str[: _max_args_len - 1] + "…"
@@ -391,54 +401,99 @@ class ChatSession:
 
                     allowed = self._approval.is_auto_allowed(server, toolname)
                     if not allowed:
-                        # Pause progress and serialize approval prompts globally
-                        async with PROMPT_LOCK:
-                            async with self._progress.aio_io():
+                        if self._progress:
+                            async with PROMPT_LOCK:
+                                async with self._progress.aio_io():
+                                    allowed = await self._approval.confirm(server, toolname, args)
+                        else:
+                            async with PROMPT_LOCK:
                                 allowed = await self._approval.confirm(server, toolname, args)
+
                     if not allowed:
-                        # Pause progress before console output
-                        async with self._progress.aio_io():
-                            console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
+                        # Buffer denial log; will print after all tasks finish
+                        logs_to_print.append(
+                            f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]"
+                        )
                         if (self._config.get("mcp", {}) or {}).get("tool_choice") == "required":
                             raise ToolApprovalDenied(fullname)
-                        return {
-                            "role": "tool",
-                            "tool_call_id": call.get("id"),
-                            "name": fullname,
-                            "content": f"Denied by user: {fullname}",
-                        }
+                        denied_tool_msgs.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call.get("id"),
+                                "name": fullname,
+                                "content": f"Denied by user: {fullname}",
+                            }
+                        )
+                        continue
 
-                    # Debounced per-tool progress task via progress helper
+                    # Approved
+                    approved_calls.append(call)
+                    enriched.append(
+                        {
+                            "call": call,
+                            "server": server,
+                            "toolname": toolname,
+                            "args": args,
+                            "tool_args_str": tool_args_str,
+                            "display_args": display_args,
+                        }
+                    )
+
+                # Append immediately the denied tool messages so the next model turn sees them
+                for tool_msg in denied_tool_msgs:
+                    conversation.append(tool_msg)
+                    turn_deltas.append(tool_msg)
+
+                # Phase 2: execute approved tools concurrently and append results in order
+                async def _exec_one_enriched(item: Dict[str, Any]) -> Dict[str, Any]:
+                    call = item["call"]
+                    server = item["server"]
+                    toolname = item["toolname"]
+                    args = item["args"]
+                    tool_args_str = item["tool_args_str"]
+                    display_args = item["display_args"]
+
+                    # Debounced per-tool progress task via progress helper (after approvals)
                     handle: Optional[int] = None
                     if self._progress:
                         handle = self._progress.start_debounced_task(
-                            f"Executing tool {server}__{toolname} args={tool_args_str}",
-                            delay=0.5
+                            f"Executing tool {server}__{toolname} args={tool_args_str}", delay=0.5
                         )
-
                     try:
                         result = await self._call_tool(server, toolname, args)
                     finally:
                         if self._progress and handle is not None:
                             self._progress.complete_debounced_task(
-                                handle,
-                                f"[green]✔[/green] {server}__{toolname} args={tool_args_str}",
+                                handle, f"[green]✔[/green] {server}__{toolname} args={tool_args_str}"
                             )
 
-                    # Pause progress before console output
-                    async with self._progress.aio_io():
-                        console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
+                    # Buffer success log; will print after all tasks finish
                     return {
                         "role": "tool",
                         "tool_call_id": call.get("id"),
-                        "name": fullname,
+                        "name": call.get("name", ""),
                         "content": result,
+                        "_log": f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]",
                     }
 
-                results = await asyncio.gather(*[_exec_one(c) for c in calls])
+                results = await asyncio.gather(*[_exec_one_enriched(e) for e in enriched])
                 for tool_msg in results:
+                    # Pop internal log and append after execution completes
+                    log_line = tool_msg.pop("_log", None)
+                    if isinstance(log_line, str):
+                        logs_to_print.append(log_line)
                     conversation.append(tool_msg)
                     turn_deltas.append(tool_msg)
+
+                # Print all buffered logs (denials + successes) together after tasks finish
+                if logs_to_print:
+                    if self._progress:
+                        async with self._progress.aio_io():
+                            for line in logs_to_print:
+                                console_log.print(line)
+                    else:
+                        for line in logs_to_print:
+                            console_log.print(line)
         finally:
             # Ensure background tasks are torn down to avoid pending task warnings
             await self.aclose()
