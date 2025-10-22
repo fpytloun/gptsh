@@ -106,9 +106,16 @@ We use uv/uvx for environment management and running:
 
 Best way to install `gptsh` is using `uv tool`
 
+For the latest **stable release**:
 ```bash
 uv tool install gptsh-cli
 ```
+
+To install the **latest unreleased (main branch) version**:
+```bash
+uv tool install git+https://github.com/fpytloun/gptsh.git@main
+```
+
 
 This will put executables into `~/.local/bin` so make sure it is in your `$PATH`
 
