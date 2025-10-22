@@ -23,6 +23,7 @@
     --unshare-all \
     -- "$@"
   ```
+- [x] Support for querying shell history (builtin tool)
 
 #### Tool approval
 - [ ] Option to enter reason when denying tool execution (eg. instruct LLM to use tool differently)
