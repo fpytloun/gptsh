@@ -177,6 +177,7 @@ class ChatSession:
                 "reasoning",
                 "reasoning_effort",
                 "tool_choice",
+                "parallel_tool_calls",
             }
             for k in allowed_agent_keys:
                 if k in agent_conf and agent_conf[k] is not None:
@@ -206,6 +207,8 @@ class ChatSession:
                 params["tools"] = specs
                 if "tool_choice" not in params:
                     params["tool_choice"] = "auto"
+                # Enable parallel tool calls by default when supported; can be overridden via config
+                params.setdefault("parallel_tool_calls", True)
                 has_tools = True
         return params, has_tools, chosen_model
 
@@ -226,9 +229,9 @@ class ChatSession:
         """Unified streaming entry: streams assistant output and handles tools.
 
         - Streams text chunks for assistant messages.
-        - If tool calls are requested (often indicated by streamed deltas),
-          performs a non-streaming complete() to retrieve calls, executes them,
-          and loops until final assistant text is produced.
+        - If tool calls are requested (indicated by streamed deltas),
+        reconstructs calls from streamed deltas, executes them,
+        and loops until final assistant text is produced, without non-stream fallbacks.
         """
 
         # Ensure background resources are started and later shut down
@@ -278,33 +281,44 @@ class ChatSession:
                     if hasattr(self._llm, "get_last_stream_info")
                     else {}
                 )
-                need_tool_round = has_tools and (
-                    bool(info.get("saw_tool_delta")) or (full_text.strip() == "")
-                )
-                if not need_tool_round:
-                    # No tools requested; finalize with streamed text
+                # If tools are disabled, finalize immediately with streamed text
+                if not has_tools:
                     if full_text.strip():
                         final_msg = {"role": "assistant", "content": full_text}
                         conversation.append(final_msg)
                         turn_deltas.append(final_msg)
-                    # Persist deltas into caller-provided history, if any
                     if history_messages is not None:
                         history_messages.extend(turn_deltas)
-                    # Ensure any stray progress task is removed before exiting
-                    if self._progress and working_task_id is not None:
-                        try:
-                            self._progress.remove_task(working_task_id)
-                        finally:
-                            working_task_id = None
                     return
 
-                # Prefer concrete tool calls from the streamed deltas; fallback to non-stream if absent
+                # Prefer concrete tool calls from the streamed deltas; optionally fallback to non-stream if absent
                 calls: List[Dict[str, Any]] = []
                 streamed_calls: List[Dict[str, Any]] = (
                     self._llm.get_last_stream_calls()  # type: ignore[attr-defined]
                     if hasattr(self._llm, "get_last_stream_calls")
                     else []
                 )
+                # Decide if we actually need a tool round.
+                # Run tools if:
+                #  - provider streamed tool deltas, or
+                #  - provider streamed concrete calls, or
+                #  - provider streamed no visible text (intent-only), which is common for some providers, or
+                #  - finish_reason explicitly indicates tool_calls.
+                finish_reason = info.get("finish_reason")
+                finish_indicates_tools = (str(finish_reason).lower() == "tool_calls") if finish_reason else False
+                saw_deltas = bool(info.get("saw_tool_delta"))
+                intent_only = full_text.strip() == ""
+                need_tool_round = has_tools and (saw_deltas or bool(streamed_calls) or intent_only or finish_indicates_tools)
+                if not need_tool_round:
+                    # No tool intent detected; finalize with streamed text
+                    if full_text.strip():
+                        final_msg = {"role": "assistant", "content": full_text}
+                        conversation.append(final_msg)
+                        turn_deltas.append(final_msg)
+                    if history_messages is not None:
+                        history_messages.extend(turn_deltas)
+                    return
+
                 if streamed_calls:
                     for c in streamed_calls:
                         name = c.get("name")
@@ -313,10 +327,23 @@ class ChatSession:
                         args_json = c.get("arguments") or "{}"
                         calls.append({"id": c.get("id"), "name": name, "arguments": args_json})
                 else:
-                    resp = await self._llm.complete(params)
+                    # Optional fallback: deltas were seen OR provider suppressed text (intent-only);
+                    # ask non-stream for structured calls
+                    try:
+                        resp = await self._llm.complete(params)
+                    except Exception:
+                        resp = {}
                     calls = parse_tool_calls(resp)
                     if not calls:
-                        # No calls parsed; treat streamed text as final
+                        final_text = extract_text(resp) or full_text
+                        if final_text and final_text.strip():
+                            # Emit any final text from fallback and persist
+                            yield final_text
+                            final_msg = {"role": "assistant", "content": final_text}
+                            conversation.append(final_msg)
+                            turn_deltas.append(final_msg)
+                            if history_messages is not None:
+                                history_messages.extend(turn_deltas)
                         return
 
                 assistant_tool_calls: List[Dict[str, Any]] = []
@@ -332,7 +359,12 @@ class ChatSession:
                             "function": {"name": fn, "arguments": args_json},
                         }
                     )
-                assistant_stub = {"role": "assistant", "content": None, "tool_calls": assistant_tool_calls}
+                # Preserve any streamed assistant lead-in text alongside tool_calls for correct history
+                assistant_stub = {
+                    "role": "assistant",
+                    "content": (full_text if isinstance(full_text, str) and full_text.strip() else None),
+                    "tool_calls": assistant_tool_calls,
+                }
                 conversation.append(assistant_stub)
                 turn_deltas.append(assistant_stub)
 
@@ -360,20 +392,13 @@ class ChatSession:
                     allowed = self._approval.is_auto_allowed(server, toolname)
                     if not allowed:
                         # Pause progress and serialize approval prompts globally
-                        if self._progress:
-                            async with PROMPT_LOCK:
-                                async with self._progress.aio_io():
-                                    allowed = await self._approval.confirm(server, toolname, args)
-                        else:
-                            async with PROMPT_LOCK:
+                        async with PROMPT_LOCK:
+                            async with self._progress.aio_io():
                                 allowed = await self._approval.confirm(server, toolname, args)
                     if not allowed:
                         # Pause progress before console output
-                        if self._progress:
-                            async with self._progress.aio_io():
-                                console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
-                        else:
-                              console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
+                        async with self._progress.aio_io():
+                            console_log.print(f"[yellow]⚠[/yellow] [grey50]Denied execution of tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
                         if (self._config.get("mcp", {}) or {}).get("tool_choice") == "required":
                             raise ToolApprovalDenied(fullname)
                         return {
@@ -401,10 +426,7 @@ class ChatSession:
                             )
 
                     # Pause progress before console output
-                    if self._progress:
-                        async with self._progress.aio_io():
-                            console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
-                    else:
+                    async with self._progress.aio_io():
                         console_log.print(f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]")
                     return {
                         "role": "tool",

@@ -221,11 +221,13 @@ async def run_turn(
 
         # Ensure the cursor is on a fresh line before any subsequent prompts (REPL),
         # to avoid the prompt being rendered on the same line as the last chunk.
-        try:
-            async with pr.aio_io():
-                console.print("")
-        except Exception:
-            pass
+        # NOTE: Does not seem to be needed now, we want to avoid blank line in our output
+        # try:
+        #     async with pr.aio_io():
+        #         pass
+        #         console.print("")
+        # except Exception:
+        #     pass
 
         # If we saw streamed tool deltas but no output, fallback to non-stream
         # stream_turn already executed tools and finalized output.
