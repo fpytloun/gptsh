@@ -30,6 +30,7 @@
 
 ## User Experience
 - [x] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
+- [ ] Add --version parameter to show current tool version
 - [ ] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
 - [ ] First ctrl+c or esc should stop ongoing request
 - [ ] Add /info command that will show current model (and settings like temperature, reasoning_effort) and context usage
