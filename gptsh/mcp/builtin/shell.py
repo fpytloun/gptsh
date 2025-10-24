@@ -65,7 +65,7 @@ def list_tools_detailed() -> List[Dict[str, Any]]:
         },
         {
             "name": "search_history",
-            "description": "Search for commands in shell history matching a regex or substring. Reads $HISTFILE. Fails with error if $HISTFILE is not set or file is unreadable.",
+            "description": "Search for commands in shell history matching a regex or substring. Returns each match and up to 'context' commands before and after it. Reads $HISTFILE. Fails with error if $HISTFILE is not set or file is unreadable.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -79,7 +79,14 @@ def list_tools_detailed() -> List[Dict[str, Any]]:
                         "default": 20,
                         "minimum": 1,
                         "maximum": 100
-                    }
+                    },
+                    "context": {
+                        "type": "integer",
+                        "description": "Number of commands before and after each match to include in output.",
+                        "default": 5,
+                        "minimum": 0,
+                        "maximum": 20
+                    },
                 },
                 "required": ["pattern"],
                 "additionalProperties": False,
@@ -162,83 +169,111 @@ def _tool_search_history(arguments: Dict[str, Any]) -> str:
     try:
         histfile = _get_histfile()
         history = _read_history(histfile)
+        context_n = arguments.get("context", 5)
+        if not isinstance(context_n, int) or context_n < 0 or context_n > 20:
+            context_n = 5
         try:
             regex = re.compile(pattern)
-            results = [entry for entry in history if regex.search(entry["command"])]
+            matches = [i for i, entry in enumerate(history) if regex.search(entry["command"])]
         except re.error:
             # fallback substring search
-            results = [entry for entry in history if pattern in entry["command"]]
-        return json.dumps({"ok": True, "results": results[:max_results]})
+            matches = [i for i, entry in enumerate(history) if pattern in entry["command"]]
+        results = []
+        for idx in matches[:max_results]:
+            start = max(0, idx - context_n)
+            end = min(len(history), idx + context_n + 1)
+            bundle = {
+                "match": history[idx],
+                "before": history[start:idx],
+                "after": history[idx+1:end],
+            }
+            results.append(bundle)
+        return json.dumps({"ok": True, "results": results})
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)})
 
+def _tool_execute(arguments: Dict[str, Any]) -> str:
+    command = arguments.get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise RuntimeError("Field 'command' (string) is required")
+    cwd = arguments.get("cwd")
+    if cwd is not None and not isinstance(cwd, str):
+        raise RuntimeError("Field 'cwd' must be a string if provided")
+    if cwd is None:
+        cwd = os.getcwd()
+    timeout_val = arguments.get("timeout")
+    if timeout_val is not None:
+        try:
+            timeout_val = float(timeout_val)
+            if timeout_val <= 0:
+                timeout_val = None
+        except Exception:
+            timeout_val = None
+    env_overrides = arguments.get("env") or {}
+    if env_overrides is not None and not isinstance(env_overrides, dict):
+        raise RuntimeError("Field 'env' must be an object if provided")
+    env = os.environ.copy()
+    # Coerce all env values to strings
+    for k, v in (env_overrides or {}).items():
+        try:
+            env[str(k)] = "" if v is None else str(v)
+        except Exception:
+            continue
+    # Figure out shell
+    shell_path = None
+    shell_env = os.environ.get("SHELL")
+    if shell_env and os.path.isfile(shell_env):
+        shell_path = shell_env
+    else:
+        try:
+            import pwd
+            shell_path = pwd.getpwuid(os.getuid()).pw_shell
+        except Exception:
+            shell_path = None
+    if not shell_path or not os.path.isfile(shell_path):
+        shell_path = "/bin/sh"
+    try:
+        completed = subprocess.run(
+            [shell_path, "-c", command],
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_val if isinstance(timeout_val, (int, float)) else None,
+        )
+        result = {
+            "exit_code": int(completed.returncode),
+            "stdout": completed.stdout or "",
+            "stderr": completed.stderr or "",
+        }
+        return json.dumps(result, ensure_ascii=False)
+    except subprocess.TimeoutExpired as e:
+        partial_stdout = ""
+        partial_stderr = ""
+        try:
+            partial_stdout = e.stdout if isinstance(e.stdout, str) else (e.stdout.decode("utf-8", "replace") if e.stdout else "")
+            partial_stderr = e.stderr if isinstance(e.stderr, str) else (e.stderr.decode("utf-8", "replace") if e.stderr else "")
+        except Exception:
+            pass
+        result = {
+            "exit_code": -1,
+            "stdout": partial_stdout or "",
+            "stderr": str(partial_stderr) + ("\n[Timed out]" if partial_stderr else "[Timed out]"),
+        }
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        result = {
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": f"[Execution error] {e}",
+        }
+        return json.dumps(result, ensure_ascii=False)
+
 def execute(tool: str, arguments: Dict[str, Any]) -> str:
     if tool == "execute":
-        # Existing shell command tool
-        if not isinstance(arguments, dict):
-            raise RuntimeError("Arguments must be an object")
-        command = arguments.get("command")
-        if not isinstance(command, str) or not command.strip():
-            raise RuntimeError("Field 'command' (string) is required")
-        cwd = arguments.get("cwd")
-        if cwd is not None and not isinstance(cwd, str):
-            raise RuntimeError("Field 'cwd' must be a string if provided")
-        timeout_val = arguments.get("timeout")
-        if timeout_val is not None:
-            try:
-                timeout_val = float(timeout_val)
-                if timeout_val <= 0:
-                    timeout_val = None
-            except Exception:
-                timeout_val = None
-        env_overrides = arguments.get("env") or {}
-        if env_overrides is not None and not isinstance(env_overrides, dict):
-            raise RuntimeError("Field 'env' must be an object if provided")
-        env = os.environ.copy()
-        # Coerce all env values to strings
-        for k, v in (env_overrides or {}).items():
-            try:
-                env[str(k)] = "" if v is None else str(v)
-            except Exception:
-                continue
-        try:
-            completed = subprocess.run(
-                ["/bin/sh", "-c", command],
-                cwd=cwd or None,
-                env=env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_val if isinstance(timeout_val, (int, float)) else None,
-            )
-            result = {
-                "exit_code": int(completed.returncode),
-                "stdout": completed.stdout or "",
-                "stderr": completed.stderr or "",
-            }
-            return json.dumps(result, ensure_ascii=False)
-        except subprocess.TimeoutExpired as e:
-            partial_stdout = ""
-            partial_stderr = ""
-            try:
-                partial_stdout = e.stdout if isinstance(e.stdout, str) else (e.stdout.decode("utf-8", "replace") if e.stdout else "")
-                partial_stderr = e.stderr if isinstance(e.stderr, str) else (e.stderr.decode("utf-8", "replace") if e.stderr else "")
-            except Exception:
-                pass
-            result = {
-                "exit_code": -1,
-                "stdout": partial_stdout or "",
-                "stderr": partial_stderr + ("\n[Timed out]" if partial_stderr else "[Timed out]"),
-            }
-            return json.dumps(result, ensure_ascii=False)
-        except Exception as e:
-            result = {
-                "exit_code": -1,
-                "stdout": "",
-                "stderr": f"[Execution error] {e}",
-            }
-            return json.dumps(result, ensure_ascii=False)
+        return _tool_execute(arguments)
     elif tool == "get_history":
         return _tool_get_history(arguments)
     elif tool == "search_history":
