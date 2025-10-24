@@ -259,6 +259,9 @@ async def run_turn(
             sys.exit(130)
         else:
             raise
+    except asyncio.CancelledError:
+        # Propagate task cancellation cleanly so callers (REPL) can handle it
+        raise
     except Exception as e:  # pragma: no cover - defensive
         if logger is not None:
             try:

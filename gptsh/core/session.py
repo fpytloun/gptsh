@@ -236,6 +236,8 @@ class ChatSession:
 
         # Ensure background resources are started and later shut down
         await self.start()
+        # Track a per-turn progress task so we can ensure cleanup on cancellation
+        working_task_id: Optional[int] = None
         try:
             params, has_tools, _model = await self._prepare_params(
                 prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages
@@ -247,7 +249,6 @@ class ChatSession:
             console_log = Console(stderr=True)
 
             # Prepare progress: single task for the whole turn
-            working_task_id: Optional[int] = None
             working_task_label = f"Waiting for {_model}"
             while True:
                 # Ensure waiting task exists for each LLM request
@@ -495,5 +496,11 @@ class ChatSession:
                         for line in logs_to_print:
                             console_log.print(line)
         finally:
+            # Ensure any pending progress task is removed
+            try:
+                if self._progress and working_task_id is not None:
+                    self._progress.remove_task(working_task_id)
+            except Exception:
+                pass
             # Ensure background tasks are torn down to avoid pending task warnings
             await self.aclose()

@@ -64,6 +64,9 @@ DEFAULT_AGENTS = {
 @click.argument("prompt", required=False)
 def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, list_agents_flag, output, no_tools, tools_filter, interactive, assume_tty, prompt):
     """gptsh: Modular shell/LLM agent client."""
+    # Restore default SIGINT handler to let REPL manage interrupts
+    import signal
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     # Load config
     # Load configuration: use custom path or defaults
     if config_path:
@@ -294,4 +297,5 @@ async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Opt
 
 
 if __name__ == "__main__":
-    main()
+    # Invoke CLI with default standalone mode but no exception catching, so SIGINT propagates
+    main(standalone_mode=True, catch_exceptions=False)

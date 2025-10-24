@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import click
@@ -378,6 +379,7 @@ async def run_agent_repl_async(
 
 
     console = Console()
+    console_err = Console(stderr=True)
     # Readline for history/convenience, provide agent names for completion
     rl_enabled, rl = setup_readline(lambda: list((config.get("agents") or {}).keys()))
 
@@ -427,6 +429,7 @@ async def run_agent_repl_async(
             no_tools=no_tools,
             config=config,
             logger=console,
+            exit_on_interrupt=False,
             history_messages=history_messages,
             result_sink=sink,
             agent_obj=agent,
@@ -444,20 +447,24 @@ async def run_agent_repl_async(
                 doc = getattr(rl, "__doc__", "") or ""
                 if "libedit" in doc.lower():
                     # MacOS non-GNU readline compatibility
-                    click.echo(prompt_str, nl=False)
-                    line = input()
+                    async with progress_reporter.aio_io():
+                        click.echo(prompt_str, nl=False)
+                        line = input()
                 else:
-                    line = input(prompt_str)
+                    async with progress_reporter.aio_io():
+                        line = input(prompt_str)
             except KeyboardInterrupt:
                 now = time.monotonic()
                 if now - last_interrupt <= 1.5:
                     click.echo("", err=True)
                     break
                 last_interrupt = now
-                click.echo("(^C) Press Ctrl-C again to exit", err=True)
+                async with progress_reporter.aio_io():
+                    console_err.print("\n[grey50]Press Ctrl-C again to exit[/grey50]")
                 continue
             except EOFError:
-                click.echo("", err=True)
+                async with progress_reporter.aio_io():
+                    click.echo("", err=True)
                 break
 
         sline = line.strip()
@@ -576,15 +583,24 @@ async def run_agent_repl_async(
             click.echo("Unknown command", err=True)
             continue
 
+        user_msg = {"role": "user", "content": sline}
+        # Run the turn in a cancellable task so Ctrl-C can stop the request immediately
+        current_task = asyncio.create_task(_run_once(sline))
         try:
-            user_msg = {"role": "user", "content": sline}
-            await _run_once(sline)
+            await current_task
             # ChatSession/run_llm already appends assistant/tool messages into history_messages.
             # We only need to record the user's message for this turn.
             history_messages.append(user_msg)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # Cancel the in-flight task and wait for cleanup
+            current_task.cancel()
+            try:
+                await current_task
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                pass
             last_interrupt = time.monotonic()
-            click.echo("Cancelled.", err=True)
+            async with progress_reporter.aio_io():
+                console_err.print("[grey50]Request cancelled[/grey50]")
             continue
 
 
