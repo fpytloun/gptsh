@@ -25,7 +25,6 @@ class StreamToolCall(TypedDict, total=False):
     arguments: str  # accumulated JSON string
 
 
-
 class LiteLLMClient(LLMClient):
     def __init__(self, base_params: Dict[str, Any] | None = None) -> None:
         self._base = dict(base_params or {})
@@ -57,7 +56,15 @@ class LiteLLMClient(LLMClient):
             len(merged.get("messages") or []),
             (hex(id(sess)) if sess is not None else None),
         )
-        return await acompletion(**merged)
+        return await acompletion(
+            cache_control_injection_points=[
+                {
+                    "location": "message",
+                    "role": "system",
+                },
+            ],
+            **merged,
+        )
 
     async def stream(self, params: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
         """Stream a chat completion using LiteLLM acompletion(stream=True).
@@ -79,7 +86,17 @@ class LiteLLMClient(LLMClient):
             len(merged.get("messages") or []),
             (hex(id(sess)) if sess is not None else None),
         )
-        stream_iter = await acompletion(stream=True, stream_options={"include_usage": True}, **merged)
+        stream_iter = await acompletion(
+            stream=True,
+            stream_options={"include_usage": True},
+            cache_control_injection_points=[
+                {
+                    "location": "message",
+                    "role": "system",
+                },
+            ],
+            **merged,
+        )
         # Reset stream info at start
         self._last_stream_info = {"saw_tool_delta": False, "tool_names": [], "finish_reason": None, "saw_text": False}
         self._last_stream_calls = []

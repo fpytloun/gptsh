@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from litellm.types.utils import Usage
@@ -12,6 +13,8 @@ from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressReporter
 from gptsh.llm.chunk_utils import extract_text
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
+
+_log = logging.getLogger(__name__)
 
 # Serialize interactive approval prompts across concurrent tool tasks
 PROMPT_LOCK: asyncio.Lock = asyncio.Lock()
@@ -350,10 +353,23 @@ class ChatSession:
                 else:
                     # Optional fallback: deltas were seen OR provider suppressed text (intent-only);
                     # ask non-stream for structured calls
+                    _log.debug(
+                        "Non-stream fallback activated: saw_deltas=%s intent_only=%s finish_reason=%s",
+                        saw_deltas,
+                        intent_only,
+                        finish_reason,
+                    )
                     try:
                         resp = await self._llm.complete(params)
                     except Exception:
                         resp = {}
+                    # Capture usage if provider returned it on non-stream path
+                    try:
+                        usage_obj = getattr(resp, "usage", None)
+                        if usage_obj is not None:
+                            self._update_usage(usage_obj)
+                    except Exception:
+                        pass
                     calls = parse_tool_calls(resp)
                     if not calls:
                         final_text = extract_text(resp) or full_text
