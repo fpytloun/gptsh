@@ -30,6 +30,9 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
         def from_agent(cls, *a, **k):
             return cls()
 
+        async def start(self):
+            pass
+
         async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
             if False:
                 yield ""  # pragma: no cover
@@ -87,6 +90,9 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
         @classmethod
         def from_agent(cls, *a, **k):
             return cls()
+
+        async def start(self):
+            pass
 
         async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
             yield "hello"

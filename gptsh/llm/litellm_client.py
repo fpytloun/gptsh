@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, AsyncIterator, Dict, List, Optional, TypedDict
+
+import litellm
 
 from gptsh.interfaces import LLMClient
 
-import litellm
 litellm.include_cost_in_streaming_usage = True
 
 # Shared session for litellm (prompt caching / connection reuse)
@@ -12,6 +14,9 @@ try:
     import aiohttp
 except Exception:  # pragma: no cover
     aiohttp = None  # type: ignore
+
+# Module logger (respects project logging config)
+_log = logging.getLogger(__name__)
 
 
 class StreamToolCall(TypedDict, total=False):
@@ -34,6 +39,7 @@ class LiteLLMClient(LLMClient):
         self._last_stream_calls: List["StreamToolCall"] = []
         # Lazily-created shared aiohttp session (used by litellm.shared_session)
         self._shared_session: Optional["aiohttp.ClientSession"] = None  # type: ignore[name-defined]
+        _log.debug("LiteLLMClient initialized; base_params keys=%s", list(self._base.keys()))
 
     async def complete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Perform a non-streamed chat completion via LiteLLM acompletion."""
@@ -44,6 +50,13 @@ class LiteLLMClient(LLMClient):
         sess = await self._ensure_shared_session()
         if sess is not None:
             merged["shared_session"] = sess
+        _log.debug(
+            "LLM complete(): model=%s stream=%s len(messages)=%s shared_session=%s",
+            merged.get("model"),
+            merged.get("stream", False),
+            len(merged.get("messages") or []),
+            (hex(id(sess)) if sess is not None else None),
+        )
         return await acompletion(**merged)
 
     async def stream(self, params: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
@@ -60,6 +73,12 @@ class LiteLLMClient(LLMClient):
         sess = await self._ensure_shared_session()
         if sess is not None:
             merged["shared_session"] = sess
+        _log.debug(
+            "LLM stream(): model=%s len(messages)=%s shared_session=%s",
+            merged.get("model"),
+            len(merged.get("messages") or []),
+            (hex(id(sess)) if sess is not None else None),
+        )
         stream_iter = await acompletion(stream=True, stream_options={"include_usage": True}, **merged)
         # Reset stream info at start
         self._last_stream_info = {"saw_tool_delta": False, "tool_names": [], "finish_reason": None, "saw_text": False}

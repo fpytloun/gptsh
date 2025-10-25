@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-
-import re
+import datetime
 import json
 import os
+import re
 import subprocess
-import datetime
 from typing import Any, Dict, List
 
 # Default auto-approval for all tools in this builtin server
@@ -118,8 +117,8 @@ def _read_history(path: str) -> List[str]:
     lines = lines[::-1]
     entries = []
     local_tz = datetime.datetime.now().astimezone().tzinfo
-    for l in lines:
-        orig = l.rstrip("\n")
+    for line in lines:
+        orig = line.rstrip("\n")
         # Extended zsh format: ': 1678997800:0;command'
         if orig.startswith(": ") and ";" in orig:
             try:

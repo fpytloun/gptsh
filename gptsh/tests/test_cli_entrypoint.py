@@ -131,6 +131,8 @@ def test_cli_stream_no_tools(monkeypatch):
         @classmethod
         def from_agent(cls, agent, *, progress, config, mcp=None):
             return cls()
+        async def start(self):
+            pass
         async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
             yield "hello "
             yield "world"
