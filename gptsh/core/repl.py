@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import click
 
 from gptsh.core.agent import Agent
+from gptsh.core.session import ChatSession
 from gptsh.core.config_api import compute_tools_policy
 from gptsh.core.exceptions import ReplExit
 from gptsh.mcp import ensure_sessions_started_async as ensure_sessions_started_async  # noqa: F401
@@ -66,18 +67,22 @@ def command_model(
     return cli_model_override, prompt_str
 
 
-def command_reasoning_effort(
-    arg: Optional[str], agent_conf: Optional[Dict[str, Any]]
-) -> Dict[str, Any]:
+def command_reasoning_effort(arg: Optional[str], agent: Agent):
     if not arg:
         raise ValueError("Usage: /reasoning_effort [minimal|low|medium|high]")
     val = arg.strip().lower()
     if val not in {"minimal", "low", "medium", "high"}:
         raise ValueError("Usage: /reasoning_effort [minimal|low|medium|high]")
-    if not isinstance(agent_conf, dict):
-        agent_conf = {}
-    agent_conf["reasoning_effort"] = val
-    return agent_conf
+    agent.llm._base["reasoning_effort"] = val
+
+
+def _get_agent_session(agent: Agent) -> Any[ChatSession, None]:
+    try:
+        from gptsh.cli.entrypoint import _SESSION_CACHE  # type: ignore
+    except Exception:
+        _SESSION_CACHE = {}
+    session = _SESSION_CACHE.get(id(agent))
+    return session
 
 def command_info(
     agent: Agent
@@ -90,11 +95,7 @@ def command_info(
     model = agent.llm._base.get("model", "?")
 
     # Pull session usage from CLI cache if available
-    try:
-        from gptsh.cli.entrypoint import _SESSION_CACHE  # type: ignore
-    except Exception:
-        _SESSION_CACHE = {}
-    session = _SESSION_CACHE.get(id(agent))
+    session = _get_agent_session(agent)
 
     usage: Dict = {}
     if session:
@@ -106,6 +107,7 @@ def command_info(
     completion_t = tokens.get("completion")
     total_t = tokens.get("total")
     cached_t = tokens.get("cached_tokens")
+    reasoning_t = tokens.get("reasoning_tokens")
     cost = usage.get("cost")
 
     # Determine max context via litellm.get_max_tokens
@@ -138,12 +140,14 @@ def command_info(
     # lines.append(f"Agent: {agent_label}")
     lines.append(f"Model: {model}")
     lines.append(f"Parameters: {params_str}")
-    if any(v is not None for v in [prompt_t, completion_t, total_t, cached_t, cost]):
+    if any(v is not None for v in [prompt_t, completion_t, reasoning_t, total_t, cached_t, cost]):
         lines.append("Session usage:")
         if prompt_t is not None:
             lines.append(f"  - prompt tokens: {prompt_t}")
         if completion_t is not None:
             lines.append(f"  - completion tokens: {completion_t}")
+        if reasoning_t is not None:
+            lines.append(f"  - reasoning tokens: {completion_t}")
         if total_t is not None:
             lines.append(f"  - total tokens: {total_t}")
         if cached_t is not None:
@@ -591,9 +595,11 @@ async def run_agent_repl_async(
                 continue
             if cmd == "/reasoning_effort":
                 try:
-                    agent_conf_local = command_reasoning_effort(arg, agent_conf_local)
+                    command_reasoning_effort(arg, agent)
                 except ValueError as ve:
                     click.echo(str(ve), err=True)
+                # NOTE: workaround to make sure it is reflected with ChatSession._prepare_params on next turn
+                provider_conf_local["reasoning_effort"] = agent.llm._base["reasoning_effort"]
                 continue
             if cmd == "/agent":
                 try:
