@@ -244,6 +244,19 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                 initial_prompt=initial_prompt,
                 progress_reporter=reporter,
             )
+            # After REPL exits, proactively close any cached ChatSession to release shared sessions
+            try:
+                cache = dict(_SESSION_CACHE)
+                for k, sess in cache.items():
+                    try:
+                        # ChatSession exposes aclose(); run in a short-lived loop
+                        asyncio.run(sess.aclose())
+                    except Exception:
+                        pass
+                    finally:
+                        _SESSION_CACHE.pop(k, None)
+            except Exception:
+                pass
         finally:
             try:
                 reporter.stop()

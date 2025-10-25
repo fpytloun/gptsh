@@ -7,6 +7,12 @@ from gptsh.interfaces import LLMClient
 import litellm
 litellm.include_cost_in_streaming_usage = True
 
+# Shared session for litellm (prompt caching / connection reuse)
+try:
+    import aiohttp
+except Exception:  # pragma: no cover
+    aiohttp = None  # type: ignore
+
 
 class StreamToolCall(TypedDict, total=False):
     id: Optional[str]
@@ -26,12 +32,18 @@ class LiteLLMClient(LLMClient):
             "saw_text": False,
         }
         self._last_stream_calls: List["StreamToolCall"] = []
+        # Lazily-created shared aiohttp session (used by litellm.shared_session)
+        self._shared_session: Optional["aiohttp.ClientSession"] = None  # type: ignore[name-defined]
 
     async def complete(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Perform a non-streamed chat completion via LiteLLM acompletion."""
         from litellm import acompletion  # lazy import for testability
 
         merged: Dict[str, Any] = {**self._base, **(params or {})}
+        # Attach shared session for connection reuse / provider prompt caching
+        sess = await self._ensure_shared_session()
+        if sess is not None:
+            merged["shared_session"] = sess
         return await acompletion(**merged)
 
     async def stream(self, params: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
@@ -44,6 +56,10 @@ class LiteLLMClient(LLMClient):
         from litellm import acompletion  # lazy import for testability
 
         merged: Dict[str, Any] = {**self._base, **(params or {})}
+        # Attach shared session for connection reuse / provider prompt caching
+        sess = await self._ensure_shared_session()
+        if sess is not None:
+            merged["shared_session"] = sess
         stream_iter = await acompletion(stream=True, stream_options={"include_usage": True}, **merged)
         # Reset stream info at start
         self._last_stream_info = {"saw_tool_delta": False, "tool_names": [], "finish_reason": None, "saw_text": False}
@@ -121,3 +137,21 @@ class LiteLLMClient(LLMClient):
     def get_last_stream_calls(self) -> List[StreamToolCall]:
         """Return reconstructed tool calls from the last stream (copy)."""
         return list(self._last_stream_calls)
+
+    async def aclose(self) -> None:
+        """Close the shared aiohttp session if it was created."""
+        sess = getattr(self, "_shared_session", None)
+        self._shared_session = None
+        if sess is not None:
+            try:
+                await sess.close()
+            except Exception:
+                pass
+
+    async def _ensure_shared_session(self) -> Optional["aiohttp.ClientSession"]:
+        """Create (once) and return the shared aiohttp session; None if aiohttp is unavailable."""
+        if aiohttp is None:
+            return None
+        if self._shared_session is None or self._shared_session.closed:  # type: ignore[union-attr]
+            self._shared_session = aiohttp.ClientSession()
+        return self._shared_session

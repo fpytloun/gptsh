@@ -227,6 +227,28 @@ Notes:
 - Streaming: Runner uses `ChatSession.prepare_stream` and `stream_with_params` and logs streamed tool_call deltas; if the model produces no text but tools are requested, it falls back to a non-stream turn to execute tools and print the result.
 
 ---
+### LLM Session Reuse and Streaming Usage/Cost
+
+- Runner-owned lifecycle:
+  - The runner constructs and starts a ChatSession when needed and closes it only if it created it.
+  - In REPL mode a single ChatSession is reused across turns per agent; the runner receives a prebuilt session and does not close it.
+- ChatSession responsibilities:
+  - ChatSession does not call start()/close() inside `stream_turn`; the caller (runner/REPL) controls lifecycle.
+  - Tool discovery/specs remain cached on the ChatSession for the duration of its life.
+- Streaming usage and cost:
+  - LiteLLM client sets `stream_options: { include_usage: true }` for streamed calls so the final streamed chunk carries a real `usage` object (prompt, completion, total tokens).
+  - To include pricing-derived `usage.cost`, following is configured: `litellm.include_cost_in_streaming_usage = True`.
+  - Usage is read from the final streamed chunk (`chunk.usage`). Do not rely on `_hidden_params["usage"]` when `include_usage` is enabled.
+- Provider client/session reuse (no LiteLLM cache required):
+  - Keep a single provider client per Agent (e.g., OpenAI Async client or aiohttp shared session) and pass it on each turn.
+  - Recommended wiring:
+    - Store the provider client on the Agent/LLM implementation (e.g., `agent.llm.client` or `agent.llm.shared_session`).
+    - In `ChatSession._prepare_params`, attach it to request params: `params["client"] = agent.llm.client` or `params["shared_session"] = agent.llm.shared_session` when present.
+  - This preserves upstream HTTP connection reuse and any provider-side token accounting heuristics across turns, without enabling optional LiteLLM-internal caching.
+- REPL teardown:
+  - On REPL exit, close any cached ChatSessions to flush MCP and provider clients cleanly.
+
+---
 ## MCP Lifecycle and Resilience
 
 - Discovery: periodically list and cache tools from all configured MCP servers.
