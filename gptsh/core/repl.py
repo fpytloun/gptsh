@@ -7,9 +7,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import click
 
+from gptsh.core.agent import Agent
 from gptsh.core.config_api import compute_tools_policy
 from gptsh.core.exceptions import ReplExit
 from gptsh.mcp import ensure_sessions_started_async as ensure_sessions_started_async  # noqa: F401
+
+_log = logging.getLogger(__name__)
 
 
 def build_prompt(
@@ -76,8 +79,88 @@ def command_reasoning_effort(
     agent_conf["reasoning_effort"] = val
     return agent_conf
 
+def command_info(
+    agent: Agent
+) -> str:
+    """Return a human-readable session/model info string.
 
-_log = logging.getLogger(__name__)
+    Includes agent name, effective model, key parameters, usage (tokens/cost),
+    and context window with usage percentage using litellm.get_max_tokens.
+    """
+    model = agent.llm._base.get("model", "?")
+
+    # Pull session usage from CLI cache if available
+    try:
+        from gptsh.cli.entrypoint import _SESSION_CACHE  # type: ignore
+    except Exception:
+        _SESSION_CACHE = {}
+    session = _SESSION_CACHE.get(id(agent))
+
+    usage: Dict = {}
+    if session:
+        # Session might not be initialized yet
+        usage = session.usage
+
+    tokens = usage.get("tokens", {}) or {}
+    prompt_t = tokens.get("prompt")
+    completion_t = tokens.get("completion")
+    total_t = tokens.get("total")
+    cached_t = tokens.get("cached_tokens")
+    cost = usage.get("cost")
+
+    # Determine max context via litellm.get_max_tokens
+    max_ctx = None
+    try:
+        from litellm.utils import _get_model_info_helper  # type: ignore
+        info = _get_model_info_helper(model=model) or {}
+        max_ctx = info.get("max_input_tokens")
+    except Exception:
+        max_ctx = None
+
+    pct = None
+    try:
+        if isinstance(total_t, (int, float)) and isinstance(max_ctx, int) and max_ctx > 0:
+            pct = (float(total_t) / float(max_ctx)) * 100.0
+    except Exception:
+        pct = None
+
+    params_parts: List[str] = []
+    tval = agent.llm._base.get("temperature")
+    if tval is not None:
+        params_parts.append(f"temperature={tval}")
+    reff = agent.llm._base.get("reasoning_effort")
+    if reff is not None:
+        params_parts.append(f"reasoning_effort={reff}")
+    params_str = (", ".join(params_parts)) if params_parts else "(default)"
+
+    lines: List[str] = []
+    # agent_label = getattr(agent, "name", "default") or "default"
+    # lines.append(f"Agent: {agent_label}")
+    lines.append(f"Model: {model}")
+    lines.append(f"Parameters: {params_str}")
+    if any(v is not None for v in [prompt_t, completion_t, total_t, cached_t, cost]):
+        lines.append("Session usage:")
+        if prompt_t is not None:
+            lines.append(f"  - prompt tokens: {prompt_t}")
+        if completion_t is not None:
+            lines.append(f"  - completion tokens: {completion_t}")
+        if total_t is not None:
+            lines.append(f"  - total tokens: {total_t}")
+        if cached_t is not None:
+            lines.append(f"  - cached tokens: {cached_t}")
+        if cost is not None:
+            lines.append(f"  - total cost: ${cost:.5f}")
+    else:
+        lines.append("Usage: (no usage recorded yet in this session)")
+    if max_ctx is not None:
+        if pct is not None:
+            lines.append(f"Context window: {total_t or 0} / {max_ctx} tokens (~{pct:.1f}%)")
+        else:
+            lines.append(f"Context window: {max_ctx} tokens")
+    else:
+        lines.append("Context window: (unknown)")
+
+    return "\n".join(lines)
 
 
 def command_tools(agent: Any) -> str:
@@ -228,6 +311,7 @@ _COMMANDS_USAGE = {
     "/reasoning_effort [minimal|low|medium|high]": "Set reasoning effort for current agent",
     "/tools": "List discovered MCP tools for current agent",
     "/no-tools [on|off]": "Toggle or set MCP tool usage for this session",
+    "/info": "Show session/model info and usage",
     "/help": "Show available commands",
 }
 
@@ -241,6 +325,7 @@ def get_command_names() -> List[str]:
         "/reasoning_effort",
         "/tools",
         "/no-tools",
+        "/info",
         "/help",
     ]
 
@@ -351,8 +436,6 @@ def add_history(readline_module: Any, line: str) -> None:
         readline_module.add_history(line)
     except Exception as e:
         _log.debug("add_history failed: %s", e)
-
-
 
 
 async def run_agent_repl_async(
@@ -481,6 +564,9 @@ async def run_agent_repl_async(
                 break
             if cmd == "/help":
                 click.echo(command_help())
+                continue
+            if cmd == "/info":
+                click.echo(command_info(agent))
                 continue
             if cmd == "/model":
                 try:
