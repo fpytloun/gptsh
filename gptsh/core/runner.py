@@ -160,6 +160,7 @@ async def run_turn(
     messages_sink: Optional[List[Dict[str, Any]]] = None,
     mcp_manager: Optional[MCPManager] = None,
     progress_reporter: ProgressReporter = None,  # always provided by caller (real or NoOp)
+    session: Optional[ChatSession] = None,
 ) -> None:
     """Execute a single turn using an Agent with optional streaming and tools.
 
@@ -170,12 +171,17 @@ async def run_turn(
     console = Console()
 
     try:
-        session = ChatSession.from_agent(
-            agent,
-            progress=pr,
-            config=config,
-            mcp=(None if no_tools else (mcp_manager or MCPManager(config))),
-        )
+        own_session = False
+        if not session:
+            session = ChatSession.from_agent(
+                agent,
+                progress=pr,
+                config=config,
+                mcp=(None if no_tools else (mcp_manager or MCPManager(config))),
+            )
+            own_session = True
+            # Start background resources if we created the session
+            await session.start()
         buffer = ""
         full_output = ""
         initial_hist_len = len(history_messages) if isinstance(history_messages, list) else None
@@ -270,8 +276,12 @@ async def run_turn(
                 pass
         sys.exit(1)
     finally:
-        # Do not stop here; lifecycle is managed by the caller (CLI entrypoint/REPL)
-        pass
+        # Close only sessions we created here; persistent sessions are managed by the caller
+        try:
+            if 'own_session' in locals() and own_session and session is not None:
+                await session.aclose()
+        except Exception:
+            pass
 
 
 @dataclass
@@ -292,6 +302,7 @@ class RunRequest:
     messages_sink: Optional[List[Dict[str, Any]]] = None
     mcp_manager: Optional[MCPManager] = None
     progress_reporter: ProgressReporter = None
+    session: Optional[ChatSession] = None
 
 
 async def run_turn_with_request(req: RunRequest) -> None:
@@ -312,5 +323,6 @@ async def run_turn_with_request(req: RunRequest) -> None:
         messages_sink=req.messages_sink,
         mcp_manager=req.mcp_manager,
         progress_reporter=req.progress_reporter,
+        session=req.session,
     )
 

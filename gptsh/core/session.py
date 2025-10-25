@@ -4,6 +4,7 @@ import asyncio
 import json
 from typing import Any, AsyncIterator, Dict, List, Optional
 
+from litellm.types.utils import Usage
 from rich.console import Console
 
 from gptsh.core.agent import Agent
@@ -36,6 +37,21 @@ class ChatSession:
         self._config = config
         self._tool_specs: List[Dict[str, Any]] = list(tool_specs or [])
         self._closed: bool = False
+        self.usage: Dict[str, Any] = {}
+
+    def _update_usage(self, usage: Usage):
+        self.usage = {
+            "tokens": {
+                "completion": usage.completion_tokens,
+                "prompt": usage.prompt_tokens,
+                "total": usage.total_tokens,
+                "reasoning_tokens": usage.completion_tokens_details.reasoning_tokens,
+                "cached_tokens": usage.prompt_tokens_details.cached_tokens,
+            },
+            "cost": self.usage.get("cost", 0)
+        }
+        if getattr(usage, "cost", None):
+            self.usage["cost"] += usage.cost
 
     @staticmethod
     def _normalize_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -233,9 +249,6 @@ class ChatSession:
         reconstructs calls from streamed deltas, executes them,
         and loops until final assistant text is produced, without non-stream fallbacks.
         """
-
-        # Ensure background resources are started and later shut down
-        await self.start()
         # Track a per-turn progress task so we can ensure cleanup on cancellation
         working_task_id: Optional[int] = None
         try:
@@ -264,6 +277,8 @@ class ChatSession:
                 # Stream this assistant turn
                 full_text = ""
                 async for chunk in self._llm.stream(params):
+                    if getattr(chunk, "usage", None):
+                        self._update_usage(chunk.usage)
                     text = extract_text(chunk)
                     if text:
                         full_text += text
@@ -502,5 +517,3 @@ class ChatSession:
                     self._progress.remove_task(working_task_id)
             except Exception:
                 pass
-            # Ensure background tasks are torn down to avoid pending task warnings
-            await self.aclose()

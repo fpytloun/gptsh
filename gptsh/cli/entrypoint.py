@@ -41,6 +41,9 @@ DEFAULT_AGENTS = {
     "default": {}
 }
 
+# Cache for persistent ChatSession objects in REPL mode (keyed by agent identity)
+_SESSION_CACHE: Dict[int, Any] = {}
+
 # --- CLI Entrypoint ---
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
@@ -275,6 +278,28 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
 
 
 async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Optional[Dict[str, Any]], cli_model_override: Optional[str], stream: bool, output_format: str, no_tools: bool, config: Dict[str, Any], logger: Any, exit_on_interrupt: bool = True, preinitialized_mcp: bool = False, history_messages: Optional[List[Dict[str, Any]]] = None, result_sink: Optional[List[str]] = None, messages_sink: Optional[List[Dict[str, Any]]] = None, agent_obj: Optional[Any] = None, mcp_manager: Optional[MCPManager] = None, progress_reporter: Optional[Any] = None) -> None:
+    # Reuse a persistent ChatSession for REPL calls (identified by exit_on_interrupt=False)
+    session_obj = None
+    if agent_obj is not None and exit_on_interrupt is False:
+        key = id(agent_obj)
+        session_obj = _SESSION_CACHE.get(key)
+        if session_obj is None:
+            # Lazy-create a session and cache it for subsequent turns
+            from gptsh.core.session import ChatSession as _ChatSession
+            try:
+                session_obj = _ChatSession.from_agent(
+                    agent_obj,
+                    progress=progress_reporter,
+                    config=config,
+                    mcp=(None if no_tools else (mcp_manager or MCPManager(config))),
+                )
+                # Start background resources once
+                await session_obj.start()
+            except Exception:
+                session_obj = None
+            else:
+                _SESSION_CACHE[key] = session_obj
+
     req = RunRequest(
         agent=agent_obj,
         prompt=prompt,
@@ -292,6 +317,7 @@ async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Opt
         messages_sink=messages_sink,
         mcp_manager=mcp_manager,
         progress_reporter=progress_reporter,
+        session=session_obj,
     )
     await run_turn_with_request(req)
 

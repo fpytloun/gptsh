@@ -4,6 +4,9 @@ from typing import Any, AsyncIterator, Dict, List, Optional, TypedDict
 
 from gptsh.interfaces import LLMClient
 
+import litellm
+litellm.include_cost_in_streaming_usage = True
+
 
 class StreamToolCall(TypedDict, total=False):
     id: Optional[str]
@@ -41,7 +44,7 @@ class LiteLLMClient(LLMClient):
         from litellm import acompletion  # lazy import for testability
 
         merged: Dict[str, Any] = {**self._base, **(params or {})}
-        stream_iter = await acompletion(stream=True, **merged)
+        stream_iter = await acompletion(stream=True, stream_options={"include_usage": True}, **merged)
         # Reset stream info at start
         self._last_stream_info = {"saw_tool_delta": False, "tool_names": [], "finish_reason": None, "saw_text": False}
         self._last_stream_calls = []
