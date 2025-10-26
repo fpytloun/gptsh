@@ -1,6 +1,6 @@
 import pytest
 
-from gptsh.core.repl import (
+from gptsh.cli.repl import (
     ReplExit,
     build_prompt,
     command_agent,
@@ -14,20 +14,30 @@ from gptsh.core.repl import (
 def test_build_prompt_contains_agent_and_model():
     prompt = build_prompt(
         agent_name="dev",
-        provider_conf={"model": "ns/m1"},
-        agent_conf={},
-        cli_model_override=None,
+        model="ns/m1",
         readline_enabled=False,
     )
     assert ">" in prompt and "dev" in prompt and "m1" in prompt
 
 
 def test_command_model_updates_override_and_prompt():
+    from gptsh.core.agent import Agent
+    from gptsh.core.approval import DefaultApprovalPolicy
+
+    class DummyLLM:
+        def __init__(self):
+            self._base = {"model": "old"}
+
+    agent = Agent(
+        name="tester",
+        llm=DummyLLM(),
+        tools={},
+        policy=DefaultApprovalPolicy({}),
+        generation_params={},
+    )
     new_override, new_prompt = command_model(
         "org/new-model",
-        agent_conf={},
-        provider_conf={"model": "old"},
-        cli_model_override=None,
+        agent=agent,
         agent_name="tester",
         readline_enabled=False,
     )
@@ -36,10 +46,21 @@ def test_command_model_updates_override_and_prompt():
 
 
 def test_command_reasoning_effort_sets_and_validates():
-    updated = command_reasoning_effort("high", {})
-    assert updated["reasoning_effort"] == "high"
+    from gptsh.core.agent import Agent
+
+    class DummyLLM:
+        def __init__(self):
+            self._base = {"model": "m"}
+
+    from gptsh.core.approval import DefaultApprovalPolicy
+
+    agent = Agent(
+        name="a", llm=DummyLLM(), tools={}, policy=DefaultApprovalPolicy({}), generation_params={}
+    )
+    command_reasoning_effort("high", agent)
+    assert agent.llm._base["reasoning_effort"] == "high"
     with pytest.raises(ValueError):
-        command_reasoning_effort("invalid", {})
+        command_reasoning_effort("invalid", agent)
 
 
 def test_command_agent_switches_and_applies_policy(monkeypatch):
@@ -64,7 +85,8 @@ def test_command_agent_switches_and_applies_policy(monkeypatch):
             return None
 
     # Ensure MCP start returns a placeholder (won't be used since tools disabled)
-    import gptsh.core.repl as repl
+    import gptsh.cli.repl as repl
+
     monkeypatch.setattr(repl, "ensure_sessions_started_async", lambda cfg: None)
 
     agent_conf, prompt_str, agent_name, no_tools, mgr = command_agent(

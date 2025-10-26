@@ -1,8 +1,8 @@
 import pytest
 
+from gptsh.cli.repl import command_model, command_no_tools, command_reasoning_effort, command_tools
 from gptsh.core.agent import Agent
 from gptsh.core.approval import DefaultApprovalPolicy
-from gptsh.core.repl import command_model, command_no_tools, command_reasoning_effort, command_tools
 
 
 class DummyLLM:
@@ -25,8 +25,6 @@ async def test_repl_commands_basic(monkeypatch):
         tools={"fs": [DummyHandle("read", "Read file"), DummyHandle("write", "Write file")]},
         policy=DefaultApprovalPolicy({"fs": ["read"]}),
         generation_params={},
-        provider_conf={"model": "m0"},
-        agent_conf={"model": "m0"},
     )
 
     # /tools should include checkmark for auto-approved
@@ -37,9 +35,7 @@ async def test_repl_commands_basic(monkeypatch):
     # /model updates prompt and override
     cli_model_override, prompt = command_model(
         "m1",
-        agent_conf=agent.agent_conf,
-        provider_conf=agent.provider_conf,
-        cli_model_override=None,
+        agent=agent,
         agent_name=agent.name,
         readline_enabled=False,
     )
@@ -48,8 +44,8 @@ async def test_repl_commands_basic(monkeypatch):
     assert agent.llm._base["model"] == "m1"
 
     # /reasoning_effort validation and update
-    agent_conf = command_reasoning_effort("medium", agent.agent_conf)
-    assert agent_conf.get("reasoning_effort") == "medium"
+    command_reasoning_effort("medium", agent)
+    assert agent.llm._base.get("reasoning_effort") == "medium"
 
     # /no-tools toggling using command_no_tools
     # Fake build_agent -> return same agent for simplicity
@@ -59,10 +55,13 @@ async def test_repl_commands_basic(monkeypatch):
         def build_agent(cfg, **k):
             async def _coro():
                 return agent
+
             return _coro()
 
     # Patch the actual resolver function referenced by the import inside command_no_tools
-    monkeypatch.setattr("gptsh.core.config_resolver.build_agent", _FakeModule.build_agent, raising=False)
+    monkeypatch.setattr(
+        "gptsh.core.config_resolver.build_agent", _FakeModule.build_agent, raising=False
+    )
 
     new_agent, new_no_tools, msg = command_no_tools(
         "on",

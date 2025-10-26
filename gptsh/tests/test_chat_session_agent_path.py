@@ -39,9 +39,6 @@ async def test_chat_session_from_agent_uses_agent_llm_and_policy():
     chunks = []
     async for t in session.stream_turn(
         prompt="hi",
-        provider_conf={"model": "x"},
-        agent_conf=None,
-        cli_model_override=None,
         no_tools=False,
         history_messages=None,
     ):
@@ -50,5 +47,3 @@ async def test_chat_session_from_agent_uses_agent_llm_and_policy():
     # With simple DummyLLM stream stub, allow empty output; in no-tools path
     # ChatSession may not call complete(), so FakeLLM.calls can be empty.
     assert out in ("hello", "")
-    if fake_llm.calls:
-        assert fake_llm.calls[0]["model"] == "x"

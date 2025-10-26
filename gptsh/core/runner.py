@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from gptsh.core.exceptions import ToolApprovalDenied
+from gptsh.core.progress import NoOpProgressReporter
 from gptsh.core.session import ChatSession
 from gptsh.interfaces import ProgressReporter
 from gptsh.mcp.manager import MCPManager
@@ -75,7 +76,7 @@ class MarkdownBuffer:
                 mark = self._is_fence_line(line)
                 if mark is not None:
                     # Flush any content preceding the fence if present
-                    before = self._buf[: line_start]
+                    before = self._buf[:line_start]
                     if before.strip():
                         out.append(before)
                     # Enter fenced mode starting from fence line
@@ -120,7 +121,11 @@ class MarkdownBuffer:
                     break
 
         # Latency guard: if buffer is long and ends with a newline, flush one paragraph
-        if not self._in_fence and len(self._buf) >= self._latency_chars and self._buf.endswith("\n"):
+        if (
+            not self._in_fence
+            and len(self._buf) >= self._latency_chars
+            and self._buf.endswith("\n")
+        ):
             # Try to split at last blank line; otherwise flush entire buffer
             last_par = self._buf.rfind("\n\n")
             if last_par != -1:
@@ -147,9 +152,6 @@ async def run_turn(
     agent: Any,
     prompt: str,
     config: Dict[str, Any],
-    provider_conf: Dict[str, Any],
-    agent_conf: Optional[Dict[str, Any]] = None,
-    cli_model_override: Optional[str] = None,
     stream: bool = True,
     output_format: str = "markdown",
     no_tools: bool = False,
@@ -167,7 +169,7 @@ async def run_turn(
     This centralizes the CLI and REPL execution paths, including the streaming
     fallback when models stream tool_call deltas but produce no visible text.
     """
-    pr: ProgressReporter = progress_reporter
+    pr: ProgressReporter = progress_reporter or NoOpProgressReporter()
     console = Console()
 
     try:
@@ -189,9 +191,6 @@ async def run_turn(
 
         async for text in session.stream_turn(
             prompt=prompt,
-            provider_conf=provider_conf,
-            agent_conf=agent_conf,
-            cli_model_override=cli_model_override,
             no_tools=no_tools,
             history_messages=history_messages,
         ):
@@ -244,7 +243,11 @@ async def run_turn(
                 pass
 
         # Populate structured message deltas if requested and history was provided
-        if messages_sink is not None and isinstance(history_messages, list) and initial_hist_len is not None:
+        if (
+            messages_sink is not None
+            and isinstance(history_messages, list)
+            and initial_hist_len is not None
+        ):
             try:
                 new_msgs = history_messages[initial_hist_len:]
                 messages_sink.extend(new_msgs)
@@ -278,7 +281,7 @@ async def run_turn(
     finally:
         # Close only sessions we created here; persistent sessions are managed by the caller
         try:
-            if 'own_session' in locals() and own_session and session is not None:
+            if "own_session" in locals() and own_session and session is not None:
                 await session.aclose()
         except Exception:
             pass
@@ -289,9 +292,6 @@ class RunRequest:
     agent: Any
     prompt: str
     config: Dict[str, Any]
-    provider_conf: Dict[str, Any]
-    agent_conf: Optional[Dict[str, Any]] = None
-    cli_model_override: Optional[str] = None
     stream: bool = True
     output_format: str = "markdown"
     no_tools: bool = False
@@ -310,9 +310,6 @@ async def run_turn_with_request(req: RunRequest) -> None:
         agent=req.agent,
         prompt=req.prompt,
         config=req.config,
-        provider_conf=req.provider_conf,
-        agent_conf=req.agent_conf,
-        cli_model_override=req.cli_model_override,
         stream=req.stream,
         output_format=req.output_format,
         no_tools=req.no_tools,
@@ -325,4 +322,3 @@ async def run_turn_with_request(req: RunRequest) -> None:
         progress_reporter=req.progress_reporter,
         session=req.session,
     )
-

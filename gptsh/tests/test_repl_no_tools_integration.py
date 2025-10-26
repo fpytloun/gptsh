@@ -1,8 +1,8 @@
 import pytest
 
+from gptsh.cli.repl import command_no_tools
 from gptsh.core.agent import Agent
 from gptsh.core.approval import DefaultApprovalPolicy
-from gptsh.core.repl import command_no_tools
 
 
 class DummyLLM:
@@ -26,8 +26,6 @@ async def test_command_no_tools_rebuilds_agent_and_toggles(monkeypatch):
         tools={"fs": [DummyHandle("read")]},
         policy=DefaultApprovalPolicy({"fs": ["read"]}),
         generation_params={},
-        provider_conf={"model": "m0"},
-        agent_conf={"model": "m0"},
     )
 
     # Patch the resolver to simulate enable/disable by returning empty/non-empty tools
@@ -39,8 +37,6 @@ async def test_command_no_tools_rebuilds_agent_and_toggles(monkeypatch):
                 tools={},
                 policy=DefaultApprovalPolicy({}),
                 generation_params={},
-                provider_conf={"model": "m0"},
-                agent_conf={"model": "m0"},
             )
         return agent
 
@@ -71,4 +67,3 @@ async def test_command_no_tools_rebuilds_agent_and_toggles(monkeypatch):
     assert isinstance(new_agent2, Agent)
     assert sum(len(v or []) for v in (new_agent2.tools or {}).values()) >= 0
     assert "enabled" in msg2
-

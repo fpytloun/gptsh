@@ -4,9 +4,8 @@ import asyncio
 async def _call_run_turn(**kwargs):
     from gptsh.core.progress import NoOpProgressReporter
     from gptsh.core.runner import run_turn
-    # Backward-compat: older tests passed 'progress', which runner no longer accepts
+
     kwargs.pop("progress", None)
-    # Ensure a progress reporter is always provided (runner expects one)
     if kwargs.get("progress_reporter") is None:
         kwargs["progress_reporter"] = NoOpProgressReporter()
     await run_turn(**kwargs)
@@ -15,7 +14,6 @@ async def _call_run_turn(**kwargs):
 def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
     # Arrange a Dummy ChatSession that streams no text but indicates tool deltas
     import gptsh.core.runner as runner_mod
-
 
     class DummyLLM:
         def get_last_stream_info(self):
@@ -33,7 +31,13 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
         async def start(self):
             pass
 
-        async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
+        async def stream_turn(
+            self,
+            *,
+            prompt,
+            no_tools,
+            history_messages,
+        ):
             if False:
                 yield ""  # pragma: no cover
 
@@ -47,7 +51,6 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
     agent = object()
     prompt = "do something"
     config = {}
-    provider_conf = {"model": "m"}
     result_sink = []
 
     # Act
@@ -56,9 +59,6 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
             agent=agent,
             prompt=prompt,
             config=config,
-            provider_conf=provider_conf,
-            agent_conf=None,
-            cli_model_override=None,
             stream=True,
             progress=False,
             output_format="text",
@@ -77,7 +77,6 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
 def test_runner_stream_happy_path_output(monkeypatch, capsys):
     import gptsh.core.runner as runner_mod
 
-
     class DummyLLM:
         def get_last_stream_info(self):
             return {"saw_tool_delta": False}
@@ -94,7 +93,13 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
         async def start(self):
             pass
 
-        async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
+        async def stream_turn(
+            self,
+            *,
+            prompt,
+            no_tools,
+            history_messages,
+        ):
             yield "hello"
             yield " "
             yield "world"
@@ -107,7 +112,6 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
     agent = object()
     prompt = "hi"
     config = {}
-    provider_conf = {"model": "m"}
     result_sink = []
 
     asyncio.run(
@@ -115,9 +119,6 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
             agent=agent,
             prompt=prompt,
             config=config,
-            provider_conf=provider_conf,
-            agent_conf=None,
-            cli_model_override=None,
             stream=True,
             progress=False,
             output_format="text",

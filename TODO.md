@@ -1,7 +1,7 @@
 # TODO
 
 ## Code quality
-- [ ] Refactor use of Agent to hold ChatSession and re-use of these objects (see `.serena/memories/refactor_agent_session.md`)
+- [x] Refactor use of Agent to hold ChatSession and re-use of these objects (see `.serena/memories/refactor_agent_session.md`)
 - [ ] Update interfaces
 
 ## MCP Integration
@@ -10,6 +10,7 @@
 - [ ] Refactor built-in MCP tools, introduce decorator registry and refactor existing builtin modules
 - [ ] Add progress for MCP initialization, increase logging to INFO
 - [ ] Implement MCP server to allow gptsh agent invocation from other LLM
+- [ ] Tools to work with SSH
 
 #### Security
 - [ ] Use roots to sandbox tools (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem#method-2-mcp-roots-recommended, https://modelcontextprotocol.io/docs/learn/client-concepts#roots)

@@ -5,8 +5,10 @@ from typing import Any, Dict, List, Optional
 from gptsh.core.agent import Agent
 from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.core.config_api import compute_tools_policy, select_agent_provider_dicts
+from gptsh.core.session import ChatSession
 from gptsh.llm.litellm_client import LiteLLMClient
 from gptsh.llm.tool_adapter import build_llm_tools_from_handles
+from gptsh.mcp.manager import MCPManager
 
 
 async def build_agent(
@@ -18,7 +20,9 @@ async def build_agent(
     cli_model_override: Optional[str] = None,
     cli_no_tools: bool = False,
 ) -> Agent:
-    agent_conf, provider_conf = select_agent_provider_dicts(config, cli_agent=cli_agent, cli_provider=cli_provider)
+    agent_conf, provider_conf = select_agent_provider_dicts(
+        config, cli_agent=cli_agent, cli_provider=cli_provider
+    )
 
     # Compute allowed servers and no_tools based on agent + CLI
     no_tools, allowed = compute_tools_policy(agent_conf, cli_tools_filter, cli_no_tools)
@@ -60,19 +64,19 @@ async def build_agent(
 
     # Merge LiteLLM params from agent_conf
     for param in ["temperature", "reasoning_effort"]:
-        if isinstance(agent_conf, dict) and agent_conf.get(param):
+        if isinstance(agent_conf, dict) and agent_conf.get(param) is not None:
             base_params[param] = agent_conf.get(param)
     base_params["drop_params"] = True
     llm = LiteLLMClient(base_params=base_params)
 
     # Resolve tools if enabled
-    # Import resolver lazily so tests can monkeypatch it reliably
     if no_tools:
         tools = {}
         tool_specs = []
         eff_config["mcp"] = {}
     else:
         from gptsh.mcp.tools_resolver import resolve_tools as _resolve_tools
+
         tools = await _resolve_tools(eff_config, allowed_servers=allowed)
         tool_specs = build_llm_tools_from_handles(tools)
 
@@ -81,6 +85,7 @@ async def build_agent(
             from gptsh.mcp.client import (
                 _discover_server_instructions_async as _discover_server_instructions_async,
             )
+
             instructions_map = await _discover_server_instructions_async(eff_config)
         except Exception:
             instructions_map = {}
@@ -93,13 +98,18 @@ async def build_agent(
                     continue
                 blocks.append(f"[Server: {srv}]\n{text.strip()}")
             if blocks:
-                mcp_guidance = "\n\n---\n\nMCP server instructions (apply only when using these servers' tools):\n\n" + "\n\n".join(blocks)
+                mcp_guidance = (
+                    "\n\n---\n\nMCP server instructions (apply only when using these servers' tools):\n\n"
+                    + "\n\n".join(blocks)
+                )
                 # Append to existing system prompt or create it
                 if isinstance(agent_conf, dict):
                     prompt_obj = dict(agent_conf.get("prompt") or {})
-                    base_system = (prompt_obj.get("system") or "")
-                    prompt_obj["system"] = (base_system + mcp_guidance) if base_system else mcp_guidance
-                    # Write back into agent_conf
+                    base_system = prompt_obj.get("system") or ""
+                    prompt_obj["system"] = (
+                        (base_system + mcp_guidance) if base_system else mcp_guidance
+                    )
+                    # Write back into agent_conf for reference
                     agent_conf = dict(agent_conf)
                     agent_conf["prompt"] = prompt_obj
 
@@ -107,12 +117,22 @@ async def build_agent(
     try:
         # Use the same effective config for approvals to reflect per-agent servers
         from gptsh.mcp import get_auto_approved_tools
-        approved_map = get_auto_approved_tools(eff_config if not no_tools else config, agent_conf=agent_conf)
+
+        approved_map = get_auto_approved_tools(
+            eff_config if not no_tools else config, agent_conf=agent_conf
+        )
     except Exception:
         approved_map = {}
     policy = DefaultApprovalPolicy(approved_map)
 
     name = cli_agent or config.get("default_agent") or "default"
+
+    # Create persistent session owned by agent (MCP manager provisioned here if tools enabled)
+    mcp_manager = None if no_tools else MCPManager(eff_config)
+    session = ChatSession(
+        llm, mcp_manager, policy, progress=None, config=eff_config, tool_specs=tool_specs
+    )
+
     return Agent(
         name=name,
         llm=llm,
@@ -120,6 +140,5 @@ async def build_agent(
         tool_specs=tool_specs,
         policy=policy,
         generation_params={},
-        provider_conf=dict(provider_conf or {}),
-        agent_conf=dict(agent_conf or {}),
+        session=session,
     )

@@ -49,7 +49,8 @@ A modular, extensible, and secure Python shell client that empowers developers a
 ```
 gptsh/
   cli/
-    entrypoint.py        # CLI entry, args, REPL loop (thin, delegates to core)
+    entrypoint.py        # CLI entry, args, REPL handoff
+    repl.py              # REPL commands and loop (Agent-based)
     utils.py             # CLI utilities (agent resolution, listings)
   config/
     loader.py            # config loading, env expansion, !include support
@@ -62,7 +63,6 @@ gptsh/
     logging.py           # logging setup (text/json)
     models.py            # typed config models (moved from domain/)
     progress.py          # RichProgressReporter abstraction
-    repl.py              # REPL helpers; uses runner for consistency
     runner.py            # Unified run_turn (stream + tools + fallback)
     session.py           # ChatSession orchestrator (tool loop, streaming helpers)
     stdin_handler.py     # safe stdin read, truncation notice
@@ -103,9 +103,8 @@ AGENTS.md                # (this file)
   - an `ApprovalPolicy` (from merged global+agent MCP approvals),
   - resolved MCP `ToolHandle`s grouped by server (for discovery/listing).
 - Core helpers:
-  - `core/runner.run_turn(agent, ...)` unified one-turn execution (streaming or non-streaming). If streamed tool_calls appear but no text, runner falls back to non-stream execution to run tools.
-  - `run_prompt_with_agent(agent, ...)` provides the one-shot turn, used by the runner.
-- `ChatSession.from_agent(agent, ...)` constructs a session using the agent’s `llm` and `policy`.
+- `core/runner.run_turn(agent, ...)` unified one-turn execution (streaming or non-streaming). If streamed tool_calls appear but no text, runner falls back to non-stream execution to run tools.
+- `ChatSession.from_agent(agent, ...)` constructs a session using the agent’s `llm` and `policy`. In REPL, a single ChatSession is attached to `agent.session` and reused across turns.
 
 #### Agent Resolution
 - `build_agent(config, cli_*)` in `core/config_resolver.py`:
@@ -399,6 +398,7 @@ gptsh = "gptsh.cli.entrypoint:main"
 Notes:
 - The CLI always resolves an `Agent` using `build_agent` before running. Non-stream and stream paths both use `ChatSession.from_agent`.
 - `--no-tools` and `--tools` influence the resolved agent’s tools via `compute_tools_policy`.
+- REPL module lives under `gptsh/cli/repl.py` and updates the active model and parameters via `agent.llm._base` during the session.
 
 ---
 ## Installation and Development

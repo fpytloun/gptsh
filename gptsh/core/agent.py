@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from gptsh.core.approval import DefaultApprovalPolicy
 from gptsh.interfaces import ApprovalPolicy
 
+if TYPE_CHECKING:  # avoid circular import at runtime
+    from gptsh.core.session import ChatSession
+
 
 class ToolHandle:
-    def __init__(self, server: str, name: str, description: str, input_schema: Dict[str, Any], *, _executor) -> None:
+    def __init__(
+        self, server: str, name: str, description: str, input_schema: Dict[str, Any], *, _executor
+    ) -> None:
         self.server = server
         self.name = name
         self.description = description
@@ -31,5 +36,5 @@ class Agent:
     tool_specs: List[Dict[str, Any]] = field(default_factory=list)
     policy: ApprovalPolicy = field(default_factory=lambda: DefaultApprovalPolicy({}))
     generation_params: Dict[str, Any] = field(default_factory=dict)
-    provider_conf: Dict[str, Any] = field(default_factory=dict)
-    agent_conf: Dict[str, Any] = field(default_factory=dict)
+    # Persistent session owned by the agent; created by config_resolver
+    session: Optional["ChatSession"] = None

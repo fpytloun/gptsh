@@ -1,15 +1,18 @@
-
 import pytest
 from click.testing import CliRunner
 
 
-@pytest.mark.parametrize("tools_map", [
-    ({"fs": ["read", "write"], "time": ["now"]}),
-])
+@pytest.mark.parametrize(
+    "tools_map",
+    [
+        ({"fs": ["read", "write"], "time": ["now"]}),
+    ],
+)
 def test_cli_list_tools(monkeypatch, tools_map):
     # Stub list_tools
     import gptsh.cli.entrypoint as ep
     from gptsh.cli.entrypoint import main
+
     monkeypatch.setattr(ep, "list_tools", lambda cfg: tools_map)
 
     # Provide an empty agents config to avoid mis-detection
@@ -29,6 +32,7 @@ def test_cli_list_tools(monkeypatch, tools_map):
 def test_cli_invalid_config_path(monkeypatch):
     import gptsh.cli.entrypoint as ep
     from gptsh.cli.entrypoint import main
+
     # Keep load_config from being called
     monkeypatch.setattr(ep, "load_config", lambda paths=None: {})
     runner = CliRunner()
@@ -40,8 +44,13 @@ def test_cli_invalid_config_path(monkeypatch):
 def test_cli_invalid_mcp_servers_file(monkeypatch, tmp_path):
     import gptsh.cli.entrypoint as ep
     from gptsh.cli.entrypoint import main
+
     # Minimal config
-    monkeypatch.setattr(ep, "load_config", lambda paths=None: {"agents": {"default": {}}, "default_agent": "default"})
+    monkeypatch.setattr(
+        ep,
+        "load_config",
+        lambda paths=None: {"agents": {"default": {}}, "default_agent": "default"},
+    )
     runner = CliRunner()
     result = runner.invoke(main, ["--mcp-servers", "/nope.json", "--list-tools"])
     assert result.exit_code == 2
@@ -51,8 +60,13 @@ def test_cli_invalid_mcp_servers_file(monkeypatch, tmp_path):
 def test_cli_invalid_agent_name(monkeypatch):
     import gptsh.cli.entrypoint as ep
     from gptsh.cli.entrypoint import main
+
     # Minimal config with only default agent
-    monkeypatch.setattr(ep, "load_config", lambda paths=None: {"agents": {"default": {}}, "default_agent": "default"})
+    monkeypatch.setattr(
+        ep,
+        "load_config",
+        lambda paths=None: {"agents": {"default": {}}, "default_agent": "default"},
+    )
     runner = CliRunner()
     result = runner.invoke(main, ["-a", "doesnotexist", "--list-agents"])
     assert result.exit_code == 2
@@ -62,8 +76,18 @@ def test_cli_invalid_agent_name(monkeypatch):
 def test_cli_invalid_provider_name(monkeypatch):
     import gptsh.cli.entrypoint as ep
     from gptsh.cli.entrypoint import main
+
     # Minimal config with only one provider
-    monkeypatch.setattr(ep, "load_config", lambda paths=None: {"providers": {"openai": {}}, "default_provider": "openai", "agents": {"default": {}}, "default_agent": "default"})
+    monkeypatch.setattr(
+        ep,
+        "load_config",
+        lambda paths=None: {
+            "providers": {"openai": {}},
+            "default_provider": "openai",
+            "agents": {"default": {}},
+            "default_agent": "default",
+        },
+    )
     runner = CliRunner()
     result = runner.invoke(main, ["--provider", "doesnotexist", "--list-agents"])
     assert result.exit_code == 2
@@ -73,9 +97,11 @@ def test_cli_invalid_provider_name(monkeypatch):
 def test_cli_load_config_failure_default(monkeypatch):
     import gptsh.cli.entrypoint as ep
     from gptsh.cli.entrypoint import main
+
     # Cause load_config to raise
     def raise_load(_paths=None):
         raise RuntimeError("boom")
+
     monkeypatch.setattr(ep, "load_config", raise_load)
     runner = CliRunner()
     result = runner.invoke(main, ["--list-agents"])
@@ -85,6 +111,7 @@ def test_cli_load_config_failure_default(monkeypatch):
 
 def test_cli_load_config_path_with_invalid_yaml(monkeypatch, tmp_path):
     from gptsh.cli.entrypoint import main
+
     # Write an invalid YAML file
     bad = tmp_path / "bad.yml"
     bad.write_text(": not yaml\n", encoding="utf-8")
@@ -97,6 +124,7 @@ def test_cli_load_config_path_with_invalid_yaml(monkeypatch, tmp_path):
 def test_cli_inline_servers_invalid_json_in_list_tools(monkeypatch):
     import gptsh.cli.entrypoint as ep
     from gptsh.cli.entrypoint import main
+
     # Provide config with invalid inline JSON for mcp.servers
     cfg = {
         "providers": {"openai": {"model": "m1"}},
@@ -118,37 +146,53 @@ def test_cli_stream_no_tools(monkeypatch):
 
     # Minimal config with a provider
     def fake_load_config(paths=None):
-        return {"providers": {"openai": {"model": "x"}}, "default_provider": "openai", "agents": {"default": {}}, "default_agent": "default"}
+        return {
+            "providers": {"openai": {"model": "x"}},
+            "default_provider": "openai",
+            "agents": {"default": {}},
+            "default_agent": "default",
+        }
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
     # Monkeypatch ChatSession to control streaming (patch the runner module)
     import gptsh.core.runner as runner_mod
+
     class DummySession:
         def __init__(self, *a, **k):
             self._progress = None
             pass
+
         @classmethod
         def from_agent(cls, agent, *, progress, config, mcp=None):
             return cls()
+
         async def start(self):
             pass
-        async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
+
+        async def stream_turn(self, *, prompt, no_tools=False, history_messages=None):
             yield "hello "
             yield "world"
 
     monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
+
     # Stub resolver path used by entrypoint
     class DummyAgent:
         llm = object()
         policy = object()
         tools = {}
+
     async def fake_resolve(**kwargs):
         return DummyAgent(), {}, {"model": "x"}, "text", True, None
-    monkeypatch.setattr("gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs))
+
+    monkeypatch.setattr(
+        "gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
+    )
 
     runner = CliRunner()
-    result = runner.invoke(main, ["--no-tools", "--output", "text", "hi there"], catch_exceptions=False)
+    result = runner.invoke(
+        main, ["--no-tools", "--output", "text", "hi there"], catch_exceptions=False
+    )
     assert result.exit_code == 0
     assert "hello world" in result.output
 
@@ -162,7 +206,10 @@ def test_cli_agent_provider_selection(monkeypatch):
         return {
             "providers": {"openai": {"model": "m1"}, "azure": {"model": "m2"}},
             "default_provider": "openai",
-            "agents": {"default": {"provider": "openai"}, "dev": {"provider": "azure", "model": "m2"}},
+            "agents": {
+                "default": {"provider": "openai"},
+                "dev": {"provider": "azure", "model": "m2"},
+            },
             "default_agent": "default",
         }
 
@@ -170,31 +217,52 @@ def test_cli_agent_provider_selection(monkeypatch):
 
     # Short-circuit LLM path via ChatSession monkeypatch (patch the runner module)
     import gptsh.core.runner as runner_mod
+
     class DummySession:
         def __init__(self, *a, **k):
             self._progress = None
             pass
+
         @classmethod
         def from_agent(cls, agent, *, progress, config, mcp=None):
             return cls()
-        async def stream_turn(self, *, prompt, provider_conf, agent_conf, cli_model_override, no_tools, history_messages):
+
+        async def stream_turn(
+            self,
+            *,
+            prompt,
+            no_tools=False,
+            history_messages=None,
+        ):
             yield "x"
+
         async def start(self):
             pass
+
         async def run(self, *a, **k):
             return ""
+
     monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
+
     class DummyAgent:
         llm = object()
         policy = object()
         tools = {}
+
     async def fake_resolve(**kwargs):
         return DummyAgent(), {}, {"model": "m2"}, "markdown", True, None
-    monkeypatch.setattr("gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs))
+
+    monkeypatch.setattr(
+        "gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
+    )
 
     runner = CliRunner()
     # Select non-default agent and provider override
-    result = runner.invoke(main, ["--no-tools", "--agent", "dev", "--provider", "azure", "hello"], catch_exceptions=False)
+    result = runner.invoke(
+        main,
+        ["--no-tools", "--agent", "dev", "--provider", "azure", "hello"],
+        catch_exceptions=False,
+    )
     assert result.exit_code == 0
 
 
@@ -244,34 +312,48 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
 
     # Simulate tool approval denied by having run_llm path raise it via ChatSession.run
     from gptsh.core.exceptions import ToolApprovalDenied
+
     class DenySession:
         def __init__(self, *a, **k):
             self._progress = None
             pass
+
         @classmethod
         def from_agent(cls, agent, *, progress, config, mcp=None):
             return cls()
+
         async def start(self):
             pass
+
         async def stream_turn(self, *a, **k):
             if False:
                 yield ""  # pragma: no cover
+
         async def run(self, *a, **k):
             raise ToolApprovalDenied("fs__delete")
+
         # stream_with_params removed in favor of stream_turn
+
     monkeypatch.setattr(runner_mod, "ChatSession", DenySession)
+
     # core.api removed; ensure no import usage here
     class DummyAgent:
         llm = object()
         policy = object()
         tools = {}
+
     async def fake_resolve(**kwargs):
         return DummyAgent(), {}, {"model": "m1"}, "text", False, None
-    monkeypatch.setattr("gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs))
+
+    monkeypatch.setattr(
+        "gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
+    )
 
     # Avoid potential progress setup in non-tty
     runner = CliRunner()
-    result = runner.invoke(main, ["--no-stream", "--output", "text", "delete file"], catch_exceptions=False)
+    result = runner.invoke(
+        main, ["--no-stream", "--output", "text", "delete file"], catch_exceptions=False
+    )
     print(result.output)
     # In current implementation, DenySession.run is not used; stream_turn does nothing
     # Accept non-error exit code here.
@@ -294,37 +376,52 @@ def test_cli_timeout_exit_code(monkeypatch):
 
     # Define and patch a TimeoutSession into the runner module
     import gptsh.core.runner as runner_mod
+
     class TimeoutSession:
         def __init__(self, *a, **k):
             pass
+
         @classmethod
         def from_agent(cls, agent, *, progress, config, mcp=None):
             return cls()
+
         async def start(self):
             pass
+
         def stream_turn(self, *a, **k):
             # Simulate a timeout by raising from an async generator
             async def _gen():
                 import asyncio
+
                 raise asyncio.TimeoutError()
                 yield ""  # unreachable
+
             return _gen()
+
         async def run(self, *a, **k):
             import asyncio
+
             raise asyncio.TimeoutError()
 
     monkeypatch.setattr(runner_mod, "ChatSession", TimeoutSession)
+
     async def fake_resolve(**kwargs):
         class DummyAgent:
             llm = object()
             policy = object()
             tools = {}
+
         return DummyAgent(), {}, {"model": "m"}, "text", True, None
-    monkeypatch.setattr("gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs))
+
+    monkeypatch.setattr(
+        "gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
+    )
 
     runner = CliRunner()
     # Force streaming path to be used
-    result = runner.invoke(main, ["--no-tools", "--output", "text", "hello"], catch_exceptions=False)
+    result = runner.invoke(
+        main, ["--no-tools", "--output", "text", "hello"], catch_exceptions=False
+    )
     assert result.exit_code == 124
     assert "Operation timed out" in result.output
 
@@ -365,7 +462,9 @@ def test_cli_interactive_invokes_agent_repl(monkeypatch):
         # Simulate immediate REPL exit without blocking
         return None
 
-    monkeypatch.setattr("gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs))
+    monkeypatch.setattr(
+        "gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
+    )
     monkeypatch.setattr(ep, "run_agent_repl", fake_run_agent_repl)
 
     runner = CliRunner()
@@ -374,6 +473,7 @@ def test_cli_interactive_invokes_agent_repl(monkeypatch):
     print(result.output)
     assert result.exit_code == 0
     # Verify REPL was invoked with an Agent and flags propagated
-    assert isinstance(called.get("agent"), DummyAgent.__class__) or hasattr(called.get("agent"), "llm")
+    # Agent instance check: only ensure it has llm attribute
+    assert hasattr(called.get("agent"), "llm")
     assert called.get("stream") in {True, False}
     assert called.get("output_format") in {"markdown", "text"}

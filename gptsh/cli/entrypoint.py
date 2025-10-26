@@ -5,6 +5,7 @@ import warnings
 
 import click
 
+from gptsh.cli.repl import run_agent_repl  # type: ignore
 from gptsh.cli.utils import (
     is_tty as _is_tty,
     print_agents_listing as _print_agents_listing,
@@ -14,7 +15,6 @@ from gptsh.cli.utils import (
 from gptsh.config.loader import load_config
 from gptsh.core.config_resolver import build_agent
 from gptsh.core.logging import setup_logging
-from gptsh.core.repl import run_agent_repl
 from gptsh.core.runner import RunRequest, run_turn_with_request
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
@@ -37,14 +37,11 @@ warnings.filterwarnings(
     category=RuntimeWarning,
 )
 
-DEFAULT_AGENTS = {
-    "default": {}
-}
+DEFAULT_AGENTS = {"default": {}}
 
-# Cache for persistent ChatSession objects in REPL mode (keyed by agent identity)
-_SESSION_CACHE: Dict[int, Any] = {}
 
 # --- CLI Entrypoint ---
+
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--provider", default=None, help="Override LiteLLM provider from config")
@@ -55,20 +52,69 @@ _SESSION_CACHE: Dict[int, Any] = {}
 @click.option("--progress/--no-progress", default=True)
 @click.option("--debug", is_flag=True, default=False)
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Enable verbose logging (INFO)")
-@click.option("--mcp-servers", "mcp_servers", default=None, help="Override path to MCP servers file")
+@click.option(
+    "--mcp-servers", "mcp_servers", default=None, help="Override path to MCP servers file"
+)
 @click.option("--list-tools", "list_tools_flag", is_flag=True, default=False)
-@click.option("--list-providers", "list_providers_flag", is_flag=True, default=False, help="List configured providers")
-@click.option("--list-agents", "list_agents_flag", is_flag=True, default=False, help="List configured agents and their tools")
-@click.option("--output", "-o", type=click.Choice(["text", "markdown", "default"]), default="default", help="Output format")
-@click.option("--no-tools", is_flag=True, default=False, help="Disable MCP tools (discovery and execution)")
-@click.option("--tools", "tools_filter", default=None, help="Comma/space-separated MCP server labels to allow (others skipped)")
-@click.option("--interactive", "-i", is_flag=True, default=False, help="Run in interactive REPL mode")
+@click.option(
+    "--list-providers",
+    "list_providers_flag",
+    is_flag=True,
+    default=False,
+    help="List configured providers",
+)
+@click.option(
+    "--list-agents",
+    "list_agents_flag",
+    is_flag=True,
+    default=False,
+    help="List configured agents and their tools",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Choice(["text", "markdown", "default"]),
+    default="default",
+    help="Output format",
+)
+@click.option(
+    "--no-tools", is_flag=True, default=False, help="Disable MCP tools (discovery and execution)"
+)
+@click.option(
+    "--tools",
+    "tools_filter",
+    default=None,
+    help="Comma/space-separated MCP server labels to allow (others skipped)",
+)
+@click.option(
+    "--interactive", "-i", is_flag=True, default=False, help="Run in interactive REPL mode"
+)
 @click.option("--assume-tty", is_flag=True, default=False, help="Assume TTY (for tests/CI)")
 @click.argument("prompt", required=False)
-def main(provider, model, agent, config_path, stream, progress, debug, verbose, mcp_servers, list_tools_flag, list_providers_flag, list_agents_flag, output, no_tools, tools_filter, interactive, assume_tty, prompt):
+def main(
+    provider,
+    model,
+    agent,
+    config_path,
+    stream,
+    progress,
+    debug,
+    verbose,
+    mcp_servers,
+    list_tools_flag,
+    list_providers_flag,
+    list_agents_flag,
+    output,
+    no_tools,
+    tools_filter,
+    interactive,
+    assume_tty,
+    prompt,
+):
     """gptsh: Modular shell/LLM agent client."""
     # Restore default SIGINT handler to let REPL manage interrupts
     import signal
+
     signal.signal(signal.SIGINT, signal.default_int_handler)
     # Load config
     # Load configuration: use custom path or defaults
@@ -151,6 +197,7 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         except Exception as e:
             # Surface configuration errors directly
             from gptsh.core.exceptions import ConfigError
+
             if isinstance(e, ConfigError):
                 click.echo(f"Configuration error: {e}")
                 sys.exit(2)
@@ -163,9 +210,14 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
             sys.exit(1)
         approved_map = get_auto_approved_tools(
             config,
-            agent_conf=(config.get("agents") or {}).get(agent or (config.get("default_agent") or "default")),
+            agent_conf=(config.get("agents") or {}).get(
+                agent or (config.get("default_agent") or "default")
+            ),
         )
-        tools_map = {srv: [h.name for h in (agent_obj.tools or {}).get(srv, [])] for srv in (agent_obj.tools or {})}
+        tools_map = {
+            srv: [h.name for h in (agent_obj.tools or {}).get(srv, [])]
+            for srv in (agent_obj.tools or {})
+        }
         _print_tools_listing(tools_map, approved_map)
         sys.exit(0)
 
@@ -208,7 +260,9 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
         try:
             stdin_input = read_stdin()
         except UnicodeDecodeError as e:
-            raise click.ClickException("Failed to decode input. Please ensure UTF-8 encoding.") from e
+            raise click.ClickException(
+                "Failed to decode input. Please ensure UTF-8 encoding."
+            ) from e
 
         # We consumed something from stdin and have tty on stderr so session seems interactive, open /dev/tty for interactive inputs (tool approvals)
         if stdin_input and _is_tty(stream="stderr"):
@@ -220,18 +274,27 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
 
     # Construct prompt
     prompt = prompt or agent_conf.get("prompt", {}).get("user")
-    initial_prompt = f"{prompt}\n\n---\nInput:\n{stdin_input}" if (prompt and stdin_input) else (prompt or stdin_input)
-
+    initial_prompt = (
+        f"{prompt}\n\n---\nInput:\n{stdin_input}"
+        if (prompt and stdin_input)
+        else (prompt or stdin_input)
+    )
 
     # Initialize a single ProgressReporter for the REPL session and pass it down
     from gptsh.core.progress import NoOpProgressReporter, RichProgressReporter
+
     reporter = (
-        RichProgressReporter(transient=True) if progress and _is_tty(stream="stderr") else NoOpProgressReporter()
+        RichProgressReporter(transient=True)
+        if progress and _is_tty(stream="stderr")
+        else NoOpProgressReporter()
     )
 
     # Interactive REPL mode
     if interactive:
-        if not (_is_tty(assume_tty=assume_tty, stream="stdout") and _is_tty(assume_tty=assume_tty, stream="stdin")):
+        if not (
+            _is_tty(assume_tty=assume_tty, stream="stdout")
+            and _is_tty(assume_tty=assume_tty, stream="stdin")
+        ):
             raise click.ClickException("Interactive mode requires a TTY.")
 
         try:
@@ -244,17 +307,12 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
                 initial_prompt=initial_prompt,
                 progress_reporter=reporter,
             )
-            # After REPL exits, proactively close any cached ChatSession to release shared sessions
+            # After REPL exits, proactively close any attached ChatSession to release resources
             try:
-                cache = dict(_SESSION_CACHE)
-                for k, sess in cache.items():
-                    try:
-                        # ChatSession exposes aclose(); run in a short-lived loop
-                        asyncio.run(sess.aclose())
-                    except Exception:
-                        pass
-                    finally:
-                        _SESSION_CACHE.pop(k, None)
+                sess = getattr(agent_obj, "session", None)
+                if sess is not None:
+                    asyncio.run(sess.aclose())
+                    agent_obj.session = None
             except Exception:
                 pass
         finally:
@@ -266,39 +324,56 @@ def main(provider, model, agent, config_path, stream, progress, debug, verbose, 
 
     # Non-interactive
     if initial_prompt:
+
         async def _run_llm_once(*args, **kwargs):
             await run_llm(*args, **kwargs)
 
-        asyncio.run(_run_llm_once(
-            prompt=initial_prompt,
-            provider_conf=provider_conf,
-            agent_conf=agent_conf,
-            cli_model_override=model,
-            stream=stream,
-            output_format=output_effective,
-            no_tools=no_tools_effective,
-            config=config,
-            logger=logger,
-            agent_obj=agent_obj,
-            progress_reporter=reporter,
-        ))
+        asyncio.run(
+            _run_llm_once(
+                prompt=initial_prompt,
+                stream=stream,
+                output_format=output_effective,
+                no_tools=no_tools_effective,
+                config=config,
+                logger=logger,
+                agent_obj=agent_obj,
+                progress_reporter=reporter,
+            )
+        )
         try:
             reporter.stop()
         except Exception:
             pass
     else:
-        raise click.UsageError("A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt.")
+        raise click.UsageError(
+            "A prompt is required. Provide via CLI argument, stdin, or agent config's 'user' prompt."
+        )
 
 
-async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Optional[Dict[str, Any]], cli_model_override: Optional[str], stream: bool, output_format: str, no_tools: bool, config: Dict[str, Any], logger: Any, exit_on_interrupt: bool = True, preinitialized_mcp: bool = False, history_messages: Optional[List[Dict[str, Any]]] = None, result_sink: Optional[List[str]] = None, messages_sink: Optional[List[Dict[str, Any]]] = None, agent_obj: Optional[Any] = None, mcp_manager: Optional[MCPManager] = None, progress_reporter: Optional[Any] = None) -> None:
-    # Reuse a persistent ChatSession for REPL calls (identified by exit_on_interrupt=False)
+async def run_llm(
+    *,
+    prompt: str,
+    stream: bool,
+    output_format: str,
+    no_tools: bool,
+    config: Dict[str, Any],
+    logger: Any,
+    exit_on_interrupt: bool = True,
+    preinitialized_mcp: bool = False,
+    history_messages: Optional[List[Dict[str, Any]]] = None,
+    result_sink: Optional[List[str]] = None,
+    messages_sink: Optional[List[Dict[str, Any]]] = None,
+    agent_obj: Optional[Any] = None,
+    mcp_manager: Optional[MCPManager] = None,
+    progress_reporter: Optional[Any] = None,
+) -> None:
+    # Reuse or attach a persistent ChatSession for REPL calls via Agent.session
     session_obj = None
     if agent_obj is not None and exit_on_interrupt is False:
-        key = id(agent_obj)
-        session_obj = _SESSION_CACHE.get(key)
+        session_obj = getattr(agent_obj, "session", None)
         if session_obj is None:
-            # Lazy-create a session and cache it for subsequent turns
             from gptsh.core.session import ChatSession as _ChatSession
+
             try:
                 session_obj = _ChatSession.from_agent(
                     agent_obj,
@@ -306,20 +381,15 @@ async def run_llm(*, prompt: str, provider_conf: Dict[str, Any], agent_conf: Opt
                     config=config,
                     mcp=(None if no_tools else (mcp_manager or MCPManager(config))),
                 )
-                # Start background resources once
                 await session_obj.start()
+                agent_obj.session = session_obj
             except Exception:
                 session_obj = None
-            else:
-                _SESSION_CACHE[key] = session_obj
 
     req = RunRequest(
         agent=agent_obj,
         prompt=prompt,
         config=config,
-        provider_conf=provider_conf,
-        agent_conf=agent_conf,
-        cli_model_override=cli_model_override,
         stream=stream,
         output_format=output_format,
         no_tools=no_tools,

@@ -8,7 +8,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import click
 
 from gptsh.core.agent import Agent
-from gptsh.core.session import ChatSession
 from gptsh.core.config_api import compute_tools_policy
 from gptsh.core.exceptions import ReplExit
 from gptsh.mcp import ensure_sessions_started_async as ensure_sessions_started_async  # noqa: F401
@@ -19,23 +18,15 @@ _log = logging.getLogger(__name__)
 def build_prompt(
     *,
     agent_name: Optional[str],
-    provider_conf: Dict[str, Any],
-    agent_conf: Optional[Dict[str, Any]],
-    cli_model_override: Optional[str],
+    model: Optional[str],
     readline_enabled: bool,
 ) -> str:
-    chosen = (
-        cli_model_override
-        or (agent_conf or {}).get("model")
-        or provider_conf.get("model")
-        or "?"
-    )
-    model_label = str(chosen).rsplit("/", 1)[-1]
+    model_label = str(model or "?").rsplit("/", 1)[-1]
     agent_label = agent_name or "default"
     agent_col = click.style(agent_label, fg="cyan", bold=True)
     model_col = click.style(model_label, fg="magenta")
     return (
-        re.sub('(\x1b\\[[0-9;]*[A-Za-z])', r'\001\1\002', f"{agent_col}|{model_col}> ")
+        re.sub("(\x1b\\[[0-9;]*[A-Za-z])", r"\001\1\002", f"{agent_col}|{model_col}> ")
         if readline_enabled
         else f"{agent_col}|{model_col}> "
     )
@@ -48,23 +39,20 @@ def command_exit() -> None:
 def command_model(
     arg: Optional[str],
     *,
-    agent_conf: Optional[Dict[str, Any]],
-    provider_conf: Dict[str, Any],
-    cli_model_override: Optional[str],
+    agent: Agent,
     agent_name: Optional[str],
     readline_enabled: bool,
-) -> Tuple[Optional[str], str]:
+) -> Tuple[str, str]:
     if not arg:
         raise ValueError("Usage: /model <model>")
-    cli_model_override = arg.strip()
+    new_model = arg.strip()
+    agent.llm._base["model"] = new_model
     prompt_str = build_prompt(
         agent_name=agent_name,
-        provider_conf=provider_conf,
-        agent_conf=agent_conf,
-        cli_model_override=cli_model_override,
+        model=new_model,
         readline_enabled=readline_enabled,
     )
-    return cli_model_override, prompt_str
+    return new_model, prompt_str
 
 
 def command_reasoning_effort(arg: Optional[str], agent: Agent):
@@ -76,17 +64,7 @@ def command_reasoning_effort(arg: Optional[str], agent: Agent):
     agent.llm._base["reasoning_effort"] = val
 
 
-def _get_agent_session(agent: Agent) -> Any[ChatSession, None]:
-    try:
-        from gptsh.cli.entrypoint import _SESSION_CACHE  # type: ignore
-    except Exception:
-        _SESSION_CACHE = {}
-    session = _SESSION_CACHE.get(id(agent))
-    return session
-
-def command_info(
-    agent: Agent
-) -> str:
+def command_info(agent: Agent) -> str:
     """Return a human-readable session/model info string.
 
     Includes agent name, effective model, key parameters, usage (tokens/cost),
@@ -95,7 +73,7 @@ def command_info(
     model = agent.llm._base.get("model", "?")
 
     # Pull session usage from CLI cache if available
-    session = _get_agent_session(agent)
+    session = agent.session
 
     usage: Dict = {}
     if session:
@@ -114,6 +92,7 @@ def command_info(
     max_ctx = None
     try:
         from litellm.utils import _get_model_info_helper  # type: ignore
+
         info = _get_model_info_helper(model=model) or {}
         max_ctx = info.get("max_input_tokens")
     except Exception:
@@ -136,8 +115,6 @@ def command_info(
     params_str = (", ".join(params_parts)) if params_parts else "(default)"
 
     lines: List[str] = []
-    # agent_label = getattr(agent, "name", "default") or "default"
-    # lines.append(f"Agent: {agent_label}")
     lines.append(f"Model: {model}")
     lines.append(f"Parameters: {params_str}")
     if any(v is not None for v in [prompt_t, completion_t, reasoning_t, total_t, cached_t, cost]):
@@ -180,7 +157,7 @@ def command_tools(agent: Any) -> str:
     for server, handles in tools_map.items():
         lines.append(f"{server} ({len(handles)}):")
         for h in handles:
-            name = getattr(h, 'name', '?')
+            name = getattr(h, "name", "?")
             badge = ""
             try:
                 if policy and policy.is_auto_allowed(server, name):
@@ -207,17 +184,12 @@ def command_no_tools(
     val = (arg or "").strip().lower()
     if val not in {"", "on", "off"}:
         raise ValueError("Usage: /no-tools [on|off]")
-    # Infer current no_tools from agent.tools at call sites, then toggle here by caller's decision.
-    # This function computes only new_no_tools based on desired val.
-    # Determine effective state: toggle if no explicit value
     if val == "on":
         effective_no_tools = True
     elif val == "off":
         effective_no_tools = False
     else:
         effective_no_tools = not current_no_tools
-    # Use a fresh loop to avoid nested run() issues under pytest-asyncio
-    # Run coroutine in a dedicated thread to avoid interfering with any running loop
     import threading
 
     from gptsh.core.config_resolver import build_agent as _build_agent
@@ -272,23 +244,16 @@ def command_agent(
     agents_conf_all = config.get("agents") or {}
     if new_agent not in agents_conf_all:
         raise ValueError(f"Unknown agent '{new_agent}'")
-    # Switch agent config
     agent_conf = agents_conf_all.get(new_agent) or {}
     agent_name = new_agent
-    # Reset model override to the new agent's model (if provided)
-    cli_model_override = (agent_conf.get("model") if isinstance(agent_conf, dict) else None)
-    # Apply tools policy via config helpers
-    labels = None  # REPL command didn't specify CLI labels; rely on agent config
-    # Recompute fresh; do not treat previous no_tools as a CLI override when switching
+    cli_model_override = agent_conf.get("model") if isinstance(agent_conf, dict) else None
+    labels = None
     no_tools, allowed = compute_tools_policy(agent_conf, labels, False)
     mcp_cfg = config.setdefault("mcp", {})
     if allowed is not None:
         mcp_cfg["allowed_servers"] = allowed
     else:
-        # Clear any previous filter so full set is available
         mcp_cfg.pop("allowed_servers", None)
-    # Stop all existing MCP sessions so that subsequent discovery uses the updated policy/servers
-    # Force a new manager key by toggling a nonce; this avoids reusing cached sessions
     try:
         nonce = (mcp_cfg.get("_repl_nonce") or 0) + 1
         mcp_cfg["_repl_nonce"] = nonce
@@ -298,9 +263,7 @@ def command_agent(
     mgr = None
     prompt_str = build_prompt(
         agent_name=agent_name,
-        provider_conf=provider_conf,
-        agent_conf=agent_conf,
-        cli_model_override=cli_model_override,
+        model=cli_model_override,
         readline_enabled=readline_enabled,
     )
     return agent_conf, prompt_str, agent_name, no_tools, mgr
@@ -363,19 +326,14 @@ def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]
             doc = getattr(_readline, "__doc__", "") or ""
             if "libedit" in doc.lower():
                 _log.debug("readline: libedit detected")
-                # macOS/libedit: different binding syntax for tab completion
                 _readline.parse_and_bind("bind ^I rl_complete")
-                # Enable incremental reverse search on Ctrl-R (and forward on Ctrl-S)
                 _readline.parse_and_bind("bind ^R em-inc-search-prev")
                 _readline.parse_and_bind("bind ^S em-inc-search-next")
             else:
-                # GNU readline
                 _readline.parse_and_bind("tab: complete")
-                # Enable reverse/forward history search
                 _readline.parse_and_bind('"\\C-r": reverse-search-history')
                 _readline.parse_and_bind('"\\C-s": forward-search-history')
         except Exception as e:
-            # Best-effort: log and continue to attempt to set completer
             _log.debug("readline parse_and_bind failed: %s", e)
         try:
             delims = _readline.get_completer_delims()
@@ -394,7 +352,6 @@ def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]
             if not buf.startswith("/"):
                 return None
             parts = buf.strip().split()
-            # complete command
             if len(parts) <= 1 and not buf.endswith(" "):
                 opts = [c for c in commands if c.startswith(text or "")]
                 return opts[state] if state < len(opts) else None
@@ -463,53 +420,39 @@ async def run_agent_repl_async(
     import click
     from rich.console import Console
 
-
     console = Console()
     console_err = Console(stderr=True)
-    # Readline for history/convenience, provide agent names for completion
     rl_enabled, rl = setup_readline(lambda: list((config.get("agents") or {}).keys()))
 
     model = (getattr(agent.llm, "_base", {}) or {}).get("model")
-    # model_label computed by build_prompt
     agent_label = getattr(agent, "name", "default") or "default"
-    provider_conf_local: Dict[str, Any] = dict(getattr(agent, "provider_conf", {}) or {})
-    agent_conf_local: Dict[str, Any] = dict(getattr(agent, "agent_conf", {}) or {})
-    cli_model_override: Optional[str] = model or provider_conf_local.get("model")
+    cli_model_override: Optional[str] = model
     prompt_str = build_prompt(
         agent_name=agent_label,
-        provider_conf=provider_conf_local,
-        agent_conf=agent_conf_local,
-        cli_model_override=cli_model_override,
+        model=cli_model_override,
         readline_enabled=rl_enabled,
     )
 
-    # Heuristic: if agent has no tools, disable tools in non-stream flow
     try:
         no_tools = not any(len(v or []) > 0 for v in (agent.tools or {}).values())
     except Exception as e:
         _log.debug("Failed to inspect agent tools: %s", e)
         no_tools = True
 
-    # Keep a heuristic no_tools flag based on resolved agent tools
-
     history_messages: List[Dict[str, Any]] = []
     last_interrupt = 0.0
-    # Persistent MCP manager for the REPL session (reused across turns)
     try:
         from gptsh.mcp.manager import MCPManager as _MCPManager
     except Exception:  # pragma: no cover - fallback
         _MCPManager = None  # type: ignore
-    mcp_manager = (None if no_tools or _MCPManager is None else _MCPManager(config))
+    mcp_manager = None if no_tools or _MCPManager is None else _MCPManager(config)
 
     async def _run_once(user_text: str) -> str:
-        # Reuse CLI run_llm to ensure consistent streaming fallback and tool behavior
         from gptsh.cli.entrypoint import run_llm as _run_llm
+
         sink: List[str] = []
         await _run_llm(
             prompt=user_text,
-            provider_conf=provider_conf_local,
-            agent_conf=agent_conf_local,
-            cli_model_override=cli_model_override,
             stream=stream,
             output_format=output_format,
             no_tools=no_tools,
@@ -522,7 +465,7 @@ async def run_agent_repl_async(
             mcp_manager=mcp_manager,
             progress_reporter=progress_reporter,
         )
-        return (sink[0] if sink else "")
+        return sink[0] if sink else ""
 
     while True:
         if initial_prompt:
@@ -532,7 +475,6 @@ async def run_agent_repl_async(
             try:
                 doc = getattr(rl, "__doc__", "") or ""
                 if "libedit" in doc.lower():
-                    # MacOS non-GNU readline compatibility
                     async with progress_reporter.aio_io():
                         click.echo(prompt_str, nl=False)
                         line = input()
@@ -576,9 +518,7 @@ async def run_agent_repl_async(
                 try:
                     new_override, new_prompt = command_model(
                         arg,
-                        agent_conf=agent_conf_local,
-                        provider_conf=provider_conf_local,
-                        cli_model_override=cli_model_override,
+                        agent=agent,
                         agent_name=agent_label,
                         readline_enabled=rl_enabled,
                     )
@@ -586,11 +526,6 @@ async def run_agent_repl_async(
                     click.echo(str(ve), err=True)
                     continue
                 cli_model_override = new_override
-                try:
-                    agent.llm._base["model"] = cli_model_override
-                except Exception as e:
-                    _log.debug("Failed to update agent base model: %s", e)
-                provider_conf_local["model"] = cli_model_override
                 prompt_str = new_prompt
                 continue
             if cmd == "/reasoning_effort":
@@ -598,27 +533,25 @@ async def run_agent_repl_async(
                     command_reasoning_effort(arg, agent)
                 except ValueError as ve:
                     click.echo(str(ve), err=True)
-                # NOTE: workaround to make sure it is reflected with ChatSession._prepare_params on next turn
-                provider_conf_local["reasoning_effort"] = agent.llm._base["reasoning_effort"]
+
                 continue
             if cmd == "/agent":
                 try:
-                    # Reuse existing helper to produce consistent prompt and policy
                     loop = asyncio.get_running_loop()
                     agent_conf_out, prompt_out, agent_name_out, no_tools, _mgr = command_agent(
                         arg,
                         config=config,
-                        agent_conf=agent_conf_local,
+                        agent_conf={},
                         agent_name=agent_label,
-                        provider_conf=provider_conf_local,
+                        provider_conf={},
                         cli_model_override=cli_model_override,
                         no_tools=no_tools,
                         mgr=None,
                         loop=loop,
                         readline_enabled=rl_enabled,
                     )
-                    # Rebuild Agent to reflect new selection using current loop
                     from gptsh.core.config_resolver import build_agent as _build_agent
+
                     agent = await _build_agent(
                         config,
                         cli_agent=agent_name_out,
@@ -627,15 +560,12 @@ async def run_agent_repl_async(
                         cli_model_override=None,
                         cli_no_tools=no_tools,
                     )
-                    agent_conf_local = agent_conf_out if isinstance(agent_conf_out, dict) else {}
                     agent_label = agent_name_out
                     model = getattr(agent.llm, "_base", {}).get("model")
                     cli_model_override = model
-                    provider_conf_local["model"] = model
                     prompt_str = prompt_out
-                    # Update MCP manager based on new no_tools state
                     if _MCPManager is not None:
-                        mcp_manager = (None if no_tools else (_MCPManager(config)))
+                        mcp_manager = None if no_tools else (_MCPManager(config))
                 except Exception as e:
                     _log.warning("Failed to switch agent: %s", e)
                     click.echo(f"Failed to switch agent: {e}", err=True)
@@ -649,7 +579,6 @@ async def run_agent_repl_async(
                 continue
             if cmd == "/no-tools":
                 try:
-                    # Toggle or set explicitly
                     desired = (arg or "").strip().lower()
                     if desired not in {"", "on", "off"}:
                         click.echo("Usage: /no-tools [on|off]", err=True)
@@ -664,9 +593,8 @@ async def run_agent_repl_async(
                     agent = new_agent
                     no_tools = _no
                     click.echo(msg)
-                    # Update persistent MCP manager
                     if _MCPManager is not None:
-                        mcp_manager = (None if no_tools else (_MCPManager(config)))
+                        mcp_manager = None if no_tools else (_MCPManager(config))
                 except Exception as e:
                     _log.warning("Failed to toggle tools: %s", e)
                     click.echo(f"Failed to toggle tools: {e}", err=True)
@@ -675,15 +603,11 @@ async def run_agent_repl_async(
             continue
 
         user_msg = {"role": "user", "content": sline}
-        # Run the turn in a cancellable task so Ctrl-C can stop the request immediately
         current_task = asyncio.create_task(_run_once(sline))
         try:
             await current_task
-            # ChatSession/run_llm already appends assistant/tool messages into history_messages.
-            # We only need to record the user's message for this turn.
             history_messages.append(user_msg)
         except (KeyboardInterrupt, asyncio.CancelledError):
-            # Cancel the in-flight task and wait for cleanup
             current_task.cancel()
             try:
                 await current_task

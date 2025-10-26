@@ -5,8 +5,8 @@ A modern, modular shell assistant powered by LLMs with first-class Model Context
 - Async-first core
 - Configurable providers via LiteLLM (OpenAI, Claude, Perplexity, Azure, etc.)
 - MCP tools discovery and invocation with resilient lifecycle
-- Interactive REPL with persistent MCP sessions and per-session chat history
-- Colored REPL prompt showing "<agent>|<model>>" and support for initial prompt via stdin or arg
+- Interactive REPL attached to each Agent with a persistent ChatSession and per-session history
+- Colored REPL prompt showing "<agent>|<model>>"; REPL lives under `gptsh/cli/repl.py` and updates model/params via `agent.llm._base`
 - Clean CLI UX with progress spinners and Markdown rendering
 
 See AGENTS.md for development standards, coding conventions, and architecture details.
@@ -506,7 +506,7 @@ Use a different provider/model:
 gptsh --provider openai --model gpt-4o-mini "Explain MCP in a paragraph"
 ```
 
-Interactive REPL:
+## Interactive REPL:
 
 - Start a REPL:
 ```bash
@@ -524,17 +524,31 @@ echo "Summarize this input" | gptsh -i
 ```
 
 REPL slash-commands:
-- /exit or /quit — exit the REPL
-- /model <model> — switch the active model
-- /agent <agent> — switch the active agent and reload tools according to agent config
-- /reasoning_effort [minimal|low|medium|high] — adjust reasoning effort
+
+- /exit — Exit the REPL
+- /quit — Exit the REPL (alias)
+- /model <name> — Override the current model
+- /agent <name> — Switch to a configured agent
+- /reasoning_effort [minimal|low|medium|high] — Set reasoning effort for current agent
+- /tools — List discovered MCP tools for current agent
+- /no-tools [on|off] — Toggle or set MCP tool usage for this session
+- /info — Show session/model info and usage
+- /help — Show available commands
 (Tab completion works for slash-commands and agent names.)
 
-Disable progress UI:
+Disable progress:
 
 ```bash
 gptsh --no-progress "Describe current repo structure"
 ```
+
+## Tool I/O
+
+- **stdin** — If available (e.g., from a pipe), non-interactive stdin is read and appended to the active prompt. In REPL mode, stdin is then switched to /dev/tty to accept further interactive input.
+- **stderr** — Progress bar, tool-approval prompts, and logs.
+- **stdout** — Only LLM output is written to stdout.
+
+This provides great flexibility and many possible uses in your shell session.
 
 ## Exit Codes
 

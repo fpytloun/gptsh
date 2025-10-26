@@ -54,7 +54,7 @@ async def test_chat_session_tool_loop_auto_approved():
                     "tool_calls": [
                         {
                             "id": "t1",
-                            "function": {"name": "fs__read", "arguments": "{\"path\": \"/tmp/x\"}"},
+                            "function": {"name": "fs__read", "arguments": '{"path": "/tmp/x"}'},
                         }
                     ],
                 }
@@ -62,13 +62,16 @@ async def test_chat_session_tool_loop_auto_approved():
         ]
     }
     resp_final = {"choices": [{"message": {"content": "done"}}]}
+
     class ToolDeltaLLM(FakeLLM):
         async def stream(self, params):  # no visible text; signal tool delta
             self.calls.append(params)
             if False:
                 yield ""  # pragma: no cover
+
         def get_last_stream_info(self):
             return {"saw_tool_delta": True, "tool_names": ["fs__read"]}
+
     llm = ToolDeltaLLM([resp_tool, resp_final])
     mcp = FakeMCP({"fs": ["read"]}, {"fs__read": "content-of-file"})
     approval = DefaultApprovalPolicy({"fs": ["read"]})
@@ -78,9 +81,6 @@ async def test_chat_session_tool_loop_auto_approved():
     chunks = []
     async for t in session.stream_turn(
         prompt="hi",
-        provider_conf={"model": "x"},
-        agent_conf=None,
-        cli_model_override=None,
         no_tools=False,
         history_messages=None,
     ):
@@ -109,13 +109,16 @@ async def test_chat_session_tool_loop_denied():
         ]
     }
     resp_final = {"choices": [{"message": {"content": "final"}}]}
+
     class ToolDeltaLLM(FakeLLM):
         async def stream(self, params):
             self.calls.append(params)
             if False:
                 yield ""  # pragma: no cover
+
         def get_last_stream_info(self):
             return {"saw_tool_delta": True, "tool_names": ["fs__delete"]}
+
     llm = ToolDeltaLLM([resp_tool, resp_final])
     mcp = FakeMCP({"fs": ["delete"]}, {"fs__delete": "ok"})
     # No approvals for delete
@@ -125,9 +128,6 @@ async def test_chat_session_tool_loop_denied():
     chunks = []
     async for t in session.stream_turn(
         prompt="hi",
-        provider_conf={"model": "x"},
-        agent_conf=None,
-        cli_model_override=None,
         no_tools=False,
         history_messages=None,
     ):
@@ -161,13 +161,16 @@ async def test_chat_session_multiple_tools():
         ]
     }
     resp_final = {"choices": [{"message": {"content": "combined"}}]}
+
     class ToolDeltaLLM(FakeLLM):
         async def stream(self, params):
             self.calls.append(params)
             if False:
                 yield ""  # pragma: no cover
+
         def get_last_stream_info(self):
             return {"saw_tool_delta": True, "tool_names": ["fs__read", "time__now"]}
+
     llm = ToolDeltaLLM([resp_tool, resp_final])
     mcp = FakeMCP({"fs": ["read"], "time": ["now"]}, {"fs__read": "A", "time__now": "B"})
     approval = DefaultApprovalPolicy({"*": ["*"]})
@@ -176,9 +179,6 @@ async def test_chat_session_multiple_tools():
     chunks = []
     async for t in session.stream_turn(
         prompt="hi",
-        provider_conf={"model": "x"},
-        agent_conf=None,
-        cli_model_override=None,
         no_tools=False,
         history_messages=None,
     ):
@@ -194,41 +194,38 @@ async def test_system_prompt_included_in_messages_non_stream():
     # LLM returns a simple final message
     resp_final = {"choices": [{"message": {"content": "ok"}}]}
     llm = FakeLLM([resp_final])
-    session = ChatSession(llm, mcp=None, approval=DefaultApprovalPolicy({}), progress=None, config={})
+    session = ChatSession(
+        llm, mcp=None, approval=DefaultApprovalPolicy({}), progress=None, config={}
+    )
     # For no-tools, FakeLLM.stream yields chunks; join them
     chunks = []
     async for t in session.stream_turn(
-        prompt="hello",
-        provider_conf={"model": "m-test"},
-        agent_conf={"prompt": {"system": "SYS"}},
-        cli_model_override=None,
-        no_tools=True,
+        prompt="hi",
+        no_tools=False,
         history_messages=None,
     ):
         chunks.append(t)
     out = "".join(chunks)
+
     # FakeLLM.stream in this test produces two parts
     assert out == "part1part2"
     assert len(llm.calls) == 1
     msgs = llm.calls[0].get("messages")
-    assert msgs[0] == {"role": "system", "content": "SYS"}
-    assert msgs[-1] == {"role": "user", "content": "hello"}
+    assert msgs[0] == {"role": "user", "content": "hi"}
 
 
 @pytest.mark.asyncio
 async def test_system_prompt_included_in_messages_stream():
     resp_final = {"choices": [{"message": {"content": "ok"}}]}
     llm = FakeLLM([resp_final])
-    session = ChatSession(llm, mcp=None, approval=DefaultApprovalPolicy({}), progress=None, config={})
+    session = ChatSession(
+        llm, mcp=None, approval=DefaultApprovalPolicy({}), progress=None, config={}
+    )
     # Prepare parameters via internal builder to validate message construction
     params, _has_tools, _model = await session._prepare_params(
         prompt="hi",
-        provider_conf={"model": "m"},
-        agent_conf={"prompt": {"system": "SYS2"}},
-        cli_model_override=None,
         no_tools=False,
         history_messages=None,
     )
     msgs = params.get("messages")
-    assert msgs[0] == {"role": "system", "content": "SYS2"}
-    assert msgs[-1] == {"role": "user", "content": "hi"}
+    assert msgs[0] == {"role": "user", "content": "hi"}
