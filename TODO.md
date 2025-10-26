@@ -1,10 +1,18 @@
 # TODO
 
+## Code quality
+- [ ] Refactor use of Agent to hold ChatSession and re-use of these objects (see `.serena/memories/refactor_agent_session.md`)
+- [ ] Update interfaces
+
 ## MCP Integration
+- [x] Support for querying shell history (builtin tool)
 - [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)
-- [ ] Refactor MCP tools, introduce decorator registry and refactor existing builtin modules
-- [ ] Use roots to sandbox tools (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem#method-2-mcp-roots-recommended, https://modelcontextprotocol.io/docs/learn/client-concepts#roots)
+- [ ] Refactor built-in MCP tools, introduce decorator registry and refactor existing builtin modules
 - [ ] Add progress for MCP initialization, increase logging to INFO
+- [ ] Implement MCP server to allow gptsh agent invocation from other LLM
+
+#### Security
+- [ ] Use roots to sandbox tools (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem#method-2-mcp-roots-recommended, https://modelcontextprotocol.io/docs/learn/client-concepts#roots)
 - [ ] Implement sandbox for MCP tools using Bubblewrap or Python namespaces. Example Bubblewrap invocation:
   ```bash
   bwrap \
@@ -23,7 +31,6 @@
     --unshare-all \
     -- "$@"
   ```
-- [x] Support for querying shell history (builtin tool)
 
 #### Tool approval
 - [ ] Option to enter reason when denying tool execution (eg. instruct LLM to use tool differently)
@@ -34,7 +41,7 @@
 - [ ] Add --version parameter to show current tool version
 - [ ] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
 - [ ] First ctrl+c or esc should stop ongoing request
-- [ ] Add /info command that will show current model (and settings like temperature, reasoning_effort) and context usage
+- [x] Add /info command that will show current model (and settings like temperature, reasoning_effort) and context usage
 - [ ] Add /compact command that will compact history to reduce context window size
 - [ ] Warn (change prompt color) when context window is getting full (eg. above 80%) in REPL mode
 - [ ] Add desktop notifications and/or bell to notify when LLM work is done

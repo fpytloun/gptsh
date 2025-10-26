@@ -147,7 +147,7 @@ def command_info(
         if completion_t is not None:
             lines.append(f"  - completion tokens: {completion_t}")
         if reasoning_t is not None:
-            lines.append(f"  - reasoning tokens: {completion_t}")
+            lines.append(f"  - reasoning tokens: {reasoning_t}")
         if total_t is not None:
             lines.append(f"  - total tokens: {total_t}")
         if cached_t is not None:
