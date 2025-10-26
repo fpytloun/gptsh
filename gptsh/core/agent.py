@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from gptsh.core.approval import DefaultApprovalPolicy
-from gptsh.interfaces import ApprovalPolicy
+from gptsh.interfaces import ApprovalPolicy, LLMClient
 
 if TYPE_CHECKING:  # avoid circular import at runtime
     from gptsh.core.session import ChatSession
@@ -31,7 +31,7 @@ class ToolHandle:
 @dataclass
 class Agent:
     name: str
-    llm: Any  # LiteLLMClient instance
+    llm: LLMClient  # LLM client adhering to protocol
     tools: Dict[str, List[ToolHandle]] = field(default_factory=dict)
     tool_specs: List[Dict[str, Any]] = field(default_factory=list)
     policy: ApprovalPolicy = field(default_factory=lambda: DefaultApprovalPolicy({}))

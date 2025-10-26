@@ -2,7 +2,7 @@
 
 ## Code quality
 - [x] Refactor use of Agent to hold ChatSession and re-use of these objects (see `.serena/memories/refactor_agent_session.md`)
-- [ ] Update interfaces
+- [x] Update interfaces
 
 ## MCP Integration
 - [x] Support for querying shell history (builtin tool)
