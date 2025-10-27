@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 def extract_text(c: Any) -> str:
@@ -25,8 +28,8 @@ def extract_text(c: Any) -> str:
                 return str(m.get("content"))
             if m.get("text"):
                 return str(m.get("text"))
-        except Exception:
-            pass
+        except Exception as e:
+            _log.error(f"Failed parsing LLM result: {e}")
     try:
         choices = getattr(c, "choices", None)
         if choices:
@@ -46,7 +49,7 @@ def extract_text(c: Any) -> str:
         text_attr = getattr(c, "text", None)
         if text_attr:
             return str(text_attr)
-    except Exception:
-        pass
+    except Exception as e:
+        _log.error(f"Failed parsing LLM result: {e}")
     return ""
 

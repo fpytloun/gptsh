@@ -15,7 +15,7 @@ from gptsh.cli.utils import (
 from gptsh.config.loader import load_config
 from gptsh.core.config_resolver import build_agent
 from gptsh.core.logging import setup_logging
-from gptsh.core.runner import RunRequest, run_turn_with_request
+from gptsh.core.runner import RunRequest, run_turn_with_request, run_turn_with_persistence
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
 from gptsh.mcp.manager import MCPManager
@@ -109,6 +109,13 @@ DEFAULT_AGENTS = {"default": {}}
 @click.option(
     "-s", "--session", "session_ref", default=None, help="Session reference (index or id)"
 )
+@click.option(
+    "--no-sessions",
+    "no_sessions",
+    is_flag=True,
+    default=False,
+    help="Disable saving/loading conversation sessions",
+)
 @click.option("--assume-tty", is_flag=True, default=False, help="Assume TTY (for tests/CI)")
 @click.argument("prompt", required=False)
 def main(
@@ -130,6 +137,7 @@ def main(
     tools_filter,
     interactive,
     session_ref,
+    no_sessions,
     assume_tty,
     prompt,
 ):
@@ -275,14 +283,22 @@ def main(
                 return iso
 
         sessions = _list_saved_sessions()
-        for idx, s in enumerate(sessions):
+        total = len(sessions)
+        to_show = sessions[:20]
+        # Align index column by computing width from last index shown
+        idx_width = len(str(len(to_show) - 1)) if to_show else 1
+        for idx, s in enumerate(to_show):
+            idx_str = str(idx).rjust(idx_width)
             dt = s.get("updated_at") or s.get("created_at") or ""
             title = s.get("title") or "(untitled)"
             agent_name = s.get("agent") or "?"
             model_name = s.get("model") or "?"
             click.echo(
-                f"[{idx}] {s.get('id')} {_fmt_local(dt)} {title} ({agent_name}|{model_name})"
+                f"[{idx_str}] {s.get('id')} {_fmt_local(dt)} {title} ({agent_name}|{model_name})"
             )
+        remaining = total - len(to_show)
+        if remaining > 10:
+            click.echo(f"... and {remaining} older sessions not shown")
         sys.exit(0)
 
     # If resuming a session, preload its agent/provider/model preferences unless overridden via CLI
@@ -445,69 +461,46 @@ def main(
     if initial_prompt:
 
         async def _run_once_noninteractive() -> None:
-            messages_sink: List[Dict[str, Any]] = []
-            preloaded_doc: Optional[Dict[str, Any]] = None
-            session_obj = None
+            from gptsh.core.sessions import (
+                new_session_doc as _new_session_doc,
+                resolve_small_model as _resolve_small_model,
+                save_session as _save_session,
+            )
+            from gptsh.core.config_api import get_sessions_enabled
+
             mcp_manager = None if no_tools_effective else MCPManager(config)
 
-            # Only preload and attach a session if a session_ref was provided
-            if session_ref:
-                from gptsh.core.session import ChatSession as _ChatSession
+            # Decide if sessions are enabled
+            sessions_enabled = get_sessions_enabled(config, no_sessions_cli=no_sessions)
 
-                try:
-                    sid = _resolve_session_ref(str(session_ref))
-                    preloaded_doc = _load_session(sid)
-                except Exception as e:
-                    click.echo(f"Warning: failed to load referenced session '{session_ref}': {e}")
-                    preloaded_doc = None
-                # Build a managed session to preload history and capture usage
-                session_obj = _ChatSession.from_agent(
-                    agent_obj,
-                    progress=reporter,
+            if not sessions_enabled:
+                # Plain non-persistent run
+                req = RunRequest(
+                    agent=agent_obj,
+                    prompt=initial_prompt,
                     config=config,
-                    mcp=mcp_manager,
+                    stream=stream,
+                    output_format=output_effective,
+                    no_tools=no_tools_effective,
+                    logger=logger,
+                    exit_on_interrupt=True,
+                    result_sink=None,
+                    messages_sink=None,
+                    mcp_manager=mcp_manager,
+                    progress_reporter=reporter,
+                    session=None,
                 )
-                await session_obj.start()
-                # Preload history and usage if we have a stored doc
-                hist = []
-                try:
-                    hist = list(preloaded_doc.get("messages") or [])
-                except Exception:
-                    hist = []
-                # If stored system prompt exists and no system at head, prepend
-                try:
-                    prompt_sys = (preloaded_doc.get("agent") or {}).get("prompt_system")
-                except Exception:
-                    prompt_sys = None
-                if prompt_sys and (not hist or (hist and hist[0].get("role") != "system")):
-                    hist = [{"role": "system", "content": prompt_sys}] + hist
-                session_obj.history = hist
-                try:
-                    if isinstance(preloaded_doc.get("usage"), dict):
-                        session_obj.usage = dict(preloaded_doc["usage"])  # type: ignore
-                except Exception:
-                    pass
+                await run_turn_with_request(req)
+                return
 
-            req = RunRequest(
-                agent=agent_obj,
-                prompt=initial_prompt,
-                config=config,
-                stream=stream,
-                output_format=output_effective,
-                no_tools=no_tools_effective,
-                logger=logger,
-                exit_on_interrupt=True,
-                result_sink=None,
-                messages_sink=messages_sink,
-                mcp_manager=mcp_manager,
-                progress_reporter=reporter,
-                session=session_obj,
-            )
-            await run_turn_with_request(req)
+            # Prepare session doc (preloaded or new)
+            preloaded_doc: Optional[Dict[str, Any]] = None
+            if session_ref:
+                sid = _resolve_session_ref(str(session_ref))
+                preloaded_doc = _load_session(sid)
 
-            # Build or update session doc
-            if preloaded_doc is None:
-                # New session
+            doc = preloaded_doc
+            if doc is None:
                 chosen_model = (getattr(agent_obj.llm, "_base", {}) or {}).get("model")
                 agent_info = {
                     "name": getattr(agent_obj, "name", None),
@@ -531,43 +524,34 @@ def main(
                     output=output_effective,
                     mcp_allowed_servers=(config.get("mcp", {}) or {}).get("allowed_servers"),
                 )
+                # Save once to assign id/filename
+                _save_session(doc)
 
-                # Title from first user message in this turn
-                first_user = None
-                for m in messages_sink:
-                    if m.get("role") == "user" and (m.get("content") or "").strip():
-                        first_user = str(m.get("content"))
-                        break
-                if first_user:
-                    try:
-                        small = agent_info.get("model_small") or agent_info.get("model")
-                        title = await _generate_title(
-                            first_user, small_model=small, llm=agent_obj.llm
-                        )
-                        if title:
-                            doc["title"] = title
-                    except Exception:
-                        pass
-            else:
-                doc = preloaded_doc
+            # Run once with persistence
+            req = RunRequest(
+                agent=agent_obj,
+                prompt=initial_prompt,
+                config=config,
+                stream=stream,
+                output_format=output_effective,
+                no_tools=no_tools_effective,
+                logger=logger,
+                exit_on_interrupt=True,
+                result_sink=None,
+                messages_sink=None,
+                mcp_manager=mcp_manager,
+                progress_reporter=reporter,
+                session=None,
+                session_doc=doc,
+                small_model=(doc.get("agent") or {}).get("model_small")
+                or (doc.get("agent") or {}).get("model"),
+            )
+            from gptsh.core.runner import run_turn_with_persistence
 
-            # Append messages and usage, then save
-            try:
-                _append_session_messages(
-                    doc, messages_sink, usage_delta=getattr(session_obj, "usage", {})
-                )
-            except Exception:
-                _append_session_messages(doc, messages_sink, usage_delta=None)
-            _save_session(doc)
-
-            # Close session resources if we created one
-            if session_obj is not None:
-                try:
-                    await session_obj.aclose()
-                except Exception:
-                    pass
+            await run_turn_with_persistence(req)
 
         asyncio.run(_run_once_noninteractive())
+
         try:
             reporter.stop()
         except Exception:

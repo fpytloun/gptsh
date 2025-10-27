@@ -13,6 +13,7 @@ from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressReporter
 from gptsh.llm.chunk_utils import extract_text
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
+from gptsh.llm.chunk_utils import extract_text as _extract_text_util  # alias for internal use
 
 _log = logging.getLogger(__name__)
 
@@ -26,6 +27,9 @@ class ChatSession:
     New minimal contract: build request params from the LLM base (llm._base)
     plus provided messages/history. No per-turn provider/agent config merges.
     """
+
+    # A short, human-friendly title for the conversation (optional)
+    title: Optional[str] = None
 
     def __init__(
         self,
@@ -47,6 +51,40 @@ class ChatSession:
         self.usage: Dict[str, Any] = {}
         # In-session message history managed by ChatSession
         self.history: List[Dict[str, Any]] = []
+        # Optional title for the conversation
+        self.title: Optional[str] = None
+
+    async def ensure_title(self, small_model: Optional[str]) -> Optional[str]:
+        """Generate and set a short title for this session if not set yet.
+
+        Uses the first user message in the current history and a configured
+        small model if available. Returns the title or None if unavailable.
+        """
+        try:
+            if self.title:
+                return self.title
+            if not isinstance(small_model, str) or not small_model.strip():
+                return None
+            # Find first user message content
+            first_user: Optional[str] = None
+            for m in self.history:
+                if m.get("role") == "user":
+                    text = str(m.get("content") or "").strip()
+                    if text:
+                        first_user = text
+                        break
+            if not first_user:
+                return None
+            # Lazy import to avoid circulars
+            from gptsh.core.sessions import generate_title as _gen_title  # noqa: WPS433
+
+            title = await _gen_title(first_user, small_model=small_model, llm=self._llm)
+            if isinstance(title, str) and title.strip():
+                self.title = title.strip()
+                return self.title
+            return None
+        except Exception:
+            return None
 
     def _update_usage(self, usage: Usage) -> None:
         self.usage = {

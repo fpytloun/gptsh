@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, TypedDict
 
 from gptsh.interfaces import LLMClient
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gptsh.core.session import ChatSession
 
 _log = logging.getLogger(__name__)
 
@@ -258,28 +262,12 @@ async def generate_title(
     except Exception as e:
         _log.error("Title generation call failed: %s", e)
         return None
+
     # Extract text
-    try:
-        from gptsh.llm.chunk_utils import extract_text as _extract
-    except Exception:
-        _extract = None  # type: ignore
-    text = None
-    if _extract is not None:
-        try:
-            text = _extract(resp)
-        except Exception as e:
-            _log.error("Failed to extract title text from response: %s", e)
-            text = None
-    if not text:
-        # fallback: naive path
-        text = (
-            (resp.get("choices") or [{}])[0].get("message", {}).get("content")
-            if isinstance(resp, dict)
-            else None
-        )
-    if not text:
-        return None
+    from gptsh.llm.chunk_utils import extract_text as _extract
+    text = _extract(resp)
     title = str(text).strip()
+
     # normalize: remove punctuation and lines, title case, trim length
     import re
 
@@ -295,5 +283,49 @@ async def generate_title(
     if len(words) > 7:
         title = " ".join(words[:7])
     # Title case
-    title = title.title()
+    #title = title.title()
     return title
+
+
+def preload_session_to_chat(doc: Dict[str, Any], chat: "ChatSession") -> None:
+    """Restore history, system prompt, usage, and title from a saved session doc into ChatSession."""
+    try:
+        hist = list(doc.get("messages") or [])
+    except Exception:
+        hist = []
+    try:
+        prompt_sys = (doc.get("agent") or {}).get("prompt_system")
+    except Exception:
+        prompt_sys = None
+    if prompt_sys and (not hist or (hist and hist[0].get("role") != "system")):
+        hist = [{"role": "system", "content": prompt_sys}] + hist
+    chat.history = hist
+    try:
+        if isinstance(doc.get("usage"), dict):
+            chat.usage = dict(doc["usage"])  # type: ignore
+    except Exception:
+        pass
+    try:
+        t = doc.get("title")
+        if isinstance(t, str) and t.strip():
+            chat.title = t
+    except Exception:
+        pass
+
+
+def save_after_turn(
+    doc: Dict[str, Any],
+    chat: "ChatSession",
+    new_messages: List[Dict[str, Any]],
+) -> str:
+    """Append new messages, merge usage, sync title, and save the session doc."""
+    try:
+        if isinstance(chat.title, str) and chat.title.strip():
+            doc["title"] = chat.title.strip()
+    except Exception:
+        pass
+    try:
+        append_messages(doc, new_messages, usage_delta=getattr(chat, "usage", {}))
+    except Exception:
+        append_messages(doc, new_messages, usage_delta=None)
+    return save_session(doc)

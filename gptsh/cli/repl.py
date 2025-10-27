@@ -417,6 +417,7 @@ async def run_agent_repl_async(
     initial_prompt: Optional[str] = None,
     progress_reporter: Optional[Any] = None,
     session_ref: Optional[str] = None,
+    sessions_enabled: Optional[bool] = None,
 ) -> None:
     """Interactive REPL loop using only a resolved Agent.
 
@@ -459,7 +460,7 @@ async def run_agent_repl_async(
 
     # Preload session if requested
     preloaded_doc: Optional[Dict[str, Any]] = None
-    if session_ref:
+    if session_ref and (sessions_enabled is None or sessions_enabled):
         try:
             sid = _resolve_session_ref(str(session_ref))
             preloaded_doc = _load_session(sid)
@@ -481,25 +482,14 @@ async def run_agent_repl_async(
             agent.session = sess
         except Exception as e:
             _log.debug("Failed to initialize ChatSession for REPL preload: %s", e)
-    if preloaded_doc and getattr(agent, "session", None) is not None:
-        hist = []
-        try:
-            hist = list(preloaded_doc.get("messages") or [])
-        except Exception:
-            hist = []
-        # Restore system prompt if available and not present in history
-        try:
-            prompt_sys = (preloaded_doc.get("agent") or {}).get("prompt_system")
-        except Exception:
-            prompt_sys = None
-        if prompt_sys and (not hist or (hist and hist[0].get("role") != "system")):
-            hist = [{"role": "system", "content": prompt_sys}] + hist
-        agent.session.history = hist
-        try:
-            if isinstance(preloaded_doc.get("usage"), dict):
-                agent.session.usage = dict(preloaded_doc["usage"])  # type: ignore
-        except Exception:
-            pass
+    if (
+        preloaded_doc
+        and getattr(agent, "session", None) is not None
+        and (sessions_enabled is None or sessions_enabled)
+    ):
+        from gptsh.core.sessions import preload_session_to_chat as _preload_chat
+
+        _preload_chat(preloaded_doc, agent.session)
 
     async def _run_once(user_text: str) -> tuple[str, List[Dict[str, Any]]]:
         from gptsh.cli.entrypoint import run_llm as _run_llm
@@ -660,64 +650,51 @@ async def run_agent_repl_async(
         current_task = asyncio.create_task(_run_once(sline))
         try:
             result_text, msgs = await current_task
-            # Persist turn to session store
-            try:
-                session_doc = preloaded_doc  # may be None initially
-            except NameError:
-                session_doc = None  # safety
-            # Determine agent.session for usage
-            sess = getattr(agent, "session", None)
-            if session_doc is None:
-                # Create a new session doc on first successful turn
-                chosen_model = (getattr(agent.llm, "_base", {}) or {}).get("model")
-                agent_info = {
-                    "name": getattr(agent, "name", None),
-                    "model": chosen_model,
-                    "model_small": _resolve_small_model({}, {}) or chosen_model,
-                    "prompt_system": (
-                        (
-                            (config.get("agents", {}) or {}).get(
-                                getattr(agent, "name", "default"), {}
-                            )
+            # Persist turn to session store when sessions are enabled
+            from gptsh.core.config_api import get_sessions_enabled
+
+            if (
+                get_sessions_enabled(config, no_sessions_cli=False)
+                if sessions_enabled is None
+                else sessions_enabled
+            ):
+                try:
+                    session_doc = preloaded_doc  # may be None initially
+                except NameError:
+                    session_doc = None
+                sess = getattr(agent, "session", None)
+                if session_doc is None:
+                    chosen_model = (getattr(agent.llm, "_base", {}) or {}).get("model")
+                    agent_info = {
+                        "name": getattr(agent, "name", None),
+                        "model": chosen_model,
+                        "model_small": _resolve_small_model({}, {}) or chosen_model,
+                        "prompt_system": (
+                            (
+                                (config.get("agents", {}) or {}).get(
+                                    getattr(agent, "name", "default"), {}
+                                )
+                                or {}
+                            ).get("prompt", {})
                             or {}
-                        ).get("prompt", {})
-                        or {}
-                    ).get("system"),
-                    "params": {
-                        k: v
-                        for k, v in (getattr(agent, "generation_params", {}) or {}).items()
-                        if k in {"temperature", "reasoning_effort"} and v is not None
-                    },
-                }
-                provider_info = {"name": (config.get("default_provider") or None)}
-                session_doc = _new_session_doc(
-                    agent_info=agent_info,
-                    provider_info=provider_info,
-                    output=output_format,
-                    mcp_allowed_servers=(config.get("mcp", {}) or {}).get("allowed_servers"),
-                )
-                # Title from first user message in this turn only
-                first_user = None
-                for m in msgs:
-                    if m.get("role") == "user" and (m.get("content") or "").strip():
-                        first_user = str(m.get("content"))
-                        break
-                if first_user:
-                    try:
-                        small = agent_info.get("model_small") or agent_info.get("model")
-                        title = await _generate_title(first_user, small_model=small, llm=agent.llm)
-                        if title:
-                            session_doc["title"] = title
-                    except Exception:
-                        pass
-            # Append and save
-            try:
-                _append_session_messages(session_doc, msgs, usage_delta=getattr(sess, "usage", {}))
-            except Exception:
-                _append_session_messages(session_doc, msgs, usage_delta=None)
-            _save_session(session_doc)
-            # Update preloaded_doc reference so subsequent turns append to the same doc
-            preloaded_doc = session_doc
+                        ).get("system"),
+                        "params": {
+                            k: v
+                            for k, v in (getattr(agent, "generation_params", {}) or {}).items()
+                            if k in {"temperature", "reasoning_effort"} and v is not None
+                        },
+                    }
+                    provider_info = {"name": (config.get("default_provider") or None)}
+                    session_doc = _new_session_doc(
+                        agent_info=agent_info,
+                        provider_info=provider_info,
+                        output=output_format,
+                        mcp_allowed_servers=(config.get("mcp", {}) or {}).get("allowed_servers"),
+                    )
+                from gptsh.core.sessions import save_after_turn as _save_after
+
+                _save_after(session_doc, sess, msgs)
+                preloaded_doc = session_doc
         except (KeyboardInterrupt, asyncio.CancelledError):
             current_task.cancel()
             try:
@@ -739,6 +716,7 @@ def run_agent_repl(
     initial_prompt: Optional[str] = None,
     progress_reporter: Optional[Any] = None,
     session_ref: Optional[str] = None,
+    sessions_enabled: Optional[bool] = None,
 ) -> None:
     asyncio.run(
         run_agent_repl_async(
@@ -749,5 +727,6 @@ def run_agent_repl(
             initial_prompt=initial_prompt,
             progress_reporter=progress_reporter,
             session_ref=session_ref,
+            sessions_enabled=sessions_enabled,
         )
     )

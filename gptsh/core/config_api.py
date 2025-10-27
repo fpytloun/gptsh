@@ -63,3 +63,16 @@ def compute_tools_policy(
         labels = [str(x) for x in tools if x]
         return False, labels
     return False, None
+
+
+def get_sessions_enabled(config: Dict[str, Any], no_sessions_cli: bool = False) -> bool:
+    """Determine whether session persistence is enabled.
+
+    Precedence: CLI --no-sessions disables; else config.sessions.enabled (default True).
+    """
+    if no_sessions_cli:
+        return False
+    try:
+        return bool((config.get("sessions") or {}).get("enabled", True))
+    except Exception:
+        return True

@@ -14,6 +14,7 @@ from gptsh.core.progress import NoOpProgressReporter
 from gptsh.core.session import ChatSession
 from gptsh.interfaces import ProgressReporter
 from gptsh.mcp.manager import MCPManager
+from gptsh.core.sessions import preload_session_to_chat, save_after_turn
 
 
 class MarkdownBuffer:
@@ -283,6 +284,9 @@ class RunRequest:
     mcp_manager: Optional[MCPManager] = None
     progress_reporter: ProgressReporter = None
     session: Optional[ChatSession] = None
+    # Persistence-related (optional)
+    session_doc: Optional[Dict[str, Any]] = None
+    small_model: Optional[str] = None
 
 
 async def run_turn_with_request(req: RunRequest) -> None:
@@ -301,3 +305,70 @@ async def run_turn_with_request(req: RunRequest) -> None:
         progress_reporter=req.progress_reporter,
         session=req.session,
     )
+
+
+async def run_turn_with_persistence(req: RunRequest) -> None:
+    """Run a turn and persist conversation to the provided session_doc.
+
+    Expects req.session_doc to be provided (preloaded or newly created doc).
+    """
+    # Prepare a session and a messages sink for capturing deltas
+    pr = req.progress_reporter or NoOpProgressReporter()
+    created_session = False
+    session = req.session
+    if session is None:
+        session = ChatSession.from_agent(
+            req.agent,
+            progress=pr,
+            config=req.config,
+            mcp=(None if req.no_tools else (req.mcp_manager or MCPManager(req.config))),
+        )
+        await session.start()
+        created_session = True
+
+    # Preload existing history if a doc is provided
+    if isinstance(req.session_doc, dict):
+        try:
+            preload_session_to_chat(req.session_doc, session)
+        except Exception:
+            pass
+
+    messages_sink: List[Dict[str, Any]] = []
+
+    # Run the turn with our prepared session
+    await run_turn(
+        agent=req.agent,
+        prompt=req.prompt,
+        config=req.config,
+        stream=req.stream,
+        output_format=req.output_format,
+        no_tools=req.no_tools,
+        logger=req.logger,
+        exit_on_interrupt=req.exit_on_interrupt,
+        result_sink=req.result_sink,
+        messages_sink=messages_sink,
+        mcp_manager=req.mcp_manager,
+        progress_reporter=pr,
+        session=session,
+    )
+
+    # Generate title if requested and not yet present
+    try:
+        if req.small_model:
+            await session.ensure_title(req.small_model)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    # Persist doc if provided
+    if isinstance(req.session_doc, dict):
+        try:
+            save_after_turn(req.session_doc, session, messages_sink)
+        except Exception:
+            pass
+
+    # Close only if we created it here
+    if created_session:
+        try:
+            await session.aclose()
+        except Exception:
+            pass
