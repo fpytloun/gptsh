@@ -40,8 +40,8 @@
 ## User Experience
 - [x] Detect TTY vs non-TTY and provide appropriate UI modes (spinner vs minimal output)
 - [ ] Add --version parameter to show current tool version
-- [ ] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
-- [ ] First ctrl+c or esc should stop ongoing request
+- [x] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
+- [x] First ctrl+c or esc should stop ongoing request
 - [x] Add /info command that will show current model (and settings like temperature, reasoning_effort) and context usage
 - [ ] Add /compact command that will compact history to reduce context window size
 - [ ] Warn (change prompt color) when context window is getting full (eg. above 80%) in REPL mode

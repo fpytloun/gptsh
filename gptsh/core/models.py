@@ -86,11 +86,11 @@ def pick_effective_agent_provider(
 ) -> Tuple[AgentConfig, ProviderConfig]:
     agent_name = cli_agent or defaults.default_agent or (next(iter(agents)) if agents else None)
     if not agent_name or agent_name not in agents:
-        raise KeyError("agent not found")
+        raise KeyError(f"agent {agent_name} not found")
     agent = agents[agent_name]
     provider_name = cli_provider or agent.provider or defaults.default_provider or (next(iter(providers)) if providers else None)
     if not provider_name or provider_name not in providers:
-        raise KeyError("provider not found")
+        raise KeyError(f"provider {provider_name} not found")
     provider = providers[provider_name]
     return agent, provider
 

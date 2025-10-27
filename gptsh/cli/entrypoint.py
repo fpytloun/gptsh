@@ -19,6 +19,16 @@ from gptsh.core.runner import RunRequest, run_turn_with_request
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
 from gptsh.mcp.manager import MCPManager
+from gptsh.core.sessions import (
+    list_sessions as _list_saved_sessions,
+    resolve_session_ref as _resolve_session_ref,
+    load_session as _load_session,
+    save_session as _save_session,
+    new_session_doc as _new_session_doc,
+    append_messages as _append_session_messages,
+    resolve_small_model as _resolve_small_model,
+    generate_title as _generate_title,
+)
 
 # Ensure LiteLLM async HTTPX clients are closed cleanly on loop shutdown
 try:
@@ -71,6 +81,13 @@ DEFAULT_AGENTS = {"default": {}}
     help="List configured agents and their tools",
 )
 @click.option(
+    "--list-sessions",
+    "list_sessions_flag",
+    is_flag=True,
+    default=False,
+    help="List saved sessions",
+)
+@click.option(
     "--output",
     "-o",
     type=click.Choice(["text", "markdown", "default"]),
@@ -89,6 +106,9 @@ DEFAULT_AGENTS = {"default": {}}
 @click.option(
     "--interactive", "-i", is_flag=True, default=False, help="Run in interactive REPL mode"
 )
+@click.option(
+    "-s", "--session", "session_ref", default=None, help="Session reference (index or id)"
+)
 @click.option("--assume-tty", is_flag=True, default=False, help="Assume TTY (for tests/CI)")
 @click.argument("prompt", required=False)
 def main(
@@ -104,10 +124,12 @@ def main(
     list_tools_flag,
     list_providers_flag,
     list_agents_flag,
+    list_sessions_flag,
     output,
     no_tools,
     tools_filter,
     interactive,
+    session_ref,
     assume_tty,
     prompt,
 ):
@@ -240,18 +262,114 @@ def main(
         _print_agents_listing(config, agents_conf, tools_map, no_tools)
         sys.exit(0)
 
-    # Resolve agent
-    agent_obj, agent_conf, provider_conf, output_effective, no_tools_effective, _ = asyncio.run(
-        _resolve_agent_and_settings(
-            config=config,
-            agent_name=agent,
-            provider_name=provider,
-            model_override=model,
-            tools_filter_labels=tools_filter_labels,
-            no_tools_flag=no_tools,
-            output_format=output,
+    if list_sessions_flag:
+        from datetime import datetime
+
+        def _fmt_local(iso: str) -> str:
+            try:
+                # Accept 'Z' suffix
+                s = iso.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(s)
+                return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                return iso
+
+        sessions = _list_saved_sessions()
+        for idx, s in enumerate(sessions):
+            dt = s.get("updated_at") or s.get("created_at") or ""
+            title = s.get("title") or "(untitled)"
+            agent_name = s.get("agent") or "?"
+            model_name = s.get("model") or "?"
+            click.echo(
+                f"[{idx}] {s.get('id')} {_fmt_local(dt)} {title} ({agent_name}|{model_name})"
+            )
+        sys.exit(0)
+
+    # If resuming a session, preload its agent/provider/model preferences unless overridden via CLI
+    resume_doc = None
+    if session_ref:
+        try:
+            sid = _resolve_session_ref(str(session_ref))
+            resume_doc = _load_session(sid)
+        except Exception as e:
+            # Fallback to defaults: warn and proceed
+            click.echo(f"Warning: failed to load referenced session '{session_ref}': {e}", err=True)
+            resume_doc = None
+    resume_agent = agent
+    resume_provider = provider
+    resume_model = model
+    if resume_doc is not None:
+        try:
+            if resume_agent is None:
+                resume_agent = (resume_doc.get("agent") or {}).get("name")
+            if resume_provider is None:
+                rp = (resume_doc.get("provider") or {}).get("name")
+                if rp:
+                    resume_provider = rp
+            if resume_model is None:
+                rm = (resume_doc.get("agent") or {}).get("model")
+                if rm:
+                    resume_model = rm
+        except Exception:
+            pass
+
+    # Validate resumed agent/provider exist; warn and fall back if missing
+    try:
+        agents_conf = config.get("agents", {}) or {}
+        providers_conf = config.get("providers", {}) or {}
+        if resume_doc is not None:
+            if resume_agent is None:
+                cand = (resume_doc.get("agent") or {}).get("name")
+                if isinstance(cand, str) and cand:
+                    if cand in agents_conf:
+                        resume_agent = cand
+                    else:
+                        click.echo(
+                            f"Warning: agent '{cand}' not available, falling back to default agent",
+                            err=True,
+                        )
+            if resume_provider is None:
+                candp = (resume_doc.get("provider") or {}).get("name")
+                if isinstance(candp, str) and candp:
+                    if candp in providers_conf:
+                        resume_provider = candp
+                    else:
+                        dp = config.get("default_provider") or (
+                            next(iter(providers_conf)) if providers_conf else None
+                        )
+                        click.echo(
+                            f"Warning: provider '{candp}' not available, falling back to default provider {dp}",
+                            err=True,
+                        )
+    except Exception:
+        pass
+
+    # Resolve agent with safe fallback if stored values are invalid
+    try:
+        agent_obj, agent_conf, provider_conf, output_effective, no_tools_effective, _ = asyncio.run(
+            _resolve_agent_and_settings(
+                config=config,
+                agent_name=resume_agent,
+                provider_name=resume_provider,
+                model_override=resume_model,
+                tools_filter_labels=tools_filter_labels,
+                no_tools_flag=no_tools,
+                output_format=output,
+            )
         )
-    )
+    except KeyError as e:
+        click.echo(f"Warning: {e}. Falling back to defaults.", err=True)
+        agent_obj, agent_conf, provider_conf, output_effective, no_tools_effective, _ = asyncio.run(
+            _resolve_agent_and_settings(
+                config=config,
+                agent_name=None,
+                provider_name=None,
+                model_override=None,
+                tools_filter_labels=tools_filter_labels,
+                no_tools_flag=no_tools,
+                output_format=output,
+            )
+        )
 
     # Initial prompt from arg and/or stdin
     stdin_input = None
@@ -306,6 +424,7 @@ def main(
                 stream=stream,
                 initial_prompt=initial_prompt,
                 progress_reporter=reporter,
+                session_ref=session_ref,
             )
             # After REPL exits, proactively close any attached ChatSession to release resources
             try:
@@ -325,21 +444,130 @@ def main(
     # Non-interactive
     if initial_prompt:
 
-        async def _run_llm_once(*args, **kwargs):
-            await run_llm(*args, **kwargs)
+        async def _run_once_noninteractive() -> None:
+            messages_sink: List[Dict[str, Any]] = []
+            preloaded_doc: Optional[Dict[str, Any]] = None
+            session_obj = None
+            mcp_manager = None if no_tools_effective else MCPManager(config)
 
-        asyncio.run(
-            _run_llm_once(
+            # Only preload and attach a session if a session_ref was provided
+            if session_ref:
+                from gptsh.core.session import ChatSession as _ChatSession
+
+                try:
+                    sid = _resolve_session_ref(str(session_ref))
+                    preloaded_doc = _load_session(sid)
+                except Exception as e:
+                    click.echo(f"Warning: failed to load referenced session '{session_ref}': {e}")
+                    preloaded_doc = None
+                # Build a managed session to preload history and capture usage
+                session_obj = _ChatSession.from_agent(
+                    agent_obj,
+                    progress=reporter,
+                    config=config,
+                    mcp=mcp_manager,
+                )
+                await session_obj.start()
+                # Preload history and usage if we have a stored doc
+                hist = []
+                try:
+                    hist = list(preloaded_doc.get("messages") or [])
+                except Exception:
+                    hist = []
+                # If stored system prompt exists and no system at head, prepend
+                try:
+                    prompt_sys = (preloaded_doc.get("agent") or {}).get("prompt_system")
+                except Exception:
+                    prompt_sys = None
+                if prompt_sys and (not hist or (hist and hist[0].get("role") != "system")):
+                    hist = [{"role": "system", "content": prompt_sys}] + hist
+                session_obj.history = hist
+                try:
+                    if isinstance(preloaded_doc.get("usage"), dict):
+                        session_obj.usage = dict(preloaded_doc["usage"])  # type: ignore
+                except Exception:
+                    pass
+
+            req = RunRequest(
+                agent=agent_obj,
                 prompt=initial_prompt,
+                config=config,
                 stream=stream,
                 output_format=output_effective,
                 no_tools=no_tools_effective,
-                config=config,
                 logger=logger,
-                agent_obj=agent_obj,
+                exit_on_interrupt=True,
+                result_sink=None,
+                messages_sink=messages_sink,
+                mcp_manager=mcp_manager,
                 progress_reporter=reporter,
+                session=session_obj,
             )
-        )
+            await run_turn_with_request(req)
+
+            # Build or update session doc
+            if preloaded_doc is None:
+                # New session
+                chosen_model = (getattr(agent_obj.llm, "_base", {}) or {}).get("model")
+                agent_info = {
+                    "name": getattr(agent_obj, "name", None),
+                    "model": chosen_model,
+                    "model_small": _resolve_small_model(agent_conf or {}, provider_conf or {})
+                    or chosen_model,
+                    "prompt_system": (((agent_conf or {}).get("prompt") or {}).get("system")),
+                    "params": {
+                        k: v
+                        for k, v in (agent_conf or {}).items()
+                        if k in {"temperature", "reasoning_effort"} and v is not None
+                    },
+                }
+                provider_info = {
+                    "name": (agent_conf or {}).get("provider")
+                    or (config.get("default_provider") or None)
+                }
+                doc = _new_session_doc(
+                    agent_info=agent_info,
+                    provider_info=provider_info,
+                    output=output_effective,
+                    mcp_allowed_servers=(config.get("mcp", {}) or {}).get("allowed_servers"),
+                )
+
+                # Title from first user message in this turn
+                first_user = None
+                for m in messages_sink:
+                    if m.get("role") == "user" and (m.get("content") or "").strip():
+                        first_user = str(m.get("content"))
+                        break
+                if first_user:
+                    try:
+                        small = agent_info.get("model_small") or agent_info.get("model")
+                        title = await _generate_title(
+                            first_user, small_model=small, llm=agent_obj.llm
+                        )
+                        if title:
+                            doc["title"] = title
+                    except Exception:
+                        pass
+            else:
+                doc = preloaded_doc
+
+            # Append messages and usage, then save
+            try:
+                _append_session_messages(
+                    doc, messages_sink, usage_delta=getattr(session_obj, "usage", {})
+                )
+            except Exception:
+                _append_session_messages(doc, messages_sink, usage_delta=None)
+            _save_session(doc)
+
+            # Close session resources if we created one
+            if session_obj is not None:
+                try:
+                    await session_obj.aclose()
+                except Exception:
+                    pass
+
+        asyncio.run(_run_once_noninteractive())
         try:
             reporter.stop()
         except Exception:
