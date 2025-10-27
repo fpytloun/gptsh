@@ -40,7 +40,6 @@ async def test_chat_session_from_agent_uses_agent_llm_and_policy():
     async for t in session.stream_turn(
         prompt="hi",
         no_tools=False,
-        history_messages=None,
     ):
         chunks.append(t)
     out = "".join(chunks)

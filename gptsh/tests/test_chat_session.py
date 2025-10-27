@@ -82,7 +82,6 @@ async def test_chat_session_tool_loop_auto_approved():
     async for t in session.stream_turn(
         prompt="hi",
         no_tools=False,
-        history_messages=None,
     ):
         chunks.append(t)
     out = "".join(chunks)
@@ -129,7 +128,6 @@ async def test_chat_session_tool_loop_denied():
     async for t in session.stream_turn(
         prompt="hi",
         no_tools=False,
-        history_messages=None,
     ):
         chunks.append(t)
     out = "".join(chunks)
@@ -180,7 +178,6 @@ async def test_chat_session_multiple_tools():
     async for t in session.stream_turn(
         prompt="hi",
         no_tools=False,
-        history_messages=None,
     ):
         chunks.append(t)
     out = "".join(chunks)
@@ -202,7 +199,6 @@ async def test_system_prompt_included_in_messages_non_stream():
     async for t in session.stream_turn(
         prompt="hi",
         no_tools=False,
-        history_messages=None,
     ):
         chunks.append(t)
     out = "".join(chunks)
@@ -225,7 +221,6 @@ async def test_system_prompt_included_in_messages_stream():
     params, _has_tools, _model = await session._prepare_params(
         prompt="hi",
         no_tools=False,
-        history_messages=None,
     )
     msgs = params.get("messages")
     assert msgs[0] == {"role": "user", "content": "hi"}

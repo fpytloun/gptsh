@@ -157,7 +157,6 @@ async def run_turn(
     no_tools: bool = False,
     logger: Any = None,
     exit_on_interrupt: bool = True,
-    history_messages: Optional[List[Dict[str, Any]]] = None,
     result_sink: Optional[List[str]] = None,
     messages_sink: Optional[List[Dict[str, Any]]] = None,
     mcp_manager: Optional[MCPManager] = None,
@@ -186,13 +185,12 @@ async def run_turn(
             await session.start()
         buffer = ""
         full_output = ""
-        initial_hist_len = len(history_messages) if isinstance(history_messages, list) else None
+        initial_hist_len = len(getattr(session, "history", []))
         mbuf: Optional[MarkdownBuffer] = MarkdownBuffer() if output_format == "markdown" else None
 
         async for text in session.stream_turn(
             prompt=prompt,
             no_tools=no_tools,
-            history_messages=history_messages,
         ):
             if not text:
                 continue
@@ -224,32 +222,15 @@ async def run_turn(
                 async with pr.aio_io():
                     console.print(buffer)
 
-        # Ensure the cursor is on a fresh line before any subsequent prompts (REPL),
-        # to avoid the prompt being rendered on the same line as the last chunk.
-        # NOTE: Does not seem to be needed now, we want to avoid blank line in our output
-        # try:
-        #     async with pr.aio_io():
-        #         pass
-        #         console.print("")
-        # except Exception:
-        #     pass
-
-        # If we saw streamed tool deltas but no output, fallback to non-stream
-        # stream_turn already executed tools and finalized output.
         if result_sink is not None:
             try:
                 result_sink.append(full_output)
             except Exception:
                 pass
 
-        # Populate structured message deltas if requested and history was provided
-        if (
-            messages_sink is not None
-            and isinstance(history_messages, list)
-            and initial_hist_len is not None
-        ):
+        if messages_sink is not None and hasattr(session, "history"):
             try:
-                new_msgs = history_messages[initial_hist_len:]
+                new_msgs = session.history[initial_hist_len:]
                 messages_sink.extend(new_msgs)
             except Exception:
                 pass
@@ -297,7 +278,6 @@ class RunRequest:
     no_tools: bool = False
     logger: Any = None
     exit_on_interrupt: bool = True
-    history_messages: Optional[List[Dict[str, Any]]] = None
     result_sink: Optional[List[str]] = None
     messages_sink: Optional[List[Dict[str, Any]]] = None
     mcp_manager: Optional[MCPManager] = None
@@ -315,7 +295,6 @@ async def run_turn_with_request(req: RunRequest) -> None:
         no_tools=req.no_tools,
         logger=req.logger,
         exit_on_interrupt=req.exit_on_interrupt,
-        history_messages=req.history_messages,
         result_sink=req.result_sink,
         messages_sink=req.messages_sink,
         mcp_manager=req.mcp_manager,

@@ -26,14 +26,13 @@ async def test_core_run_prompt_monkey(monkeypatch):
     params, has_tools, model = await session._prepare_params(
         prompt="hi",
         no_tools=False,
-        history_messages=None,
     )
+
     # Now run a small no-tools turn and accept empty result
     chunks = []
     async for t in session.stream_turn(
         prompt="hi",
         no_tools=True,
-        history_messages=None,
     ):
         chunks.append(t)
     assert "".join(chunks) in ("ok", "")

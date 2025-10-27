@@ -30,7 +30,6 @@ async def test_run_prompt_with_agent_simple_no_tools(monkeypatch):
     async for t in session.stream_turn(
         prompt="hi",
         no_tools=True,
-        history_messages=None,
     ):
         chunks.append(t)
     out = "".join(chunks)

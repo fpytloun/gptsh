@@ -170,7 +170,7 @@ def test_cli_stream_no_tools(monkeypatch):
         async def start(self):
             pass
 
-        async def stream_turn(self, *, prompt, no_tools=False, history_messages=None):
+        async def stream_turn(self, *, prompt, no_tools=False):
             yield "hello "
             yield "world"
 
@@ -232,7 +232,6 @@ def test_cli_agent_provider_selection(monkeypatch):
             *,
             prompt,
             no_tools=False,
-            history_messages=None,
         ):
             yield "x"
 

@@ -36,7 +36,6 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
             *,
             prompt,
             no_tools,
-            history_messages,
         ):
             if False:
                 yield ""  # pragma: no cover
@@ -64,8 +63,8 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
             output_format="text",
             no_tools=False,
             logger=None,
-            history_messages=None,
             result_sink=result_sink,
+
         )
     )
 
@@ -98,7 +97,6 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
             *,
             prompt,
             no_tools,
-            history_messages,
         ):
             yield "hello"
             yield " "
@@ -124,8 +122,8 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
             output_format="text",
             no_tools=False,
             logger=None,
-            history_messages=None,
             result_sink=result_sink,
+
         )
     )
 

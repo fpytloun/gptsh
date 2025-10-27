@@ -439,7 +439,7 @@ async def run_agent_repl_async(
         _log.debug("Failed to inspect agent tools: %s", e)
         no_tools = True
 
-    history_messages: List[Dict[str, Any]] = []
+    # Session history lives in ChatSession; no external history list
     last_interrupt = 0.0
     try:
         from gptsh.mcp.manager import MCPManager as _MCPManager
@@ -459,7 +459,6 @@ async def run_agent_repl_async(
             config=config,
             logger=console,
             exit_on_interrupt=False,
-            history_messages=history_messages,
             result_sink=sink,
             agent_obj=agent,
             mcp_manager=mcp_manager,
@@ -602,11 +601,9 @@ async def run_agent_repl_async(
             click.echo("Unknown command", err=True)
             continue
 
-        user_msg = {"role": "user", "content": sline}
         current_task = asyncio.create_task(_run_once(sline))
         try:
             await current_task
-            history_messages.append(user_msg)
         except (KeyboardInterrupt, asyncio.CancelledError):
             current_task.cancel()
             try:

@@ -45,6 +45,8 @@ class ChatSession:
         self._tool_specs: List[Dict[str, Any]] = list(tool_specs or [])
         self._closed: bool = False
         self.usage: Dict[str, Any] = {}
+        # In-session message history managed by ChatSession
+        self.history: List[Dict[str, Any]] = []
 
     def _update_usage(self, usage: Usage) -> None:
         self.usage = {
@@ -149,7 +151,6 @@ class ChatSession:
         self,
         prompt: str,
         no_tools: bool,
-        history_messages: Optional[List[Dict[str, Any]]],
     ) -> tuple[Dict[str, Any], bool, str]:
         # Build params from LLM base only
         params: Dict[str, Any] = {}
@@ -157,10 +158,9 @@ class ChatSession:
         chosen_model = base.get("model") or "gpt-4o"
 
         messages: List[Dict[str, Any]] = []
-        if history_messages:
-            for m in history_messages:
-                if isinstance(m, dict) and m.get("role") in {"user", "assistant", "tool", "system"}:
-                    messages.append(m)
+        for m in self.history:
+            if isinstance(m, dict) and m.get("role") in {"user", "assistant", "tool", "system"}:
+                messages.append(m)
         messages.append({"role": "user", "content": prompt})
 
         params["model"] = chosen_model
@@ -189,14 +189,12 @@ class ChatSession:
         self,
         prompt: str,
         no_tools: bool = False,
-        history_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[str]:
         # Per-turn progress task
         working_task_id: Optional[int] = None
         try:
-            params, has_tools, _model = await self._prepare_params(
-                prompt, no_tools, history_messages
-            )
+            params, has_tools, _model = await self._prepare_params(prompt, no_tools)
+            # Initialize conversation from params messages
             conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
             turn_deltas: List[Dict[str, Any]] = []
 
@@ -236,8 +234,11 @@ class ChatSession:
                         final_msg = {"role": "assistant", "content": full_text}
                         conversation.append(final_msg)
                         turn_deltas.append(final_msg)
-                    if history_messages is not None:
-                        history_messages.extend(turn_deltas)
+                    # Persist deltas and current user to session history
+                    user_msg = {"role": "user", "content": prompt}
+                    self.history.append(user_msg)
+                    if turn_deltas:
+                        self.history.extend(turn_deltas)
                     return
 
                 calls: List[Dict[str, Any]] = []
@@ -260,8 +261,10 @@ class ChatSession:
                         final_msg = {"role": "assistant", "content": full_text}
                         conversation.append(final_msg)
                         turn_deltas.append(final_msg)
-                    if history_messages is not None:
-                        history_messages.extend(turn_deltas)
+                    user_msg = {"role": "user", "content": prompt}
+                    self.history.append(user_msg)
+                    if turn_deltas:
+                        self.history.extend(turn_deltas)
                     return
 
                 if isinstance(full_text, str) and full_text.strip():
@@ -299,8 +302,10 @@ class ChatSession:
                             final_msg = {"role": "assistant", "content": final_text}
                             conversation.append(final_msg)
                             turn_deltas.append(final_msg)
-                            if history_messages is not None:
-                                history_messages.extend(turn_deltas)
+                        user_msg = {"role": "user", "content": prompt}
+                        self.history.append(user_msg)
+                        if turn_deltas:
+                            self.history.extend(turn_deltas)
                         return
 
                 assistant_tool_calls: List[Dict[str, Any]] = []
