@@ -246,7 +246,7 @@ async def generate_title(
         return None
     system = (
         "You generate a short, human-friendly title for a conversation based solely on the first user message. "
-        "Return 3–7 plain words in Title Case. No punctuation, no quotes, no extra text."
+        "Return 3–7 plain words. No punctuation, no quotes, no extra text."
     )
     params: Dict[str, Any] = {
         "model": small_model,
