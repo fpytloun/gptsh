@@ -15,20 +15,15 @@ from gptsh.cli.utils import (
 from gptsh.config.loader import load_config
 from gptsh.core.config_resolver import build_agent
 from gptsh.core.logging import setup_logging
-from gptsh.core.runner import RunRequest, run_turn_with_request, run_turn_with_persistence
+from gptsh.core.runner import RunRequest, run_turn_with_request
+from gptsh.core.sessions import (
+    list_sessions as _list_saved_sessions,
+    load_session as _load_session,
+    resolve_session_ref as _resolve_session_ref,
+)
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
 from gptsh.mcp.manager import MCPManager
-from gptsh.core.sessions import (
-    list_sessions as _list_saved_sessions,
-    resolve_session_ref as _resolve_session_ref,
-    load_session as _load_session,
-    save_session as _save_session,
-    new_session_doc as _new_session_doc,
-    append_messages as _append_session_messages,
-    resolve_small_model as _resolve_small_model,
-    generate_title as _generate_title,
-)
 
 # Ensure LiteLLM async HTTPX clients are closed cleanly on loop shutdown
 try:
@@ -472,12 +467,12 @@ def main(
     if initial_prompt:
 
         async def _run_once_noninteractive() -> None:
+            from gptsh.core.config_api import get_sessions_enabled
             from gptsh.core.sessions import (
                 new_session_doc as _new_session_doc,
                 resolve_small_model as _resolve_small_model,
                 save_session as _save_session,
             )
-            from gptsh.core.config_api import get_sessions_enabled
 
             mcp_manager = None if no_tools_effective else MCPManager(config)
 

@@ -13,7 +13,6 @@ from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.interfaces import ApprovalPolicy, LLMClient, MCPClient, ProgressReporter
 from gptsh.llm.chunk_utils import extract_text
 from gptsh.llm.tool_adapter import build_llm_tools, parse_tool_calls
-from gptsh.llm.chunk_utils import extract_text as _extract_text_util  # alias for internal use
 
 _log = logging.getLogger(__name__)
 
@@ -27,9 +26,6 @@ class ChatSession:
     New minimal contract: build request params from the LLM base (llm._base)
     plus provided messages/history. No per-turn provider/agent config merges.
     """
-
-    # A short, human-friendly title for the conversation (optional)
-    title: Optional[str] = None
 
     def __init__(
         self,

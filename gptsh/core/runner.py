@@ -12,9 +12,9 @@ from rich.markdown import Markdown
 from gptsh.core.exceptions import ToolApprovalDenied
 from gptsh.core.progress import NoOpProgressReporter
 from gptsh.core.session import ChatSession
+from gptsh.core.sessions import preload_session_to_chat, save_after_turn
 from gptsh.interfaces import ProgressReporter
 from gptsh.mcp.manager import MCPManager
-from gptsh.core.sessions import preload_session_to_chat, save_after_turn
 
 
 class MarkdownBuffer:

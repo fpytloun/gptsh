@@ -10,16 +10,13 @@ import click
 from gptsh.core.agent import Agent
 from gptsh.core.config_api import compute_tools_policy
 from gptsh.core.exceptions import ReplExit
-from gptsh.mcp import ensure_sessions_started_async as ensure_sessions_started_async  # noqa: F401
 from gptsh.core.sessions import (
-    resolve_session_ref as _resolve_session_ref,
     load_session as _load_session,
-    save_session as _save_session,
     new_session_doc as _new_session_doc,
-    append_messages as _append_session_messages,
+    resolve_session_ref as _resolve_session_ref,
     resolve_small_model as _resolve_small_model,
-    generate_title as _generate_title,
 )
+from gptsh.mcp import ensure_sessions_started_async as ensure_sessions_started_async  # noqa: F401
 
 _log = logging.getLogger(__name__)
 
