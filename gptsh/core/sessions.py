@@ -269,19 +269,19 @@ async def generate_title(
     title = str(text).strip()
 
     # normalize: remove punctuation and lines, title case, trim length
-    import re
+    #import re
 
-    title = title.splitlines()[0]
-    title = re.sub(
-        r"[\"'\-–—:,.!?()\[\]{}]|\s+", lambda m: " " if m.group(0).isspace() else "", title
-    )
-    title = " ".join(title.split())
-    if not title:
-        return None
+    #title = title.splitlines()[0]
+    #title = re.sub(
+    #    r"[\"'\-–—:,.!?()\[\]{}]|\s+", lambda m: " " if m.group(0).isspace() else "", title
+    #)
+    #title = " ".join(title.split())
+    #if not title:
+    #    return None
     # Ensure 3-7 words constraint softly (truncate if too long)
-    words = title.split()
-    if len(words) > 7:
-        title = " ".join(words[:7])
+    #words = title.split()
+    #if len(words) > 7:
+    #    title = " ".join(words[:7])
     # Title case
     #title = title.title()
     return title

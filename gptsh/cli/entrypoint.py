@@ -293,12 +293,23 @@ def main(
             title = s.get("title") or "(untitled)"
             agent_name = s.get("agent") or "?"
             model_name = s.get("model") or "?"
-            click.echo(
-                f"[{idx_str}] {s.get('id')} {_fmt_local(dt)} {title} ({agent_name}|{model_name})"
+            idx_part = (
+                click.style("[", fg="bright_black")
+                + click.style(f"{idx_str}", fg="bright_yellow")
+                + click.style("]", fg="bright_black")
             )
+            id_part = click.style(str(s.get("id")), fg="yellow")
+            dt_part = click.style(_fmt_local(dt), fg="cyan")
+            title_part = click.style(title, fg="green")
+            agent_model_part = click.style(f"({agent_name}|{model_name})", fg="bright_black")
+            click.echo(f"{idx_part} {id_part} {dt_part} {title_part} {agent_model_part}")
         remaining = total - len(to_show)
         if remaining > 10:
-            click.echo(f"... and {remaining} older sessions not shown")
+            click.echo(
+                click.style(
+                    f"[ {remaining} older sessions not shown ]", fg="bright_black"
+                )
+            )
         sys.exit(0)
 
     # If resuming a session, preload its agent/provider/model preferences unless overridden via CLI
