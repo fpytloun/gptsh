@@ -185,12 +185,53 @@ Options:
   --list-tools
   --list-providers              List configured providers
   --list-agents                 List configured agents and their tools
+  --list-sessions               List saved sessions (supports filters)
   -o, --output [text|markdown]  Output format
   --no-tools                    Disable MCP tools (discovery and execution)
   --tools TEXT                  Comma/space-separated MCP server labels to
                                 allow (others skipped)
   -i, --interactive             Run in interactive REPL mode
+  -s, --session TEXT            Session reference (index or id)
+  --show-session TEXT           Show a saved session by id or index and exit
+  --print-session               Print saved session (requires --session) and continue
+  --summarize-session TEXT      Summarize a saved session and print only the summary
+  --cleanup-sessions            Remove older saved sessions, keeping only the most recent ones
+  --keep-sessions INTEGER       How many most recent sessions to keep with --cleanup-sessions
+  --delete-session TEXT         Delete a saved session by id or index
   -h, --help                    Show this message and exit.
+```
+
+### Sessions: viewing and maintenance
+
+- List sessions (filtered; indices preserved):
+  - `gptsh --list-sessions`
+  - `gptsh --list-sessions --agent dev`
+  - `gptsh --list-sessions --provider openai --model gpt-5`
+- Show full session (header + transcript; pager-friendly):
+  - `gptsh --show-session 0 | less`
+- Print then continue:
+  - `gptsh --print-session -s 0 -i` (REPL)
+  - `gptsh --print-session -s 0 "Continue here"` (one more non-interactive turn)
+- Summarize only:
+  - `gptsh --summarize-session 0`
+- Cleanup/delete:
+  - `gptsh --cleanup-sessions` (keep 10 by default)
+  - `gptsh --cleanup-sessions --keep-sessions 3`
+  - `gptsh --delete-session 0`
+
+### Sessions configuration
+
+- Precedence: CLI `--no-sessions` > per-agent `agents.<name>.sessions.enabled` > global `sessions.enabled` > default True
+- Example:
+
+```yaml
+sessions:
+  enabled: true
+agents:
+  committer:
+    model: gpt-5-mini
+    sessions:
+      enabled: false
 ```
 
 ## MCP Tools
@@ -503,10 +544,13 @@ gptsh -o text "Return a one-line status summary"
 Use a different provider/model:
 
 ```bash
-gptsh --provider openai --model gpt-4o-mini "Explain MCP in a paragraph"
+gptsh --provider openai --model gpt-5-mini "Explain MCP in a paragraph"
 ```
 
 ## Interactive REPL:
+
+- Compact current conversation history (preserving system prompt):
+  - In REPL, run `/compact` to summarize with the small model and replace history with a single labeled USER summary message. This reduces context size for subsequent turns.
 
 - Start a REPL:
 ```bash
@@ -533,6 +577,7 @@ REPL slash-commands:
 - /tools — List discovered MCP tools for current agent
 - /no-tools [on|off] — Toggle or set MCP tool usage for this session
 - /info — Show session/model info and usage
+- /compact — Summarize and compact history (keeps system prompt, inserts labeled USER summary)
 - /help — Show available commands
 (Tab completion works for slash-commands and agent names.)
 

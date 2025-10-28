@@ -390,15 +390,45 @@ gptsh = "gptsh.cli.entrypoint:main"
 - `--mcp-servers PATHS`            # Comma/space-separated path(s) to MCP servers JSON
 - `--list-tools`                   # Print all discovered MCP tools, grouped by server
 - `--list-providers`               # List configured providers
+- `--list-sessions`                # List saved sessions (supports filters: --agent/--provider/--model)
 - `-o, --output [text|markdown]`   # Output format (default: markdown)
 - `--no-tools`                     # Disable MCP (discovery and execution)
 - `--tools LABELS`                 # Comma/space-separated allow-list of MCP servers to load
+- `-i, --interactive`              # Run in interactive REPL mode
+- `-s, --session REF`              # Session reference (index or id)
+- `--show-session REF`             # Show a saved session (header + transcript) and exit
+- `--print-session`                # Print saved session (requires --session) and continue
+- `--summarize-session REF`        # Summarize a saved session and print only the summary
+- `--cleanup-sessions`             # Remove older saved sessions, keeping only the most recent ones
+- `--keep-sessions N`              # How many most recent sessions to keep with --cleanup-sessions
+- `--delete-session REF`           # Delete a saved session by id or index
 - `-h, --help`
 
 Notes:
 - The CLI always resolves an `Agent` using `build_agent` before running. Non-stream and stream paths both use `ChatSession.from_agent`.
 - `--no-tools` and `--tools` influence the resolved agent’s tools via `compute_tools_policy`.
 - REPL module lives under `gptsh/cli/repl.py` and updates the active model and parameters via `agent.llm._base` during the session.
+
+### Sessions Persistence
+
+- Global: `sessions.enabled`
+- Per-agent: `agents.<name>.sessions.enabled`
+- Precedence: CLI `--no-sessions` > per-agent > global > default True
+
+### Sessions: Viewing and Maintenance
+
+- Listing: `--list-sessions` (filtered by `--agent`, `--provider`, `--model`); indices are from the global newest‑first list and remain valid for `-s`.
+- Show: `--show-session REF` prints a header (markdown or text) followed by the transcript and exits. Markdown headers render via rich Markdown and include `---`.
+- Print then continue: `--print-session -s REF` prints header + transcript, then continues in REPL or one-shot using the stored output format.
+- Summarize only: `--summarize-session REF` prints a concise summary using the session’s small model and exits.
+- Cleanup/delete: `--cleanup-sessions` (with optional `--keep-sessions N`), `--delete-session REF`.
+
+### REPL: Compact History
+
+- `/compact` — Summarize and compact the conversation using the small model.
+  - Preserves the original system prompt
+  - Inserts a labeled summary as the first USER message
+  - Wipes the rest of the history to reduce context
 
 ---
 ## Installation and Development
