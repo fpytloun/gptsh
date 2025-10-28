@@ -2,6 +2,8 @@ changelog:
   model: "gpt-4.1"
   output: text
   tools: []
+  sessions:
+    enabled: false
   prompt:
     system: |
       You are senior Release Manager, your task is to generate a changelog from the Git history that follows the structure below. 

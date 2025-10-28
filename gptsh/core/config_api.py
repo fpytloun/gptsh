@@ -25,6 +25,7 @@ def select_agent_provider_dicts(
         "tools": agent_dm.tools,
         "no_tools": agent_dm.no_tools,
         "output": agent_dm.output,
+        "sessions": agent_dm.sessions,
     }
     return agent_conf, provider_conf
 
@@ -65,14 +66,26 @@ def compute_tools_policy(
     return False, None
 
 
-def get_sessions_enabled(config: Dict[str, Any], no_sessions_cli: bool = False) -> bool:
+def get_sessions_enabled(
+    config: Dict[str, Any],
+    *,
+    agent_conf: Optional[Dict[str, Any]] = None,
+    no_sessions_cli: bool = False,
+) -> bool:
     """Determine whether session persistence is enabled.
 
-    Precedence: CLI --no-sessions disables; else config.sessions.enabled (default True).
+    Precedence:
+    - CLI --no-sessions disables
+    - else per-agent sessions.enabled when provided
+    - else global sessions.enabled (default True)
     """
     if no_sessions_cli:
         return False
     try:
+        if isinstance(agent_conf, dict):
+            a_sess = agent_conf.get("sessions") or {}
+            if isinstance(a_sess, dict) and "enabled" in a_sess:
+                return bool(a_sess.get("enabled"))
         return bool((config.get("sessions") or {}).get("enabled", True))
     except Exception:
         return True

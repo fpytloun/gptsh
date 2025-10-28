@@ -300,11 +300,7 @@ def main(
             click.echo(f"{idx_part} {id_part} {dt_part} {title_part} {agent_model_part}")
         remaining = total - len(to_show)
         if remaining > 10:
-            click.echo(
-                click.style(
-                    f"[ {remaining} older sessions not shown ]", fg="bright_black"
-                )
-            )
+            click.echo(click.style(f"[ {remaining} older sessions not shown ]", fg="bright_black"))
         sys.exit(0)
 
     # If resuming a session, preload its agent/provider/model preferences unless overridden via CLI
@@ -439,6 +435,8 @@ def main(
 
         try:
             # Hand off to agent-only REPL
+            from gptsh.core.config_api import get_sessions_enabled as _get_sessions_enabled
+
             run_agent_repl(
                 agent=agent_obj,
                 config=config,
@@ -447,6 +445,9 @@ def main(
                 initial_prompt=initial_prompt,
                 progress_reporter=reporter,
                 session_ref=session_ref,
+                sessions_enabled=_get_sessions_enabled(
+                    config, agent_conf=agent_conf, no_sessions_cli=no_sessions
+                ),
             )
             # After REPL exits, proactively close any attached ChatSession to release resources
             try:
@@ -476,8 +477,10 @@ def main(
 
             mcp_manager = None if no_tools_effective else MCPManager(config)
 
-            # Decide if sessions are enabled
-            sessions_enabled = get_sessions_enabled(config, no_sessions_cli=no_sessions)
+            # Decide if sessions are enabled (CLI > agent.sessions.enabled > global)
+            sessions_enabled = get_sessions_enabled(
+                config, agent_conf=agent_conf, no_sessions_cli=no_sessions
+            )
 
             if not sessions_enabled:
                 # Plain non-persistent run

@@ -651,7 +651,11 @@ async def run_agent_repl_async(
             from gptsh.core.config_api import get_sessions_enabled
 
             if (
-                get_sessions_enabled(config, no_sessions_cli=False)
+                get_sessions_enabled(
+                    config,
+                    agent_conf=(config.get("agents") or {}).get(agent_label),
+                    no_sessions_cli=False,
+                )
                 if sessions_enabled is None
                 else sessions_enabled
             ):

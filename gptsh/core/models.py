@@ -29,6 +29,7 @@ class AgentConfig:
     tools: Optional[List[str]] = None  # None=all, []=disabled, [labels]=allow-list
     no_tools: bool = False
     output: Optional[str] = None  # text|markdown
+    sessions: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -41,7 +42,9 @@ def _as_dict(d: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return dict(d or {})
 
 
-def map_config_to_models(config: Dict[str, Any]) -> Tuple[Defaults, Dict[str, ProviderConfig], Dict[str, AgentConfig]]:
+def map_config_to_models(
+    config: Dict[str, Any],
+) -> Tuple[Defaults, Dict[str, ProviderConfig], Dict[str, AgentConfig]]:
     defaults = Defaults(
         default_agent=config.get("default_agent"),
         default_provider=config.get("default_provider"),
@@ -69,9 +72,10 @@ def map_config_to_models(config: Dict[str, Any]) -> Tuple[Defaults, Dict[str, Pr
             reasoning_effort=a.get("reasoning_effort"),
             temperature=a.get("temperature"),
             prompt=AgentPrompt(system=prompt_cfg.get("system"), user=prompt_cfg.get("user")),
-            tools=list(a.get("tools")) if isinstance(a.get("tools"), list) else None,
+            tools=(a.get("tools") if isinstance(a.get("tools"), list) else None),
             no_tools=bool(a.get("no_tools", False)),
             output=a.get("output"),
+            sessions=_as_dict(a.get("sessions")),
         )
     return defaults, providers, agents
 
@@ -88,9 +92,13 @@ def pick_effective_agent_provider(
     if not agent_name or agent_name not in agents:
         raise KeyError(f"agent {agent_name} not found")
     agent = agents[agent_name]
-    provider_name = cli_provider or agent.provider or defaults.default_provider or (next(iter(providers)) if providers else None)
+    provider_name = (
+        cli_provider
+        or agent.provider
+        or defaults.default_provider
+        or (next(iter(providers)) if providers else None)
+    )
     if not provider_name or provider_name not in providers:
         raise KeyError(f"provider {provider_name} not found")
     provider = providers[provider_name]
     return agent, provider
-
