@@ -325,6 +325,12 @@ def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, 
     help="Show a saved session by id or index and exit",
 )
 @click.option(
+    "--summarize-session",
+    "summarize_session",
+    default=None,
+    help="Summarize a saved session (id or index) and print only the summary",
+)
+@click.option(
     "--print-session",
     "print_session",
     is_flag=True,
@@ -358,6 +364,7 @@ def main(
     keep_sessions,
     delete_session,
     show_session,
+    summarize_session,
     print_session,
 ):
     """gptsh: Modular shell/LLM agent client."""
@@ -452,12 +459,84 @@ def main(
         sys.exit(2)
 
     # Handle show-session early
-    if show_session is not None or (print_session and session_ref and False):
+    if show_session is not None:
         ref = show_session or session_ref
         doc = _load_session_by_ref_or_exit(ref)
         fmt = ((doc.get("meta") or {}).get("output")) or "markdown"
         _render_session_header(doc, fmt)
         _render_session_messages(doc, fmt, include_roles=True)
+        sys.exit(0)
+
+    # Handle summarize-session early
+    if summarize_session is not None:
+        ref = summarize_session
+        doc = _load_session_by_ref_or_exit(ref)
+        fmt = ((doc.get("meta") or {}).get("output")) or "markdown"
+        # Resolve an agent consistent with the stored session to get an LLM client
+        try:
+            agent_obj, agent_conf, provider_conf, _out, _no_tools, _ = asyncio.run(
+                _resolve_agent_and_settings(
+                    config=config,
+                    agent_name=(doc.get("agent") or {}).get("name"),
+                    provider_name=(doc.get("provider") or {}).get("name"),
+                    model_override=(doc.get("agent") or {}).get("model"),
+                    tools_filter_labels=None,
+                    no_tools_flag=True,
+                    output_format=fmt,
+                )
+            )
+        except Exception:
+            # Fallback to default agent
+            agent_obj, agent_conf, provider_conf, _out, _no_tools, _ = asyncio.run(
+                _resolve_agent_and_settings(
+                    config=config,
+                    agent_name=None,
+                    provider_name=None,
+                    model_override=None,
+                    tools_filter_labels=None,
+                    no_tools_flag=True,
+                    output_format=fmt,
+                )
+            )
+        # Build a ChatSession and preload saved messages
+        from gptsh.core.session import ChatSession as _ChatSession
+        from gptsh.core.sessions import preload_session_to_chat as _preload
+
+        chat = _ChatSession.from_agent(agent_obj, progress=None, config=config, mcp=None)
+        awaitable = chat.start() if hasattr(chat, "start") else None
+        if awaitable:
+            try:
+                asyncio.run(chat.start())
+            except Exception:
+                pass
+        _preload(doc, chat)
+        # Choose small model: prefer stored model_small; else resolve from config; else current model
+        small_model = (doc.get("agent") or {}).get("model_small")
+        if not small_model:
+            from gptsh.core.sessions import resolve_small_model as _resolve_small_model
+
+            small_model = _resolve_small_model(agent_conf or {}, provider_conf or {}) or (
+                getattr(agent_obj.llm, "_base", {}) or {}
+            ).get("model")
+        # Generate summary
+        try:
+            summary = asyncio.run(chat.generate_summary(small_model=small_model))
+        except Exception:
+            summary = None
+        if not summary:
+            click.echo("No summary generated.")
+            sys.exit(0)
+        # Print only the summary in the session's stored format
+        try:
+            if fmt == "markdown":
+                from rich.markdown import Markdown
+                from rich.console import Console
+
+                Console().print(Markdown(summary))
+            else:
+                click.echo(summary)
+        except Exception:
+            click.echo(summary)
         sys.exit(0)
 
     # Validate --print-session requires --session

@@ -80,7 +80,11 @@ class ChatSession:
             # Lazy import to avoid circulars
             from gptsh.core.sessions import generate_title as _gen_title  # noqa: WPS433
 
-            title = await _gen_title(f"USER: {first_user}\nASSISTANT: {first_assistant}", small_model=small_model, llm=self._llm)
+            title = await _gen_title(
+                f"USER: {first_user}\nASSISTANT: {first_assistant}",
+                small_model=small_model,
+                llm=self._llm,
+            )
             if isinstance(title, str) and title.strip():
                 self.title = title.strip()
                 return self.title
@@ -186,6 +190,49 @@ class ChatSession:
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.aclose()
+
+    async def generate_summary(self, *, small_model: Optional[str]) -> Optional[str]:
+        """Summarize current session history using a smaller model.
+
+        Returns summary text or None on failure.
+        """
+        try:
+            if not isinstance(small_model, str) or not small_model.strip():
+                return None
+            # Build transcript from history, ignoring tool messages
+            lines: List[str] = []
+            for m in self.history:
+                role = m.get("role")
+                if role == "user":
+                    text = str(m.get("content") or "").strip()
+                    if text:
+                        lines.append(f"USER: {text}")
+                elif role == "assistant":
+                    text = str(m.get("content") or "").strip()
+                    if text:
+                        lines.append(f"ASSISTANT: {text}")
+            convo = "\n".join(lines)
+            if not convo.strip():
+                return None
+            system = (
+                "You compress the provided conversation into a concise, faithful summary "
+                "retaining key decisions, constraints, and next steps. No extra commentary."
+            )
+            params: Dict[str, Any] = {
+                "model": small_model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": convo},
+                ],
+                "temperature": 0.2,
+            }
+            resp = await self._llm.complete(params)
+            from gptsh.llm.chunk_utils import extract_text as _extract  # lazy import
+
+            text = str(_extract(resp) or "").strip()
+            return text or None
+        except Exception:
+            return None
 
     async def _prepare_params(
         self,

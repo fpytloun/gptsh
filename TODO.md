@@ -43,7 +43,7 @@
 - [x] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
 - [x] First ctrl+c or esc should stop ongoing request
 - [x] Add /info command that will show current model (and settings like temperature, reasoning_effort) and context usage
-- [ ] Add /compact command that will compact history by summarizing it using small_model to reduce context window size. Should use `session.generate_summary()` and then wipe session history and pass only this summary.
+- [x] Add /compact command that will compact history by summarizing it using small_model to reduce context window size. Should use `session.generate_summary()` and then wipe session history and pass only this summary.
 - [ ] Warn (change prompt color) when context window is getting full (eg. above 80%) in REPL mode
 - [ ] Add desktop notifications and/or bell to notify when LLM work is done
 - [ ] Handle large stdin to avoid overflow of context window, compact or process in batches
@@ -58,7 +58,7 @@
 - [x] Add `--show-session [id]` similar to `--print-session` but it will only show session output and exit. Show header with session details (title, agent, model, time, usage). Make sure to respect stored session's output format. Common use might be to pipe output of this command into pager (eg. less).
 - [x] Add `--cleanup-sessions` to keep only last 10 sessions, we might add `--keep-sessions [num]` parameter to control how many sessions to keep
 - [x] Add `--delete-session [id]` to delete session by id or index
-- [ ] Add `--summarize-session [id]` which will use stored session's small_model to summarize session and return only summarized output. Same output and code as `/compact` command in REPL session (should use `session.generate_summary()`).
+- [x] Add `--summarize-session [id]` which will use stored session's small_model to summarize session and return only summarized output. Same output and code as `/compact` command in REPL session (should use `session.generate_summary()`).
 
 ## Configuration & Agents
 - [ ] Implement log redaction for secrets and sensitive data

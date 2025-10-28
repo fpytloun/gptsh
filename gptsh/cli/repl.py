@@ -286,6 +286,7 @@ _COMMANDS_USAGE = {
     "/no-tools [on|off]": "Toggle or set MCP tool usage for this session",
     "/info": "Show session/model info and usage",
     "/help": "Show available commands",
+    "/compact": "Summarize and compact conversation history",
 }
 
 
@@ -300,6 +301,7 @@ def get_command_names() -> List[str]:
         "/no-tools",
         "/info",
         "/help",
+        "/compact",
     ]
 
 
@@ -640,6 +642,44 @@ async def run_agent_repl_async(
                 except Exception as e:
                     _log.warning("Failed to toggle tools: %s", e)
                     click.echo(f"Failed to toggle tools: {e}", err=True)
+                continue
+            if cmd == "/compact":
+                sess = getattr(agent, "session", None)
+                if sess is None:
+                    click.echo("No active session", err=True)
+                    continue
+                # Resolve small model
+                small_model = _resolve_small_model(
+                    (config.get("agents") or {}).get(agent_label) or {},
+                    (config.get("providers") or {}).get(config.get("default_provider")) or {},
+                ) or (getattr(agent.llm, "_base", {}) or {}).get("model")
+                summary = await sess.generate_summary(small_model=small_model)
+                if not summary:
+                    click.echo("No summary generated.")
+                    continue
+                # Preserve original system prompt; insert summary as first USER message and wipe rest
+                hist = list(sess.history or [])
+                new_hist: List[Dict[str, Any]] = []
+                if hist and (hist[0].get("role") == "system"):
+                    new_hist.append(hist[0])
+                new_hist.append(
+                    {
+                        "role": "user",
+                        "content": f"Summarized version of previous conversation:\n{summary}",
+                    }
+                )
+                sess.history = new_hist
+                # Print summary in current REPL format
+                if output_format == "markdown":
+                    try:
+                        from rich.markdown import Markdown
+                        from rich.console import Console
+
+                        Console().print(Markdown(summary))
+                    except Exception:
+                        click.echo(summary)
+                else:
+                    click.echo(summary)
                 continue
             click.echo("Unknown command", err=True)
             continue
