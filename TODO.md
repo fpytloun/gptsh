@@ -56,8 +56,8 @@
 - [x] When using `--list-sessions` and `--agent`, `--provider` or `--model` is given, use these options to filter output
 - [ ] Add `--print-session` to re-construct session output and continue (with `-i` or non-interactive or just print if no prompt given). Requires `--session` parameter too. Make sure to respect stored session's output format.
 - [ ] Add `--show-session [id]` similar to `--print-session` but it will only show session output and exit. Show header with session details (title, agent, model, time, usage). Make sure to respect stored session's output format. Common use might be to pipe output of this command into pager (eg. less).
-- [ ] Add `--cleanup-sessions` to keep only last 10 sessions, we might add `--keep-sessions [num]` parameter to control how many sessions to keep
-- [ ] Add `--delete-session [id]` to delete session by id or index
+- [x] Add `--cleanup-sessions` to keep only last 10 sessions, we might add `--keep-sessions [num]` parameter to control how many sessions to keep
+- [x] Add `--delete-session [id]` to delete session by id or index
 - [ ] Add `--summarize-session [id]` which will use stored session's small_model to summarize session and return only summarized output. Same output and code as `/compact` command in REPL session (should use `session.generate_summary()`).
 
 ## Configuration & Agents

@@ -21,6 +21,7 @@ from gptsh.core.sessions import (
     load_session as _load_session,
     resolve_session_ref as _resolve_session_ref,
 )
+from pathlib import Path
 from gptsh.core.stdin_handler import read_stdin
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
 from gptsh.mcp.manager import MCPManager
@@ -126,6 +127,12 @@ DEFAULT_AGENTS = {"default": {}}
     default=10,
     help="How many most recent sessions to keep with --cleanup-sessions",
 )
+@click.option(
+    "--delete-session",
+    "delete_session",
+    default=None,
+    help="Delete a saved session by id or index",
+)
 @click.argument("prompt", required=False)
 def main(
     provider,
@@ -151,6 +158,7 @@ def main(
     prompt,
     cleanup_sessions_flag,
     keep_sessions,
+    delete_session,
 ):
     """gptsh: Modular shell/LLM agent client."""
     # Restore default SIGINT handler to let REPL manage interrupts
@@ -211,6 +219,30 @@ def main(
         kept, removed = _cleanup(keep_sessions)
         click.echo(f"Kept {kept} most recent sessions; removed {removed}.")
         sys.exit(0)
+
+    # Early delete operation
+    if delete_session:
+        from gptsh.core.sessions import (
+            resolve_session_ref as _resolve_session_ref,
+            _find_file_by_id as _find_file_by_id,
+        )
+
+        try:
+            sid = _resolve_session_ref(str(delete_session))
+        except Exception:
+            click.echo(f"Session not found: {delete_session}")
+            sys.exit(2)
+        p = _find_file_by_id(sid)
+        if p is None:
+            click.echo(f"Session not found: {delete_session}")
+            sys.exit(2)
+        try:
+            Path(p).unlink()
+            click.echo(f"Deleted session {sid}")
+            sys.exit(0)
+        except Exception as e:
+            click.echo(f"Failed to delete session {sid}: {e}")
+            sys.exit(1)
 
     # Merge default agent so it's always present for checks and later listing
     existing_agents = dict(config.get("agents") or {})
