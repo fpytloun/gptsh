@@ -47,22 +47,137 @@ warnings.filterwarnings(
 DEFAULT_AGENTS = {"default": {}}
 
 
-def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, Dict[str, Any]]:
-    """Print full transcript in stored format and return (session_output_format, doc).
-    Exits with code 2 on failure.
-    """
-    if not session_ref:
-        click.echo("Error: --print-session requires --session")
+def _load_session_by_ref_or_exit(ref: Optional[str]) -> Dict[str, Any]:
+    if not ref:
+        click.echo("Error: session reference is required")
         sys.exit(2)
     try:
-        sid = _resolve_session_ref(str(session_ref))
-        doc = _load_session(sid)
-    except Exception as e:
-        click.echo(f"Failed to load session: {e}")
+        sid = _resolve_session_ref(str(ref))
+        return _load_session(sid)
+    except Exception:
+        click.echo(f"Session not found: {ref}")
         sys.exit(2)
-    session_output = ((doc.get("meta") or {}).get("output")) or "markdown"
+
+
+def _fmt_local_ts(iso: Optional[str]) -> str:
+    from datetime import datetime
+
+    if not iso:
+        return ""
+    try:
+        s = iso.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return iso
+
+
+def _render_session_header(doc: Dict[str, Any], fmt: str) -> None:
+    meta = doc.get("meta") or {}
+    agent = doc.get("agent") or {}
+    provider = doc.get("provider") or {}
+    title = doc.get("title") or "(untitled)"
+    created = _fmt_local_ts(doc.get("created_at"))
+    updated = _fmt_local_ts(doc.get("updated_at") or doc.get("created_at"))
+    usage = doc.get("usage") or {}
+    tokens = usage.get("tokens") or {}
+    cost = usage.get("cost")
+
+    if fmt == "markdown":
+        try:
+            from rich.console import Console
+            from rich.markdown import Markdown
+
+            md_lines = [f"# {title}", ""]
+            md_lines.append(f"- Agent: {agent.get('name') or '?'}")
+            md_lines.append(f"- Model: {agent.get('model') or '?'}")
+            if provider.get("name"):
+                md_lines.append(f"- Provider: {provider.get('name')}")
+            if created:
+                md_lines.append(f"- Created: {created}")
+            if updated:
+                md_lines.append(f"- Updated: {updated}")
+            token_parts: list[str] = []
+            if isinstance(cost, (int, float)):
+                md_lines.append(f"- Usage: cost=${cost:.5f}")
+            if tokens:
+                p = tokens.get("prompt")
+                c = tokens.get("completion")
+                t = tokens.get("total")
+                if p is not None:
+                    token_parts.append(f"prompt={p}")
+                if c is not None:
+                    token_parts.append(f"completion={c}")
+                if t is not None:
+                    token_parts.append(f"total={t}")
+                if token_parts:
+                    md_lines.append("- Tokens: " + ", ".join(token_parts))
+            header_md = "\n".join(md_lines)
+            console = Console()
+            console.print(Markdown(header_md))
+            console.print(Markdown("---"))
+            console.print()
+        except Exception:
+            # Fallback to plain text header
+            click.echo(f"# {title}")
+            click.echo(f"Agent: {agent.get('name') or '?'}")
+            click.echo(f"Model: {agent.get('model') or '?'}")
+            if provider.get("name"):
+                click.echo(f"Provider: {provider.get('name')}")
+            if created:
+                click.echo(f"Created: {created}")
+            if updated:
+                click.echo(f"Updated: {updated}")
+            if isinstance(cost, (int, float)):
+                click.echo(f"Usage: cost=${cost:.5f}")
+            if tokens:
+                p = tokens.get("prompt")
+                c = tokens.get("completion")
+                t = tokens.get("total")
+                parts = []
+                if p is not None:
+                    parts.append(f"prompt={p}")
+                if c is not None:
+                    parts.append(f"completion={c}")
+                if t is not None:
+                    parts.append(f"total={t}")
+                if parts:
+                    click.echo("Tokens: " + ", ".join(parts))
+            click.echo("---")
+            click.echo("")
+    else:
+        # Plain text header (pager-friendly)
+        click.echo(f"# {title}")
+        click.echo(f"Agent: {agent.get('name') or '?'}")
+        click.echo(f"Model: {agent.get('model') or '?'}")
+        if provider.get("name"):
+            click.echo(f"Provider: {provider.get('name')}")
+        if created:
+            click.echo(f"Created: {created}")
+        if updated:
+            click.echo(f"Updated: {updated}")
+        if isinstance(cost, (int, float)):
+            click.echo(f"Usage: cost=${cost:.5f}")
+        if tokens:
+            p = tokens.get("prompt")
+            c = tokens.get("completion")
+            t = tokens.get("total")
+            parts = []
+            if p is not None:
+                parts.append(f"prompt={p}")
+            if c is not None:
+                parts.append(f"completion={c}")
+            if t is not None:
+                parts.append(f"total={t}")
+            if parts:
+                click.echo("Tokens: " + ", ".join(parts))
+        click.echo("---")
+        click.echo("")
+
+
+def _render_session_messages(doc: Dict[str, Any], fmt: str, *, include_roles: bool = True) -> None:
     msgs = list(doc.get("messages") or [])
-    if session_output == "markdown":
+    if fmt == "markdown":
         try:
             from rich.console import Console
             from rich.markdown import Markdown
@@ -72,10 +187,12 @@ def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, 
                 role = m.get("role")
                 content = str(m.get("content") or "")
                 if role == "user":
-                    console.print(f"USER: {content}")
-                    console.print()
+                    if include_roles:
+                        console.print(f"USER: {content}")
+                        console.print()
                 elif role == "assistant":
-                    console.print("ASSISTANT:")
+                    if include_roles:
+                        console.print("ASSISTANT:")
                     console.print(Markdown(content))
                     console.print()
         except Exception:
@@ -83,10 +200,12 @@ def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, 
                 role = m.get("role")
                 content = str(m.get("content") or "")
                 if role == "user":
-                    click.echo(f"USER: {content}")
-                    click.echo("")
+                    if include_roles:
+                        click.echo(f"USER: {content}")
+                        click.echo("")
                 elif role == "assistant":
-                    click.echo("ASSISTANT:")
+                    if include_roles:
+                        click.echo("ASSISTANT:")
                     click.echo(content)
                     click.echo("")
     else:
@@ -94,13 +213,22 @@ def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, 
             role = m.get("role")
             content = str(m.get("content") or "")
             if role == "user":
-                click.echo(f"USER: {content}")
-                click.echo("")
+                if include_roles:
+                    click.echo(f"USER: {content}")
+                    click.echo("")
             elif role == "assistant":
-                click.echo("ASSISTANT:")
+                if include_roles:
+                    click.echo("ASSISTANT:")
                 click.echo(content)
                 click.echo("")
-    return session_output, doc
+
+
+def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, Dict[str, Any]]:
+    doc = _load_session_by_ref_or_exit(session_ref)
+    fmt = ((doc.get("meta") or {}).get("output")) or "markdown"
+    _render_session_header(doc, fmt)
+    _render_session_messages(doc, fmt, include_roles=True)
+    return fmt, doc
 
 
 # --- CLI Entrypoint ---
@@ -191,6 +319,12 @@ def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, 
     help="Delete a saved session by id or index",
 )
 @click.option(
+    "--show-session",
+    "show_session",
+    default=None,
+    help="Show a saved session by id or index and exit",
+)
+@click.option(
     "--print-session",
     "print_session",
     is_flag=True,
@@ -223,6 +357,7 @@ def main(
     cleanup_sessions_flag,
     keep_sessions,
     delete_session,
+    show_session,
     print_session,
 ):
     """gptsh: Modular shell/LLM agent client."""
@@ -315,6 +450,15 @@ def main(
     if provider and not list_sessions_flag and provider not in (config.get("providers") or {}):
         click.echo(f"Provider not found: {provider}")
         sys.exit(2)
+
+    # Handle show-session early
+    if show_session is not None or (print_session and session_ref and False):
+        ref = show_session or session_ref
+        doc = _load_session_by_ref_or_exit(ref)
+        fmt = ((doc.get("meta") or {}).get("output")) or "markdown"
+        _render_session_header(doc, fmt)
+        _render_session_messages(doc, fmt, include_roles=True)
+        sys.exit(0)
 
     # Validate --print-session requires --session
     if print_session and not session_ref:
