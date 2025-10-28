@@ -192,11 +192,11 @@ def main(
     existing_agents = dict(config.get("agents") or {})
     config["agents"] = {**DEFAULT_AGENTS, **existing_agents}
 
-    # Validate agent and provider names if explicitly set
-    if agent and agent not in config.get("agents", {}):
+    # Validate agent and provider names if explicitly set (skip when only listing sessions)
+    if agent and not list_sessions_flag and agent not in config.get("agents", {}):
         click.echo(f"Agent not found: {agent}")
         sys.exit(2)
-    if provider and provider not in (config.get("providers") or {}):
+    if provider and not list_sessions_flag and provider not in (config.get("providers") or {}):
         click.echo(f"Provider not found: {provider}")
         sys.exit(2)
 
@@ -277,12 +277,24 @@ def main(
             except Exception:
                 return iso
 
-        sessions = _list_saved_sessions()
-        total = len(sessions)
-        to_show = sessions[:20]
-        # Align index column by computing width from last index shown
-        idx_width = len(str(len(to_show) - 1)) if to_show else 1
-        for idx, s in enumerate(to_show):
+        all_sessions = _list_saved_sessions()
+
+        def _matches(sess: Dict[str, Any]) -> bool:  # type: ignore[name-defined]
+            if agent and sess.get("agent") != agent:
+                return False
+            if provider and sess.get("provider") != provider:
+                return False
+            if model and sess.get("model") != model:
+                return False
+            return True
+
+        matched_idxs = [i for i, s in enumerate(all_sessions) if _matches(s)]
+        shown_idxs = matched_idxs[:20]
+        # Width based on maximum shown index for neat alignment (falls back to 1)
+        idx_width = len(str(shown_idxs[-1])) if shown_idxs else 1
+
+        for idx in shown_idxs:
+            s = all_sessions[idx]
             idx_str = str(idx).rjust(idx_width)
             dt = s.get("updated_at") or s.get("created_at") or ""
             title = s.get("title") or "(untitled)"
@@ -298,7 +310,8 @@ def main(
             title_part = click.style(title, fg="green")
             agent_model_part = click.style(f"({agent_name}|{model_name})", fg="bright_black")
             click.echo(f"{idx_part} {id_part} {dt_part} {title_part} {agent_model_part}")
-        remaining = total - len(to_show)
+
+        remaining = max(0, len(matched_idxs) - len(shown_idxs))
         if remaining > 10:
             click.echo(click.style(f"[ {remaining} older sessions not shown ]", fg="bright_black"))
         sys.exit(0)
