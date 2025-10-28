@@ -43,13 +43,22 @@
 - [x] Add session history, introduce new `-s [session]` and `--list-sessions` parameters
 - [x] First ctrl+c or esc should stop ongoing request
 - [x] Add /info command that will show current model (and settings like temperature, reasoning_effort) and context usage
-- [ ] Add /compact command that will compact history to reduce context window size
+- [ ] Add /compact command that will compact history by summarizing it using small_model to reduce context window size. Should use `session.generate_summary()` and then wipe session history and pass only this summary.
 - [ ] Warn (change prompt color) when context window is getting full (eg. above 80%) in REPL mode
 - [ ] Add desktop notifications and/or bell to notify when LLM work is done
 - [ ] Handle large stdin to avoid overflow of context window, compact or process in batches
 - [ ] Add support for prompts, executable in REPL via `/prompt` or in normal mode via `--prompt PROMPT`. Also add `--list-prompts` argument. Prompt can be defined in `prompts` key (utilizing `!include prompts/*.yml` similar to agents) or then can be also agent-specific (eg. `agents.myagent.prompts.myprompt`). Also support loading prompts provided by MCP client.
 - [ ] Support multi-line input in REPL mode (shift+enter like)
 - [ ] Support for editing input in external editor in REPL mode
+
+## Session management
+- [ ] Make global and per-agent override of `no_sessions: [bool]` config parameter. For some agents (eg. committer) we don't want sessions history
+- [ ] When using `--list-sessions` and `--agent`, `--provider` or `--model` is given, use these options to filter output
+- [ ] Add `--print-session` to re-construct session output and continue (with `-i` or non-interactive or just print if no prompt given). Requires `--session` parameter too. Make sure to respect stored session's output format.
+- [ ] Add `--show-session [id]` similar to `--print-session` but it will only show session output and exit. Show header with session details (title, agent, model, time, usage). Make sure to respect stored session's output format. Common use might be to pipe output of this command into pager (eg. less).
+- [ ] Add `--cleanup-sessions` to keep only last 10 sessions, we might add `--keep-sessions [num]` parameter to control how many sessions to keep
+- [ ] Add `--delete-session [id]` to delete session by id or index
+- [ ] Add `--summarize-session [id]` which will use stored session's small_model to summarize session and return only summarized output. Same output and code as `/compact` command in REPL session (should use `session.generate_summary()`).
 
 ## Configuration & Agents
 - [ ] Implement log redaction for secrets and sensitive data
