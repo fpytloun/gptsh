@@ -20,6 +20,7 @@ from gptsh.core.sessions import (
     list_sessions as _list_saved_sessions,
     load_session as _load_session,
     resolve_session_ref as _resolve_session_ref,
+    _find_file_by_id as _find_file_by_id,
 )
 from pathlib import Path
 from gptsh.core.stdin_handler import read_stdin
@@ -44,6 +45,62 @@ warnings.filterwarnings(
 )
 
 DEFAULT_AGENTS = {"default": {}}
+
+
+def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, Dict[str, Any]]:
+    """Print full transcript in stored format and return (session_output_format, doc).
+    Exits with code 2 on failure.
+    """
+    if not session_ref:
+        click.echo("Error: --print-session requires --session")
+        sys.exit(2)
+    try:
+        sid = _resolve_session_ref(str(session_ref))
+        doc = _load_session(sid)
+    except Exception as e:
+        click.echo(f"Failed to load session: {e}")
+        sys.exit(2)
+    session_output = ((doc.get("meta") or {}).get("output")) or "markdown"
+    msgs = list(doc.get("messages") or [])
+    if session_output == "markdown":
+        try:
+            from rich.console import Console
+            from rich.markdown import Markdown
+
+            console = Console()
+            for m in msgs:
+                role = m.get("role")
+                content = str(m.get("content") or "")
+                if role == "user":
+                    console.print(f"USER: {content}")
+                    console.print()
+                elif role == "assistant":
+                    console.print("ASSISTANT:")
+                    console.print(Markdown(content))
+                    console.print()
+        except Exception:
+            for m in msgs:
+                role = m.get("role")
+                content = str(m.get("content") or "")
+                if role == "user":
+                    click.echo(f"USER: {content}")
+                    click.echo("")
+                elif role == "assistant":
+                    click.echo("ASSISTANT:")
+                    click.echo(content)
+                    click.echo("")
+    else:
+        for m in msgs:
+            role = m.get("role")
+            content = str(m.get("content") or "")
+            if role == "user":
+                click.echo(f"USER: {content}")
+                click.echo("")
+            elif role == "assistant":
+                click.echo("ASSISTANT:")
+                click.echo(content)
+                click.echo("")
+    return session_output, doc
 
 
 # --- CLI Entrypoint ---
@@ -133,6 +190,13 @@ DEFAULT_AGENTS = {"default": {}}
     default=None,
     help="Delete a saved session by id or index",
 )
+@click.option(
+    "--print-session",
+    "print_session",
+    is_flag=True,
+    default=False,
+    help="Print saved session output (requires --session) and continue",
+)
 @click.argument("prompt", required=False)
 def main(
     provider,
@@ -159,6 +223,7 @@ def main(
     cleanup_sessions_flag,
     keep_sessions,
     delete_session,
+    print_session,
 ):
     """gptsh: Modular shell/LLM agent client."""
     # Restore default SIGINT handler to let REPL manage interrupts
@@ -222,11 +287,6 @@ def main(
 
     # Early delete operation
     if delete_session:
-        from gptsh.core.sessions import (
-            resolve_session_ref as _resolve_session_ref,
-            _find_file_by_id as _find_file_by_id,
-        )
-
         try:
             sid = _resolve_session_ref(str(delete_session))
         except Exception:
@@ -254,6 +314,11 @@ def main(
         sys.exit(2)
     if provider and not list_sessions_flag and provider not in (config.get("providers") or {}):
         click.echo(f"Provider not found: {provider}")
+        sys.exit(2)
+
+    # Validate --print-session requires --session
+    if print_session and not session_ref:
+        click.echo("Error: --print-session requires --session")
         sys.exit(2)
 
     # Handle immediate listing flags
@@ -502,6 +567,11 @@ def main(
         ):
             raise click.ClickException("Interactive mode requires a TTY.")
 
+        # If printing session, print transcript in stored format first
+        if print_session:
+            session_output_fmt, _ = _print_session_transcript_or_exit(session_ref)
+            output_effective = session_output_fmt
+
         try:
             # Hand off to agent-only REPL
             from gptsh.core.config_api import get_sessions_enabled as _get_sessions_enabled
@@ -534,6 +604,18 @@ def main(
         sys.exit(0)
 
     # Non-interactive
+    # If --print-session is set, print transcript first, then decide continuation
+    if print_session:
+        session_output_fmt, _ = _print_session_transcript_or_exit(session_ref)
+        output_effective = session_output_fmt
+        # If no prompt to continue, exit now
+        if not initial_prompt:
+            try:
+                reporter.stop()
+            except Exception:
+                pass
+            sys.exit(0)
+
     if initial_prompt:
 
         async def _run_once_noninteractive() -> None:
