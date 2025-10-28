@@ -63,18 +63,24 @@ class ChatSession:
                 return None
             # Find first user message content
             first_user: Optional[str] = None
+            first_assistant: Optional[str] = None
             for m in self.history:
-                if m.get("role") == "user":
-                    text = str(m.get("content") or "").strip()
-                    if text:
-                        first_user = text
-                        break
-            if not first_user:
+                if not first_user:
+                    if m.get("role") == "user":
+                        text = str(m.get("content") or "").strip()
+                        if text:
+                            first_user = text
+                if not first_assistant:
+                    if m.get("role") == "assistant":
+                        text = str(m.get("content") or "").strip()
+                        if text:
+                            first_assistant = text
+            if not first_user and not first_assistant:
                 return None
             # Lazy import to avoid circulars
             from gptsh.core.sessions import generate_title as _gen_title  # noqa: WPS433
 
-            title = await _gen_title(first_user, small_model=small_model, llm=self._llm)
+            title = await _gen_title(f"USER: {first_user}\nASSISTANT: {first_assistant}", small_model=small_model, llm=self._llm)
             if isinstance(title, str) and title.strip():
                 self.title = title.strip()
                 return self.title
