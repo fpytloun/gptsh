@@ -70,6 +70,7 @@ async def build_agent(
     llm = LiteLLMClient(base_params=base_params)
 
     # Resolve tools if enabled
+    appended_system_prompt: Optional[str] = None
     if no_tools:
         tools = {}
         tool_specs = []
@@ -106,9 +107,10 @@ async def build_agent(
                 if isinstance(agent_conf, dict):
                     prompt_obj = dict(agent_conf.get("prompt") or {})
                     base_system = prompt_obj.get("system") or ""
-                    prompt_obj["system"] = (
+                    appended_system_prompt = (
                         (base_system + mcp_guidance) if base_system else mcp_guidance
                     )
+                    prompt_obj["system"] = appended_system_prompt
                     # Write back into agent_conf for reference
                     agent_conf = dict(agent_conf)
                     agent_conf["prompt"] = prompt_obj
@@ -127,11 +129,36 @@ async def build_agent(
 
     name = cli_agent or config.get("default_agent") or "default"
 
+    # If we appended MCP guidance, propagate it into eff_config agents.<name>.prompt.system
+    try:
+        if appended_system_prompt is not None:
+            agents_conf = eff_config.setdefault("agents", {})
+            agent_name_eff = cli_agent or config.get("default_agent") or "default"
+            aconf = dict(agents_conf.get(agent_name_eff) or {})
+            p = dict(aconf.get("prompt") or {})
+            p["system"] = appended_system_prompt
+            aconf["prompt"] = p
+            agents_conf[agent_name_eff] = aconf
+    except Exception:
+        pass
+
     # Create persistent session owned by agent (MCP manager provisioned here if tools enabled)
     mcp_manager = None if no_tools else MCPManager(eff_config)
     session = ChatSession(
         llm, mcp_manager, policy, progress=None, config=eff_config, tool_specs=tool_specs
     )
+    # Also seed system prompt into session (idempotent: ChatSession.from_agent does similar)
+    try:
+        sys_prompt = (((eff_config.get("agents") or {}).get(name) or {}).get("prompt", {})).get(
+            "system"
+        )
+        if isinstance(sys_prompt, str) and sys_prompt.strip():
+            if not session.history or session.history[0].get("role") != "system":
+                session.history = [{"role": "system", "content": sys_prompt}] + list(
+                    session.history or []
+                )
+    except Exception:
+        pass
 
     return Agent(
         name=name,

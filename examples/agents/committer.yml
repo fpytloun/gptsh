@@ -37,3 +37,4 @@ committer:
         feat(ui)!: overhaul dashboard layout
         docs: clarify API documentation
         chore!: remove Node 6 support
+    user: "Generate single commit message based on following diff:"

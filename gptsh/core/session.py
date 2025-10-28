@@ -153,7 +153,7 @@ class ChatSession:
         config: Dict[str, Any],
         mcp: Optional[MCPClient] = None,
     ) -> "ChatSession":
-        return cls(
+        session = cls(
             agent.llm,
             mcp,
             agent.policy,
@@ -161,6 +161,20 @@ class ChatSession:
             config,
             tool_specs=getattr(agent, "tool_specs", None),
         )
+        # Seed system prompt from config into empty/new histories
+        try:
+            agent_name = getattr(agent, "name", None) or (config.get("default_agent") or "default")
+            sys_prompt = (
+                ((config.get("agents") or {}).get(agent_name) or {}).get("prompt", {})
+            ).get("system")
+            if isinstance(sys_prompt, str) and sys_prompt.strip():
+                hist = getattr(session, "history", []) or []
+                if not hist or (hist and (hist[0].get("role") != "system")):
+                    session.history = [{"role": "system", "content": sys_prompt}] + list(hist)
+        except Exception:
+            # Best-effort; absence of system prompt should not break session creation
+            pass
+        return session
 
     async def start(self) -> None:
         if self._mcp is not None:
