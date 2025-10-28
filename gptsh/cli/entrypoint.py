@@ -112,6 +112,20 @@ DEFAULT_AGENTS = {"default": {}}
     help="Disable saving/loading conversation sessions",
 )
 @click.option("--assume-tty", is_flag=True, default=False, help="Assume TTY (for tests/CI)")
+@click.option(
+    "--cleanup-sessions",
+    "cleanup_sessions_flag",
+    is_flag=True,
+    default=False,
+    help="Remove older saved sessions, keeping only the most recent ones",
+)
+@click.option(
+    "--keep-sessions",
+    "keep_sessions",
+    type=int,
+    default=10,
+    help="How many most recent sessions to keep with --cleanup-sessions",
+)
 @click.argument("prompt", required=False)
 def main(
     provider,
@@ -135,6 +149,8 @@ def main(
     no_sessions,
     assume_tty,
     prompt,
+    cleanup_sessions_flag,
+    keep_sessions,
 ):
     """gptsh: Modular shell/LLM agent client."""
     # Restore default SIGINT handler to let REPL manage interrupts
@@ -187,6 +203,14 @@ def main(
     log_level = "DEBUG" if debug else ("INFO" if verbose else "WARNING")
     log_fmt = config.get("logging", {}).get("format", "text")
     logger = setup_logging(log_level, log_fmt)
+
+    # Early cleanup operation
+    if cleanup_sessions_flag:
+        from gptsh.core.sessions import cleanup_sessions as _cleanup
+
+        kept, removed = _cleanup(keep_sessions)
+        click.echo(f"Kept {kept} most recent sessions; removed {removed}.")
+        sys.exit(0)
 
     # Merge default agent so it's always present for checks and later listing
     existing_agents = dict(config.get("agents") or {})

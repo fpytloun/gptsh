@@ -58,6 +58,31 @@ def _list_json_files() -> List[Path]:
     return files
 
 
+def cleanup_sessions(keep: int) -> tuple[int, int]:
+    """Keep only the most recent `keep` sessions.
+
+    Returns (kept_count, removed_count).
+    """
+    try:
+        keep_n = max(0, int(keep))
+    except Exception:
+        keep_n = 10
+    files = _list_json_files()
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    if len(files) <= keep_n:
+        return len(files), 0
+    to_delete = files[keep_n:]
+    removed = 0
+    for p in to_delete:
+        try:
+            p.unlink(missing_ok=True)  # type: ignore[call-arg]
+            removed += 1
+        except Exception as e:
+            _log.warning("Failed to remove session file %s: %s", p, e)
+    kept = len(files) - removed
+    return kept, removed
+
+
 def _find_file_by_id(session_id: str) -> Optional[Path]:
     suf = f"-{session_id}.json"
     for p in _list_json_files():
