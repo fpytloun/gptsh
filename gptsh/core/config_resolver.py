@@ -54,14 +54,18 @@ async def build_agent(
     if provider_conf:
         # Filter provider config to LiteLLM-relevant keys only; keep others (like model_small) out
         allowed_llm_keys = {
-            "model",
-            "temperature",
-            "reasoning_effort",
-            "max_tokens",
-            "timeout",
-            "metadata",
-            "extra_headers",
+            "api_key",
             "base_url",
+            "extra_headers",
+            "max_tokens",
+            "metadata",
+            "model",
+            "reasoning",
+            "reasoning_effort",
+            "temperature",
+            "timeout",
+            "top_k",
+            "top_p",
         }
         base_params.update({k: v for k, v in provider_conf.items() if k in allowed_llm_keys})
 
