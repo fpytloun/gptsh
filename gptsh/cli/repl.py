@@ -443,6 +443,13 @@ async def run_agent_repl_async(
         readline_enabled=rl_enabled,
     )
 
+    # Ensure progress reporter is initialized for REPL turns
+    try:
+        if progress_reporter is not None:
+            progress_reporter.start()
+    except Exception:
+        pass
+
     try:
         no_tools = not any(len(v or []) > 0 for v in (agent.tools or {}).values())
     except Exception as e:
@@ -491,25 +498,77 @@ async def run_agent_repl_async(
         _preload_chat(preloaded_doc, agent.session)
 
     async def _run_once(user_text: str) -> tuple[str, List[Dict[str, Any]]]:
-        from gptsh.cli.entrypoint import run_llm as _run_llm
+        nonlocal preloaded_doc
+        # Use the persistence-aware runner so titles are generated and turns are saved consistently
+        from gptsh.core.runner import (
+            RunRequest as _RunRequest,
+            run_turn_with_persistence as _run_persist,
+        )
 
-        sink: List[str] = []
-        msgs: List[Dict[str, Any]] = []
-        await _run_llm(
+        # Ensure a ChatSession exists on the agent (runner can also create it if needed)
+        sess = getattr(agent, "session", None)
+
+        # Prepare or reuse a session document when sessions are enabled
+        doc = preloaded_doc
+        msgs: List[Dict[str, Any]] = []  # not used by persistence runner, kept for signature
+
+        # Resolve small model for title generation
+        small_model = _resolve_small_model(
+            (config.get("agents") or {}).get(agent_label) or {},
+            (config.get("providers") or {}).get(config.get("default_provider")) or {},
+        ) or (getattr(agent.llm, "_base", {}) or {}).get("model")
+
+        # Create a new session doc if needed and sessions are enabled
+        from gptsh.core.sessions import new_session_doc as __new_session_doc
+
+        if doc is None and (sessions_enabled is None or sessions_enabled):
+            chosen_model = (getattr(agent.llm, "_base", {}) or {}).get("model")
+            agent_info = {
+                "name": getattr(agent, "name", None),
+                "model": chosen_model,
+                "model_small": small_model or chosen_model,
+                "prompt_system": (
+                    (
+                        (config.get("agents", {}) or {}).get(getattr(agent, "name", "default"), {})
+                        or {}
+                    ).get("prompt", {})
+                    or {}
+                ).get("system"),
+                "params": {
+                    k: v
+                    for k, v in (getattr(agent, "generation_params", {}) or {}).items()
+                    if k in {"temperature", "reasoning_effort"} and v is not None
+                },
+            }
+            provider_info = {"name": (config.get("default_provider") or None)}
+            doc = __new_session_doc(
+                agent_info=agent_info,
+                provider_info=provider_info,
+                output=output_format,
+                mcp_allowed_servers=(config.get("mcp", {}) or {}).get("allowed_servers"),
+            )
+
+        req = _RunRequest(
+            agent=agent,
             prompt=user_text,
+            config=config,
             stream=stream,
             output_format=output_format,
             no_tools=no_tools,
-            config=config,
             logger=console,
             exit_on_interrupt=False,
-            result_sink=sink,
-            messages_sink=msgs,
-            agent_obj=agent,
+            result_sink=None,  # runner prints to console directly
+            messages_sink=None,  # persistence runner manages messages internally
             mcp_manager=mcp_manager,
             progress_reporter=progress_reporter,
+            session=sess,
+            session_doc=doc,
+            small_model=small_model,
         )
-        return (sink[0] if sink else "", msgs)
+        await _run_persist(req)
+        # Persist updated doc reference for subsequent turns (same object mutated)
+        preloaded_doc = doc
+        return ("", msgs)
 
     while True:
         if initial_prompt:

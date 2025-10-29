@@ -170,6 +170,12 @@ async def run_turn(
     fallback when models stream tool_call deltas but produce no visible text.
     """
     pr: ProgressReporter = progress_reporter or NoOpProgressReporter()
+    # Attach reporter to provided session so per-turn tasks render (REPL)
+    try:
+        if session is not None:
+            session._progress = pr  # type: ignore[attr-defined]
+    except Exception:
+        pass
     console = Console()
 
     try:
@@ -325,6 +331,12 @@ async def run_turn_with_persistence(req: RunRequest) -> None:
         )
         await session.start()
         created_session = True
+    else:
+        # Ensure provided session in REPL uses the current progress reporter
+        try:
+            session._progress = pr  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     # Preload existing history if a doc is provided
     if isinstance(req.session_doc, dict):
