@@ -2,14 +2,16 @@
 
 A modern, modular shell assistant powered by LLMs with first-class Model Context Protocol (MCP) support.
 
+Meet your shell copilot — the AI bestie for anyone who lives in the terminal.
+
 - Async-first core
 - Configurable providers via LiteLLM (OpenAI, Claude, Perplexity, Azure, etc.)
 - MCP tools discovery and invocation with resilient lifecycle
 - Interactive REPL attached to each Agent with a persistent ChatSession and per-session history
-- Colored REPL prompt showing "<agent>|<model>>"; REPL lives under `gptsh/cli/repl.py` and updates model/params via `agent.llm._base`
 - Clean CLI UX with progress spinners and Markdown rendering
+- Plain text and nice markdown rendering
 
-See AGENTS.md for development standards, coding conventions, and architecture details.
+![Demo](./files/gptsh.gif)
 
 ## Goal
 
@@ -645,7 +647,6 @@ For full development instructions, read `AGENTS.md`.
 ---
 ## Roadmap
 
-- Session management: persist one-shot and REPL conversations as sessions you can return to later.
 - Workflow orchestration: define runnable workflows composed of steps (shell/Python/agents), similar to invoking targets with simple task runners.
 - SRE copilot focus: practical day-to-day automation with safe approvals and rich tool integrations.
 
