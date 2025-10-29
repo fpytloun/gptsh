@@ -259,6 +259,23 @@ async def run_turn(
                         async with pr.aio_io():
                             console.print(line)
 
+        # Print once in non-stream mode
+        if not stream:
+            final_text = full_output
+            if final_text:
+                async with pr.aio_io():
+                    if output_format == "markdown":
+                        console.print(Markdown(final_text))
+                    else:
+                        console.print(final_text)
+            # Append to result sink for symmetry with stream path
+            if result_sink is not None:
+                try:
+                    result_sink.append(full_output)
+                except Exception:
+                    pass
+            return
+
         # Ensure any remaining buffered content is printed under IO guard
         if output_format == "markdown" and mbuf is not None:
             tail = mbuf.flush()
