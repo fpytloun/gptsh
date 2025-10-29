@@ -2,14 +2,15 @@
 
 A modern, modular shell assistant powered by LLMs with first-class Model Context Protocol (MCP) support.
 
-Meet your shell copilot — the AI bestie for anyone who lives in the terminal.
+**Meet your shell copilot — the AI bestie for anyone who lives in the terminal.**
 
+**Features:**
 - Async-first core
 - Configurable providers via LiteLLM (OpenAI, Claude, Perplexity, Azure, etc.)
 - MCP tools discovery and invocation with resilient lifecycle
-- Interactive REPL attached to each Agent with a persistent ChatSession and per-session history
+- Interactive REPL with a persistent session and history
 - Clean CLI UX with progress spinners and Markdown rendering
-- Plain text and nice markdown rendering
+- Predictable I/O for maximum flexibility
 
 ![Demo](./files/gptsh.gif)
 
