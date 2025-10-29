@@ -52,8 +52,18 @@ async def build_agent(
     # Build LiteLLMClient with effective base params
     base_params: Dict[str, Any] = {}
     if provider_conf:
-        # Take provider config first
-        base_params.update(**provider_conf)
+        # Filter provider config to LiteLLM-relevant keys only; keep others (like model_small) out
+        allowed_llm_keys = {
+            "model",
+            "temperature",
+            "reasoning_effort",
+            "max_tokens",
+            "timeout",
+            "metadata",
+            "extra_headers",
+            "base_url",
+        }
+        base_params.update({k: v for k, v in provider_conf.items() if k in allowed_llm_keys})
 
     # provider model is baseline; agent may override; CLI overrides final
     base_params["model"] = (
