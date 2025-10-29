@@ -22,130 +22,171 @@ class MarkdownBuffer:
 
     Heuristics:
     - Flush on blank-line paragraph boundaries ("\n\n") when not inside fenced code.
-    - Detect fenced code blocks (``` or ~~~). Accumulate entire fenced block and flush
-      only when the closing fence arrives to avoid partial code rendering.
+    - Detect fenced code blocks (``` or ~~~ with variable length). Accumulate entire fenced
+      block and flush only when the closing fence arrives to avoid partial code rendering.
     - As a latency guard, if buffer grows beyond a threshold and ends with a newline,
       flush the current paragraph even without a double newline.
+    - Always emit blocks terminated by at least a single trailing newline to prevent
+      style bleed in Rich Markdown rendering.
     """
 
     def __init__(self, latency_chars: int = 1200) -> None:
         self._buf: str = ""
         self._in_fence: bool = False
-        self._fence_marker: Optional[str] = None  # "```" or "~~~"
+        self._fence_marker: Optional[str] = None  # e.g., "```", "````", "~~~"
         self._latency_chars = latency_chars
 
-    def _is_fence_line(self, line: str) -> Optional[str]:
+    def _match_fence(self, line: str) -> Optional[str]:
+        """Return the exact fence marker found at the start of the line (after optional indent).
+
+        Supports variable-length ``` or ~~~ fences; returns the exact sequence, e.g. "````".
+        """
         stripped = line.lstrip()
-        if stripped.startswith("```"):
-            return "```"
-        if stripped.startswith("~~~"):
-            return "~~~"
+        if not stripped:
+            return None
+        ch = stripped[0]
+        if ch not in ("`", "~"):
+            return None
+        # Count consecutive same characters from the start
+        i = 0
+        while i < len(stripped) and stripped[i] == ch:
+            i += 1
+        # At least 3 are required to form a fence
+        if i >= 3:
+            return stripped[:i]
         return None
+
+    @staticmethod
+    def _ensure_trailing_newline(block: str) -> str:
+        # Ensure at least one trailing newline; prefer single to avoid adding extra empties
+        if not block.endswith("\n"):
+            return block + "\n"
+        return block
 
     def push(self, chunk: str) -> List[str]:
         """Push text and return a list of complete markdown blocks ready to render."""
         out: List[str] = []
         self._buf += chunk
 
-        # Fast path for fenced code blocks: emit only when closing fence appears
-        cursor = 0
-        while cursor < len(self._buf):
+        # Process as much as possible
+        while self._buf:
             if not self._in_fence:
-                # Try to split at a paragraph boundary first
-                idx = self._buf.find("\n\n", cursor)
-                fence_idx = self._buf.find("```", cursor)
-                fence_idx2 = self._buf.find("~~~", cursor)
-                # Determine nearest fence start if any
-                candidates = [i for i in [fence_idx, fence_idx2] if i != -1]
-                nearest_fence = min(candidates) if candidates else -1
+                # If we can flush a full paragraph before any fence, do it
+                # Find nearest paragraph boundary and nearest fence-start line
+                par_idx = self._buf.find("\n\n")
 
-                if idx != -1 and (nearest_fence == -1 or idx < nearest_fence):
-                    # We found a blank-line boundary before any fence; flush up to boundary
-                    block = self._buf[: idx + 2]
-                    out.append(block)
-                    self._buf = self._buf[idx + 2 :]
-                    cursor = 0
+                # Find fence start at any line-start
+                fence_start_idx = -1
+                scan_pos = 0
+                while True:
+                    # Determine start and end of the current line
+                    if scan_pos == 0:
+                        line_start = 0
+                    else:
+                        nl = self._buf.find("\n", scan_pos - 1)
+                        if nl == -1:
+                            break
+                        line_start = nl + 1
+                    next_nl = self._buf.find("\n", line_start)
+                    if next_nl == -1:
+                        # No full next line available yet
+                        break
+                    line = self._buf[line_start : next_nl + 1]
+                    if self._match_fence(line):
+                        fence_start_idx = line_start
+                        break
+                    scan_pos = next_nl + 1
+
+                # If a paragraph boundary comes before any fence, flush up to boundary
+                if par_idx != -1 and (fence_start_idx == -1 or par_idx < fence_start_idx):
+                    block = self._buf[: par_idx + 2]
+                    out.append(self._ensure_trailing_newline(block))
+                    self._buf = self._buf[par_idx + 2 :]
                     continue
 
-                # Check if the buffer begins a fenced block
-                # Look at start of lines up to possible next newline
-                line_start = self._buf.rfind("\n", 0, cursor) + 1
-                next_nl = self._buf.find("\n", cursor)
-                if next_nl == -1:
-                    break
-                line = self._buf[line_start : next_nl + 1]
-                mark = self._is_fence_line(line)
-                if mark is not None:
-                    # Flush any content preceding the fence if present
-                    before = self._buf[:line_start]
+                # If a fence starts, emit any text before it and enter fence mode
+                if fence_start_idx != -1:
+                    before = self._buf[:fence_start_idx]
                     if before.strip():
-                        out.append(before)
-                    # Enter fenced mode starting from fence line
-                    self._buf = self._buf[line_start:]
-                    self._in_fence = True
-                    self._fence_marker = mark
-                    cursor = 0
+                        out.append(self._ensure_trailing_newline(before))
+                    self._buf = self._buf[fence_start_idx:]
+                    # Determine exact opening fence marker
+                    first_nl = self._buf.find("\n")
+                    if first_nl == -1:
+                        # Entire fence line not yet complete; wait for more
+                        break
+                    open_line = self._buf[: first_nl + 1]
+                    marker = self._match_fence(open_line)
+                    if marker:
+                        self._in_fence = True
+                        self._fence_marker = marker
+                    # If somehow not a valid fence, just continue scanning on next loop
                     continue
-                # No actionable boundary detected; break scan
+
+                # No actionable boundary; stop for now
                 break
             else:
-                # Inside fence: look for closing fence marker at start of a line
-                close_idx = self._buf.find("\n" + (self._fence_marker or ""))
-                # Also consider fence at very start
-                start_close = self._buf.startswith(self._fence_marker or "")
-                if close_idx != -1 or start_close:
-                    # Find exact closing line
-                    # Search line by line for a line that starts with the marker
-                    lines = self._buf.splitlines(keepends=True)
-                    acc = ""
-                    closed = False
-                    for i, line in enumerate(lines):
-                        acc += line
-                        # Closing fence line: must start with marker
-                        if line.lstrip().startswith(self._fence_marker or "") and i != 0:
-                            closed = True
-                            # Include the fence line fully; then flush the fenced block
-                            # and keep any remainder in buffer
-                            # Append remaining lines after the fence back to buffer
-                            remainder = "".join(lines[i + 1 :])
-                            out.append(acc)
-                            self._buf = remainder
-                            self._in_fence = False
-                            self._fence_marker = None
-                            cursor = 0
+                # Inside fence: look for closing fence line (>= opening length of same char)
+                assert self._fence_marker is not None
+                fence_char = self._fence_marker[0]
+                fence_len = len(self._fence_marker)
+                lines = self._buf.splitlines(keepends=True)
+                acc = ""
+                closed_index = -1
+                for i, line in enumerate(lines):
+                    acc += line
+                    stripped = line.lstrip()
+                    # A closing fence must not be the opening line (i > 0), must start with the
+                    # fence char repeated >= opening length, and contain only optional whitespace after.
+                    if i > 0 and stripped and stripped[0] == fence_char:
+                        j = 0
+                        while j < len(stripped) and stripped[j] == fence_char:
+                            j += 1
+                        # After the fence sequence, only spaces/tabs are allowed on closing lines
+                        trailing = stripped[j:]
+                        if j >= fence_len and (trailing.strip() == ""):
+                            closed_index = i
                             break
-                    if not closed:
-                        # Not yet closed; wait for more chunks
-                        break
-                else:
-                    # No closing fence yet
-                    break
+                if closed_index != -1:
+                    remainder = "".join(lines[closed_index + 1 :])
+                    out.append(acc)  # Fenced block should be complete; keep as-is
+                    self._buf = remainder
+                    self._in_fence = False
+                    self._fence_marker = None
+                    continue
+                # Not closed yet; wait for more chunks
+                break
 
-        # Latency guard: if buffer is long and ends with a newline, flush one paragraph
+        # Latency guard: flush last paragraph if buffer is large and ends with newline
         if (
             not self._in_fence
             and len(self._buf) >= self._latency_chars
             and self._buf.endswith("\n")
         ):
-            # Try to split at last blank line; otherwise flush entire buffer
             last_par = self._buf.rfind("\n\n")
             if last_par != -1:
-                out.append(self._buf[: last_par + 2])
+                out.append(self._ensure_trailing_newline(self._buf[: last_par + 2]))
                 self._buf = self._buf[last_par + 2 :]
             else:
-                out.append(self._buf)
+                out.append(self._ensure_trailing_newline(self._buf))
                 self._buf = ""
 
         return out
 
     def flush(self) -> Optional[str]:
-        if self._buf.strip():
-            data = self._buf
-            self._buf = ""
-            self._in_fence = False
-            self._fence_marker = None
-            return data
-        return None
+        if not self._buf.strip():
+            return None
+        data = self._buf
+        # If we are in a fence and it's not closed, auto-close to avoid broken rendering
+        if self._in_fence and self._fence_marker:
+            if not data.endswith("\n"):
+                data += "\n"
+            data += f"{self._fence_marker}\n"
+        # Reset state
+        self._buf = ""
+        self._in_fence = False
+        self._fence_marker = None
+        return data
 
 
 async def run_turn(
