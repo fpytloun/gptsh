@@ -33,9 +33,8 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
 
         async def stream_turn(
             self,
-            *,
-            prompt,
-            no_tools,
+            user_message,
+            no_tools=False,
         ):
             if False:
                 yield ""  # pragma: no cover
@@ -56,7 +55,7 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
     asyncio.run(
         _call_run_turn(
             agent=agent,
-            prompt=prompt,
+            user_message=prompt,
             config=config,
             stream=True,
             progress=False,
@@ -64,7 +63,6 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
             no_tools=False,
             logger=None,
             result_sink=result_sink,
-
         )
     )
 
@@ -94,9 +92,8 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
 
         async def stream_turn(
             self,
-            *,
-            prompt,
-            no_tools,
+            user_message,
+            no_tools=False,
         ):
             yield "hello"
             yield " "
@@ -115,7 +112,7 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
     asyncio.run(
         _call_run_turn(
             agent=agent,
-            prompt=prompt,
+            user_message=prompt,
             config=config,
             stream=True,
             progress=False,
@@ -123,7 +120,6 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
             no_tools=False,
             logger=None,
             result_sink=result_sink,
-
         )
     )
 

@@ -241,7 +241,41 @@ def append_messages(
     if not isinstance(doc.get("messages"), list):
         doc["messages"] = []
     if new_messages:
-        doc["messages"].extend(list(new_messages))
+        # Persist-safe: convert multimodal content arrays into concise text markers
+        try:
+            from gptsh.core.multimodal import message_to_text as _msg_to_text  # noqa: WPS433
+        except Exception:
+            _msg_to_text = None  # type: ignore
+        persisted: List[Dict[str, Any]] = []
+        for m in list(new_messages):
+            m2 = dict(m)
+            content = m2.get("content")
+
+            # Convert content arrays to text
+            if isinstance(content, list):
+                if _msg_to_text:
+                    try:
+                        m2["content"] = _msg_to_text(m2)
+                    except Exception:
+                        m2["content"] = "[Multimodal content]"
+                else:
+                    # Fallback: extract text parts only
+                    text_parts = [
+                        p.get("text", "")
+                        for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                    m2["content"] = " ".join(text_parts) or "[Multimodal content]"
+
+            # Skip empty messages unless they have tool_calls
+            if not m2.get("content") or (
+                isinstance(m2.get("content"), str) and not m2.get("content").strip()
+            ):
+                if not m2.get("tool_calls"):
+                    continue
+
+            persisted.append(m2)
+        doc["messages"].extend(persisted)
     if usage_delta:
         # Merge tokens and cost conservatively
         tokens = usage_delta.get("tokens") or {}

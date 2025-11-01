@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 import warnings
+from pathlib import Path
 
 import click
 
@@ -17,13 +18,12 @@ from gptsh.core.config_resolver import build_agent
 from gptsh.core.logging import setup_logging
 from gptsh.core.runner import RunRequest, run_turn_with_request
 from gptsh.core.sessions import (
+    _find_file_by_id as _find_file_by_id,
     list_sessions as _list_saved_sessions,
     load_session as _load_session,
     resolve_session_ref as _resolve_session_ref,
-    _find_file_by_id as _find_file_by_id,
 )
-from pathlib import Path
-from gptsh.core.stdin_handler import read_stdin
+from gptsh.core.stdin_handler import read_stdin_any
 from gptsh.mcp.api import get_auto_approved_tools, list_tools
 from gptsh.mcp.manager import MCPManager
 
@@ -35,7 +35,7 @@ try:
 except Exception:
     close_litellm_async_clients = None  # type: ignore
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 # Suppress known LiteLLM RuntimeWarning about un-awaited coroutine on loop close.
 warnings.filterwarnings(
@@ -73,7 +73,6 @@ def _fmt_local_ts(iso: Optional[str]) -> str:
 
 
 def _render_session_header(doc: Dict[str, Any], fmt: str) -> None:
-    meta = doc.get("meta") or {}
     agent = doc.get("agent") or {}
     provider = doc.get("provider") or {}
     title = doc.get("title") or "(untitled)"
@@ -529,8 +528,8 @@ def main(
         # Print only the summary in the session's stored format
         try:
             if fmt == "markdown":
-                from rich.markdown import Markdown
                 from rich.console import Console
+                from rich.markdown import Markdown
 
                 Console().print(Markdown(summary))
             else:
@@ -747,30 +746,50 @@ def main(
         )
 
     # Initial prompt from arg and/or stdin
-    stdin_input = None
+    stdin_text = None
+    stdin_attachments = []
     if not _is_tty(stream="stdin"):
         # Stdin is not TTY so read stdin first
-        try:
-            stdin_input = read_stdin()
-        except UnicodeDecodeError as e:
-            raise click.ClickException(
-                "Failed to decode input. Please ensure UTF-8 encoding."
-            ) from e
+        result = read_stdin_any()
+        if result is not None:
+            if result["kind"] == "text":
+                stdin_text = result["text"]
+            elif result["kind"] == "attachment":
+                # Binary content: store as attachment for multimodal handling
+                stdin_attachments.append(
+                    {
+                        "type": result["type"],
+                        "mime": result["mime"],
+                        "data": result["data"],
+                        "truncated": result.get("truncated", False),
+                    }
+                )
 
         # We consumed something from stdin and have tty on stderr so session seems interactive, open /dev/tty for interactive inputs (tool approvals)
-        if stdin_input and _is_tty(stream="stderr"):
+        if (stdin_text or stdin_attachments) and _is_tty(stream="stderr"):
             try:
                 sys.stdin = open("/dev/tty", "r", encoding="utf-8", errors="replace")
             except OSError:
                 # We cannot re-open stdin so assume session is not interactive
                 pass
 
-    # Construct prompt
-    prompt = prompt or agent_conf.get("prompt", {}).get("user")
-    initial_prompt = (
-        f"{prompt}\n\n---\nInput:\n{stdin_input}"
-        if (prompt and stdin_input)
-        else (prompt or stdin_input)
+    # Construct prompt text
+    prompt_text = prompt or agent_conf.get("prompt", {}).get("user")
+    if prompt_text and stdin_text:
+        combined_text = f"{prompt_text}\n\n---\nInput:\n{stdin_text}"
+    elif stdin_text:
+        combined_text = stdin_text
+    else:
+        combined_text = prompt_text
+
+    # Build user message with multimodal support
+    from gptsh.core.multimodal import build_user_message
+
+    model = (getattr(agent_obj.llm, "_base", {}) or {}).get("model", "gpt-4o")
+    initial_user_message = build_user_message(
+        text=combined_text,
+        attachments=stdin_attachments if stdin_attachments else None,
+        model=model,
     )
 
     # Initialize a single ProgressReporter for the REPL session and pass it down
@@ -804,7 +823,7 @@ def main(
                 config=config,
                 output_format=output_effective,
                 stream=stream,
-                initial_prompt=initial_prompt,
+                initial_user_message=initial_user_message,
                 progress_reporter=reporter,
                 session_ref=session_ref,
                 sessions_enabled=_get_sessions_enabled(
@@ -831,15 +850,17 @@ def main(
     if print_session:
         session_output_fmt, _ = _print_session_transcript_or_exit(session_ref)
         output_effective = session_output_fmt
-        # If no prompt to continue, exit now
-        if not initial_prompt:
+        # If no user message to continue, exit now
+        if not initial_user_message or (
+            isinstance(initial_user_message, dict) and not initial_user_message.get("content")
+        ):
             try:
                 reporter.stop()
             except Exception:
                 pass
             sys.exit(0)
 
-    if initial_prompt:
+    if initial_user_message:
 
         async def _run_once_noninteractive() -> None:
             from gptsh.core.config_api import get_sessions_enabled
@@ -860,7 +881,7 @@ def main(
                 # Plain non-persistent run
                 req = RunRequest(
                     agent=agent_obj,
-                    prompt=initial_prompt,
+                    user_message=initial_user_message,
                     config=config,
                     stream=stream,
                     output_format=output_effective,
@@ -913,7 +934,7 @@ def main(
             # Run once with persistence
             req = RunRequest(
                 agent=agent_obj,
-                prompt=initial_prompt,
+                user_message=initial_user_message,
                 config=config,
                 stream=stream,
                 output_format=output_effective,
@@ -947,7 +968,7 @@ def main(
 
 async def run_llm(
     *,
-    prompt: str,
+    user_message: Union[str, Dict[str, Any]],
     stream: bool,
     output_format: str,
     no_tools: bool,
@@ -982,7 +1003,7 @@ async def run_llm(
 
     req = RunRequest(
         agent=agent_obj,
-        prompt=prompt,
+        user_message=user_message,
         config=config,
         stream=stream,
         output_format=output_format,

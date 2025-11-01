@@ -162,6 +162,13 @@ Pipe input from stdin:
 git diff | gptsh "Explain the changes and suggest a commit message"
 ```
 
+Binary stdin (images, audio, PDFs) is automatically detected and described:
+
+```bash
+cat image.png | gptsh "What is in this image?"
+# Stdin is detected as image/png and a concise marker is injected
+```
+
 Plain text output (default is markdown):
 
 ```bash
@@ -580,6 +587,7 @@ REPL slash-commands:
 - /tools — List discovered MCP tools for current agent
 - /no-tools [on|off] — Toggle or set MCP tool usage for this session
 - /info — Show session/model info and usage
+- /file <path> — Attach a file to the conversation (text files inlined; binary/large files as markers)
 - /compact — Summarize and compact history (keeps system prompt, inserts labeled USER summary)
 - /help — Show available commands
 (Tab completion works for slash-commands and agent names.)
@@ -592,7 +600,7 @@ gptsh --no-progress "Describe current repo structure"
 
 ## Tool I/O
 
-- **stdin** — If available (e.g., from a pipe), non-interactive stdin is read and appended to the active prompt. In REPL mode, stdin is then switched to /dev/tty to accept further interactive input.
+- **stdin** — If available (e.g., from a pipe), non-interactive stdin is read and appended to the active prompt. Binary content (images, audio, PDFs) is auto-detected via magic bytes and injected as a concise marker. In REPL mode, stdin is then switched to /dev/tty to accept further interactive input.
 - **stderr** — Progress bar, tool-approval prompts, and logs.
 - **stdout** — Only LLM output is written to stdout.
 

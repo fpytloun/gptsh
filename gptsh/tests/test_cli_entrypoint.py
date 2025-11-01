@@ -170,7 +170,7 @@ def test_cli_stream_no_tools(monkeypatch):
         async def start(self):
             pass
 
-        async def stream_turn(self, *, prompt, no_tools=False):
+        async def stream_turn(self, *, user_message, no_tools=False):
             yield "hello "
             yield "world"
 
@@ -229,8 +229,7 @@ def test_cli_agent_provider_selection(monkeypatch):
 
         async def stream_turn(
             self,
-            *,
-            prompt,
+            user_message,
             no_tools=False,
         ):
             yield "x"
@@ -440,7 +439,7 @@ def test_cli_interactive_invokes_agent_repl(monkeypatch):
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
     # No stdin content
-    monkeypatch.setattr(ep, "read_stdin", lambda: None)
+    monkeypatch.setattr(ep, "read_stdin_any", lambda: None)
 
     # Stub resolver used by interactive path
     class DummyAgent:

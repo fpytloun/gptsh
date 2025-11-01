@@ -1,4 +1,3 @@
-import pytest
 
 from gptsh.core.runner import MarkdownBuffer
 

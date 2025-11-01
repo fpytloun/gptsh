@@ -24,14 +24,14 @@ async def test_core_run_prompt_monkey(monkeypatch):
     session = ChatSession.from_agent(agent, progress=None, config={}, mcp=None)
 
     params, has_tools, model = await session._prepare_params(
-        prompt="hi",
+        user_message="hi",
         no_tools=False,
     )
 
     # Now run a small no-tools turn and accept empty result
     chunks = []
     async for t in session.stream_turn(
-        prompt="hi",
+        user_message="hi",
         no_tools=True,
     ):
         chunks.append(t)

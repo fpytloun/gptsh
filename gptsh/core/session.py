@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from litellm.types.utils import Usage
 from rich.console import Console
@@ -64,24 +64,52 @@ class ChatSession:
             # Find first user message content
             first_user: Optional[str] = None
             first_assistant: Optional[str] = None
+
+            # Lazy import to avoid circulars
+            from gptsh.core.multimodal import message_to_text as _msg_to_text  # noqa: WPS433
+
             for m in self.history:
-                if not first_user:
-                    if m.get("role") == "user":
-                        text = str(m.get("content") or "").strip()
-                        if text:
-                            first_user = text
-                if not first_assistant:
-                    if m.get("role") == "assistant":
-                        text = str(m.get("content") or "").strip()
-                        if text:
-                            first_assistant = text
+                if not first_user and m.get("role") == "user":
+                    content = m.get("content")
+                    if isinstance(content, list):
+                        # Content array - extract text parts only
+                        text = _msg_to_text(m)
+                    elif isinstance(content, str):
+                        text = content.strip()
+                    else:
+                        text = str(content or "").strip()
+                    if text:
+                        first_user = text
+
+                if not first_assistant and m.get("role") == "assistant":
+                    content = m.get("content")
+                    if isinstance(content, list):
+                        # Content array - extract text parts only
+                        text = _msg_to_text(m)
+                    elif isinstance(content, str):
+                        text = content.strip()
+                    else:
+                        text = str(content or "").strip()
+                    if text:
+                        first_assistant = text
+
+                if first_user and first_assistant:
+                    break
+
             if not first_user and not first_assistant:
                 return None
-            # Lazy import to avoid circulars
+
             from gptsh.core.sessions import generate_title as _gen_title  # noqa: WPS433
 
+            # Build concise conversation string for title generation
+            conversation_parts = []
+            if first_user:
+                conversation_parts.append(f"USER: {first_user}")
+            if first_assistant:
+                conversation_parts.append(f"ASSISTANT: {first_assistant}")
+
             title = await _gen_title(
-                f"USER: {first_user}\nASSISTANT: {first_assistant}",
+                "\n".join(conversation_parts),
                 small_model=small_model,
                 llm=self._llm,
             )
@@ -250,7 +278,7 @@ class ChatSession:
 
     async def _prepare_params(
         self,
-        prompt: str,
+        user_message: Union[str, Dict[str, Any]],
         no_tools: bool,
     ) -> tuple[Dict[str, Any], bool, str]:
         # Build params from LLM base only
@@ -262,7 +290,14 @@ class ChatSession:
         for m in self.history:
             if isinstance(m, dict) and m.get("role") in {"user", "assistant", "tool", "system"}:
                 messages.append(m)
-        messages.append({"role": "user", "content": prompt})
+
+        # Accept either a string (convert to message) or a full message dict
+        if isinstance(user_message, str):
+            messages.append({"role": "user", "content": user_message})
+        elif isinstance(user_message, dict):
+            messages.append(user_message)
+        else:
+            raise TypeError(f"user_message must be str or dict, got {type(user_message)}")
 
         params["model"] = chosen_model
         params["messages"] = self._normalize_messages(messages)
@@ -288,16 +323,22 @@ class ChatSession:
 
     async def stream_turn(
         self,
-        prompt: str,
+        user_message: Union[str, Dict[str, Any]],
         no_tools: bool = False,
     ) -> AsyncIterator[str]:
         # Per-turn progress task
         working_task_id: Optional[int] = None
         try:
-            params, has_tools, _model = await self._prepare_params(prompt, no_tools)
+            params, has_tools, _model = await self._prepare_params(user_message, no_tools)
             # Initialize conversation from params messages
             conversation: List[Dict[str, Any]] = list(params.get("messages") or [])
             turn_deltas: List[Dict[str, Any]] = []
+
+            # Convert user_message to proper message dict for history
+            if isinstance(user_message, str):
+                user_msg_for_history = {"role": "user", "content": user_message}
+            else:
+                user_msg_for_history = user_message
 
             console_log = Console(stderr=True)
             working_task_label = f"Waiting for {_model}"
@@ -336,8 +377,7 @@ class ChatSession:
                         conversation.append(final_msg)
                         turn_deltas.append(final_msg)
                     # Persist deltas and current user to session history
-                    user_msg = {"role": "user", "content": prompt}
-                    self.history.append(user_msg)
+                    self.history.append(user_msg_for_history)
                     if turn_deltas:
                         self.history.extend(turn_deltas)
                     return
@@ -362,8 +402,7 @@ class ChatSession:
                         final_msg = {"role": "assistant", "content": full_text}
                         conversation.append(final_msg)
                         turn_deltas.append(final_msg)
-                    user_msg = {"role": "user", "content": prompt}
-                    self.history.append(user_msg)
+                    self.history.append(user_msg_for_history)
                     if turn_deltas:
                         self.history.extend(turn_deltas)
                     return
@@ -403,8 +442,7 @@ class ChatSession:
                             final_msg = {"role": "assistant", "content": final_text}
                             conversation.append(final_msg)
                             turn_deltas.append(final_msg)
-                        user_msg = {"role": "user", "content": prompt}
-                        self.history.append(user_msg)
+                        self.history.append(user_msg_for_history)
                         if turn_deltas:
                             self.history.extend(turn_deltas)
                         return

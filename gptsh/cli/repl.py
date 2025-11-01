@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import click
 
@@ -275,6 +275,66 @@ def command_agent(
     return agent_conf, prompt_str, agent_name, no_tools, mgr
 
 
+def command_file(arg: Optional[str], agent: Agent) -> str:
+    """Read file and return content or marker to inject into conversation.
+
+    - Small UTF-8 text files: return inline content with truncation notice if needed.
+    - Binary or large files: return a concise marker.
+
+    CRITICAL: Uses is_probably_text() to prevent any binary from being inlined.
+    """
+    if not arg:
+        raise ValueError("Usage: /file <path>")
+
+    from pathlib import Path
+
+    from gptsh.core.stdin_handler import is_probably_text, sniff_mime
+
+    path = Path(arg.strip()).expanduser()
+    if not path.is_file():
+        raise ValueError(f"File not found or not accessible: {path}")
+
+    max_inline = 65536  # 64KB
+    try:
+        size = path.stat().st_size
+        if size > max_inline:
+            # Too large: return marker
+            try:
+                with open(path, "rb") as f:
+                    head = f.read(512)
+                mime = sniff_mime(head)
+            except Exception:
+                mime = "application/octet-stream"
+            return f"[Attached file: {path.name} ({mime}, {size} bytes)]"
+
+        # Read full content for analysis
+        with open(path, "rb") as f:
+            data = f.read(max_inline + 1)
+
+        truncated = len(data) > max_inline
+        if truncated:
+            data = data[:max_inline]
+
+        mime = sniff_mime(data)
+
+        # CRITICAL: Only inline if MIME is text/plain AND passes safety check
+        if mime == "text/plain" and is_probably_text(data):
+            try:
+                text = data.decode("utf-8", errors="strict")
+                if truncated:
+                    text += "\n[...File truncated. Content exceeded 64KB.]"
+                return f"File: {path.name}\n{text}"
+            except UnicodeDecodeError:
+                # Should never happen since is_probably_text checks decode
+                pass
+
+        # Everything else: binary marker
+        return f"[Attached file: {path.name} ({mime}, {size} bytes)]"
+
+    except Exception as e:
+        raise ValueError(f"Failed to read file: {e}") from e
+
+
 # Simple command registry and help text
 _COMMANDS_USAGE = {
     "/exit": "Exit the REPL",
@@ -285,6 +345,7 @@ _COMMANDS_USAGE = {
     "/tools": "List discovered MCP tools for current agent",
     "/no-tools [on|off]": "Toggle or set MCP tool usage for this session",
     "/info": "Show session/model info and usage",
+    "/file <path>": "Attach a file to the conversation",
     "/help": "Show available commands",
     "/compact": "Summarize and compact conversation history",
 }
@@ -300,6 +361,7 @@ def get_command_names() -> List[str]:
         "/tools",
         "/no-tools",
         "/info",
+        "/file",
         "/help",
         "/compact",
     ]
@@ -413,7 +475,7 @@ async def run_agent_repl_async(
     config: Dict[str, Any],
     output_format: str,
     stream: bool,
-    initial_prompt: Optional[str] = None,
+    initial_user_message: Optional[Union[str, Dict[str, Any]]] = None,
     progress_reporter: Optional[Any] = None,
     session_ref: Optional[str] = None,
     sessions_enabled: Optional[bool] = None,
@@ -497,7 +559,9 @@ async def run_agent_repl_async(
 
         _preload_chat(preloaded_doc, agent.session)
 
-    async def _run_once(user_text: str) -> tuple[str, List[Dict[str, Any]]]:
+    async def _run_once(
+        user_message: Union[str, Dict[str, Any]],
+    ) -> tuple[str, List[Dict[str, Any]]]:
         nonlocal preloaded_doc
         # Use the persistence-aware runner so titles are generated and turns are saved consistently
         from gptsh.core.runner import (
@@ -550,7 +614,7 @@ async def run_agent_repl_async(
 
         req = _RunRequest(
             agent=agent,
-            prompt=user_text,
+            user_message=user_message,
             config=config,
             stream=stream,
             output_format=output_format,
@@ -571,9 +635,17 @@ async def run_agent_repl_async(
         return ("", msgs)
 
     while True:
-        if initial_prompt:
-            line = initial_prompt
-            initial_prompt = None
+        if initial_user_message:
+            # Handle initial message (may be multimodal dict or string)
+            if isinstance(initial_user_message, dict):
+                # Multimodal message - run it and continue REPL
+                await _run_once(initial_user_message)
+                initial_user_message = None
+                continue
+            else:
+                # Plain string - use as line
+                line = initial_user_message
+                initial_user_message = None
         else:
             try:
                 doc = getattr(rl, "__doc__", "") or ""
@@ -702,6 +774,22 @@ async def run_agent_repl_async(
                     _log.warning("Failed to toggle tools: %s", e)
                     click.echo(f"Failed to toggle tools: {e}", err=True)
                 continue
+            if cmd == "/file":
+                try:
+                    file_content = command_file(arg, agent)
+                    # Append as a user message to the active session
+                    sess = getattr(agent, "session", None)
+                    if sess is not None:
+                        sess.history.append({"role": "user", "content": file_content})
+                        click.echo(f"File attached: {arg}")
+                    else:
+                        click.echo("No active session", err=True)
+                except ValueError as ve:
+                    click.echo(str(ve), err=True)
+                except Exception as e:
+                    _log.warning("Failed to attach file: %s", e)
+                    click.echo(f"Failed to attach file: {e}", err=True)
+                continue
             if cmd == "/compact":
                 sess = getattr(agent, "session", None)
                 if sess is None:
@@ -731,8 +819,8 @@ async def run_agent_repl_async(
                 # Print summary in current REPL format
                 if output_format == "markdown":
                     try:
-                        from rich.markdown import Markdown
                         from rich.console import Console
+                        from rich.markdown import Markdown
 
                         Console().print(Markdown(summary))
                     except Exception:
@@ -813,7 +901,7 @@ def run_agent_repl(
     config: Dict[str, Any],
     output_format: str,
     stream: bool,
-    initial_prompt: Optional[str] = None,
+    initial_user_message: Optional[Union[str, Dict[str, Any]]] = None,
     progress_reporter: Optional[Any] = None,
     session_ref: Optional[str] = None,
     sessions_enabled: Optional[bool] = None,
@@ -824,7 +912,7 @@ def run_agent_repl(
             config=config,
             output_format=output_format,
             stream=stream,
-            initial_prompt=initial_prompt,
+            initial_user_message=initial_user_message,
             progress_reporter=progress_reporter,
             session_ref=session_ref,
             sessions_enabled=sessions_enabled,

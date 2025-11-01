@@ -38,7 +38,7 @@ async def test_chat_session_from_agent_uses_agent_llm_and_policy():
     await session.start()
     chunks = []
     async for t in session.stream_turn(
-        prompt="hi",
+        user_message="hi",
         no_tools=False,
     ):
         chunks.append(t)

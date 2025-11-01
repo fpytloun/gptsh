@@ -269,8 +269,9 @@ Notes:
 ## Stdin Handling Strategy
 
 - If stdin is non-tty, read up to `stdin.max_bytes`.
-- If input exceeds limit, truncate and append a notice to the text. A summarization strategy may be added in the future.
-- Treat binary input as bytes; attempt `utf-8` with `errors="replace"` and label garbled sections.
+- Binary content is auto-detected via magic bytes (images, audio, PDFs) and injected as a concise marker (e.g., `[Attached stdin: image/png, 12345 bytes]`).
+- Text input is handled as UTF-8; if input exceeds limit, truncate and append a notice. A summarization strategy may be added in the future.
+- No base64 or large binary payloads are persisted into session history.
 
 ---
 ## Tool Discovery and Selection
@@ -423,12 +424,17 @@ Notes:
 - Summarize only: `--summarize-session REF` prints a concise summary using the session’s small model and exits.
 - Cleanup/delete: `--cleanup-sessions` (with optional `--keep-sessions N`), `--delete-session REF`.
 
-### REPL: Compact History
+### REPL: Compact History and File Attachment
 
 - `/compact` — Summarize and compact the conversation using the small model.
   - Preserves the original system prompt
   - Inserts a labeled summary as the first USER message
   - Wipes the rest of the history to reduce context
+
+- `/file <path>` — Attach a file to the conversation.
+  - Small UTF-8 text files (≤64KB): inlined with content; larger files show truncation notice.
+  - Binary or non-UTF-8 files: injected as concise markers (e.g., `[Attached file: image.png (image/png, 12345 bytes)]`).
+  - No base64 or large payloads persisted into session history.
 
 ---
 ## Installation and Development

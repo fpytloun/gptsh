@@ -80,7 +80,7 @@ async def test_chat_session_tool_loop_auto_approved():
     await session.start()
     chunks = []
     async for t in session.stream_turn(
-        prompt="hi",
+        user_message="hi",
         no_tools=False,
     ):
         chunks.append(t)
@@ -126,7 +126,7 @@ async def test_chat_session_tool_loop_denied():
     await session.start()
     chunks = []
     async for t in session.stream_turn(
-        prompt="hi",
+        user_message="hi",
         no_tools=False,
     ):
         chunks.append(t)
@@ -176,7 +176,7 @@ async def test_chat_session_multiple_tools():
     await session.start()
     chunks = []
     async for t in session.stream_turn(
-        prompt="hi",
+        user_message="hi",
         no_tools=False,
     ):
         chunks.append(t)
@@ -197,7 +197,7 @@ async def test_system_prompt_included_in_messages_non_stream():
     # For no-tools, FakeLLM.stream yields chunks; join them
     chunks = []
     async for t in session.stream_turn(
-        prompt="hi",
+        user_message="hi",
         no_tools=False,
     ):
         chunks.append(t)
@@ -219,7 +219,7 @@ async def test_system_prompt_included_in_messages_stream():
     )
     # Prepare parameters via internal builder to validate message construction
     params, _has_tools, _model = await session._prepare_params(
-        prompt="hi",
+        user_message="hi",
         no_tools=False,
     )
     msgs = params.get("messages")

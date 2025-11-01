@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import click
 from rich.console import Console
@@ -192,7 +192,7 @@ class MarkdownBuffer:
 async def run_turn(
     *,
     agent: Any,
-    prompt: str,
+    user_message: Union[str, Dict[str, Any]],
     config: Dict[str, Any],
     stream: bool = True,
     output_format: str = "markdown",
@@ -237,7 +237,7 @@ async def run_turn(
         mbuf: Optional[MarkdownBuffer] = MarkdownBuffer() if output_format == "markdown" else None
 
         async for text in session.stream_turn(
-            prompt=prompt,
+            user_message=user_message,
             no_tools=no_tools,
         ):
             if not text:
@@ -336,7 +336,7 @@ async def run_turn(
 @dataclass
 class RunRequest:
     agent: Any
-    prompt: str
+    user_message: Union[str, Dict[str, Any]]  # String or full message dict with content array
     config: Dict[str, Any]
     stream: bool = True
     output_format: str = "markdown"
@@ -356,7 +356,7 @@ class RunRequest:
 async def run_turn_with_request(req: RunRequest) -> None:
     await run_turn(
         agent=req.agent,
-        prompt=req.prompt,
+        user_message=req.user_message,
         config=req.config,
         stream=req.stream,
         output_format=req.output_format,
@@ -408,7 +408,7 @@ async def run_turn_with_persistence(req: RunRequest) -> None:
     # Run the turn with our prepared session
     await run_turn(
         agent=req.agent,
-        prompt=req.prompt,
+        user_message=req.user_message,
         config=req.config,
         stream=req.stream,
         output_format=req.output_format,

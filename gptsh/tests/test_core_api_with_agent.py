@@ -28,7 +28,7 @@ async def test_run_prompt_with_agent_simple_no_tools(monkeypatch):
     session = ChatSession.from_agent(agent, progress=None, config={}, mcp=None)
     chunks = []
     async for t in session.stream_turn(
-        prompt="hi",
+        user_message="hi",
         no_tools=True,
     ):
         chunks.append(t)

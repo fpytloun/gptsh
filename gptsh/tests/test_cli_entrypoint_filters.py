@@ -1,4 +1,5 @@
 from click.testing import CliRunner
+
 import gptsh.cli.entrypoint as ep
 from gptsh.cli.entrypoint import main
 
