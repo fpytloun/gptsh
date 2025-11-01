@@ -41,6 +41,15 @@ def make_image_content_part(data: bytes, mime: str) -> Dict[str, Any]:
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
 
+def make_pdf_content_part(data: bytes) -> Dict[str, Any]:
+    """Create a PDF file content part.
+
+    Returns: {"type": "file", "file": {"file_data": "data:application/pdf;base64,..."}}
+    """
+    b64 = base64.b64encode(data).decode("ascii")
+    return {"type": "file", "file": {"file_data": f"data:application/pdf;base64,{b64}"}}
+
+
 def make_text_content_part(text: str) -> Dict[str, Any]:
     """Create a text content part.
 
@@ -67,7 +76,7 @@ def build_user_message(
 
     Args:
         text: User prompt text (optional if attachments present)
-        attachments: List of {"type": "image"|"pdf", "mime": str, "data": bytes}
+        attachments: List of {"type": "image"|"pdf"|"file", "mime": str, "data": bytes, "truncated": bool}
         model: Model name for capability checking
 
     Returns:
@@ -75,6 +84,11 @@ def build_user_message(
 
     If model supports multimodal and attachments are provided, content will be
     a list of content parts. Otherwise, content is plain text with markers.
+
+    Supported attachment types:
+    - image: Sent as image_url content part if model supports vision
+    - pdf: Sent as image_url with PDF data URL if model supports PDF
+    - file: Other binaries fall back to text markers
     """
     if not attachments:
         # Simple text message
@@ -100,18 +114,23 @@ def build_user_message(
             # Model supports vision - add image content part
             content_parts.append(make_image_content_part(data, mime))
         elif att_type == "pdf" and mime == "application/pdf" and capabilities["pdf"]:
-            # Model supports PDF - add file content part (future: implement file upload)
-            # For now, fall back to marker
-            fallback_markers.append(make_attachment_marker(mime, size, truncated))
+            # Model supports PDF - send as data URL via image_url type
+            content_parts.append(make_pdf_content_part(data))
         else:
             # Unsupported attachment - use text marker
             fallback_markers.append(make_attachment_marker(mime, size, truncated))
 
     # Decide on final content format
-    if len(content_parts) > 1 or (
-        len(content_parts) == 1 and content_parts[0]["type"] == "image_url"
-    ):
-        # We have multimodal content - use content array
+    has_multimodal = False
+    if len(content_parts) > 1:
+        has_multimodal = True
+    elif len(content_parts) == 1:
+        part_type = content_parts[0].get("type")
+        if part_type in ("image_url", "file"):
+            has_multimodal = True
+
+    if has_multimodal:
+        # We have multimodal content (images, PDFs, or multiple parts) - use content array
         if fallback_markers:
             # Append markers as text part
             marker_text = "\n".join(fallback_markers)
@@ -146,10 +165,15 @@ def message_to_text(message: Dict[str, Any]) -> str:
             if part_type == "text":
                 text_parts.append(part.get("text", ""))
             elif part_type == "image_url":
-                # Replace with marker
+                # Images use image_url type
                 text_parts.append("[Attached: image (base64 data)]")
             elif part_type == "file":
-                text_parts.append("[Attached: file]")
+                # PDFs and other files use file type
+                file_data = part.get("file", {}).get("file_data", "")
+                if "application/pdf" in file_data:
+                    text_parts.append("[Attached: PDF document (base64 data)]")
+                else:
+                    text_parts.append("[Attached: file]")
         return "\n\n".join(text_parts)
 
     return str(content)

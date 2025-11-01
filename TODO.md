@@ -4,6 +4,12 @@
 - [x] Refactor use of Agent to hold ChatSession and re-use of these objects (see `.serena/memories/refactor_agent_session.md`)
 - [x] Update interfaces
 
+## Multimodal support
+- [x] Pass images into stdin
+- [x] Pass pdf into stdin
+- [ ] Pass audio into stdin
+- [ ] Add /file REPL command
+
 ## MCP Integration
 - [x] Support for querying shell history (builtin tool)
 - [ ] Improve MCP lifecycle resilience (auto-respawn, backoff, health checks)

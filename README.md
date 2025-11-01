@@ -162,11 +162,20 @@ Pipe input from stdin:
 git diff | gptsh "Explain the changes and suggest a commit message"
 ```
 
-Binary stdin (images, audio, PDFs) is automatically detected and described:
+Binary stdin (images, PDFs) is automatically detected and sent to capable models:
 
 ```bash
+# Images with vision models (gpt-4o, claude-3.5-sonnet, etc.)
 cat image.png | gptsh "What is in this image?"
-# Stdin is detected as image/png and a concise marker is injected
+# → Sends as multimodal content with image data
+
+# PDFs with PDF-capable models
+cat document.pdf | gptsh "Summarize this document"
+# → Sends as multimodal content with PDF data
+
+# Other binaries fall back to text markers
+cat archive.zip | gptsh "What is this?"
+# → Sends: "[Attached: application/zip, 1234 bytes]"
 ```
 
 Plain text output (default is markdown):
@@ -587,7 +596,7 @@ REPL slash-commands:
 - /tools — List discovered MCP tools for current agent
 - /no-tools [on|off] — Toggle or set MCP tool usage for this session
 - /info — Show session/model info and usage
-- /file <path> — Attach a file to the conversation (text files inlined; binary/large files as markers)
+- /file <path> — Attach a file to the conversation (text inlined; images/PDFs sent as multimodal if model supports)
 - /compact — Summarize and compact history (keeps system prompt, inserts labeled USER summary)
 - /help — Show available commands
 (Tab completion works for slash-commands and agent names.)

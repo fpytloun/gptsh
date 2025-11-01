@@ -269,9 +269,14 @@ Notes:
 ## Stdin Handling Strategy
 
 - If stdin is non-tty, read up to `stdin.max_bytes`.
-- Binary content is auto-detected via magic bytes (images, audio, PDFs) and injected as a concise marker (e.g., `[Attached stdin: image/png, 12345 bytes]`).
-- Text input is handled as UTF-8; if input exceeds limit, truncate and append a notice. A summarization strategy may be added in the future.
-- No base64 or large binary payloads are persisted into session history.
+- Binary content is auto-detected via magic bytes (images, PDFs, archives, audio, video).
+- Multimodal handling:
+  - **Images** (PNG, JPEG, GIF, WebP, BMP): Sent as `image_url` content parts if model supports vision
+  - **PDFs**: Sent as `image_url` with PDF data URL if model supports PDF input
+  - **Other binaries**: Fall back to concise text markers (e.g., `[Attached: application/zip, 1234 bytes]`)
+- Model capability detection via `litellm.utils.supports_vision()` and `supports_pdf_input()`
+- Text input is handled as UTF-8; if input exceeds limit, truncate and append a notice.
+- Session persistence: multimodal content is converted to text markers when saving (no base64 bloat)
 
 ---
 ## Tool Discovery and Selection
@@ -433,8 +438,10 @@ Notes:
 
 - `/file <path>` — Attach a file to the conversation.
   - Small UTF-8 text files (≤64KB): inlined with content; larger files show truncation notice.
-  - Binary or non-UTF-8 files: injected as concise markers (e.g., `[Attached file: image.png (image/png, 12345 bytes)]`).
-  - No base64 or large payloads persisted into session history.
+  - **Images** (PNG, JPEG, etc.): sent as multimodal content if model supports vision.
+  - **PDFs**: sent as multimodal content if model supports PDF input.
+  - Other binaries: injected as concise markers (e.g., `[Attached file: data.zip (application/zip, 12345 bytes)]`).
+  - Session persistence: multimodal content converted to text markers (no base64 in saved history).
 
 ---
 ## Installation and Development
