@@ -48,6 +48,7 @@ exclude = [
   ".serena",
   ".gptsh",
   "gptsh_cli.egg-info",
+  "files",
 ]
 
 [tool.ruff.lint.isort]
