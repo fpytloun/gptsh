@@ -145,6 +145,8 @@ def read_stdin_any(max_bytes: int = 5242880) -> Optional[Dict[str, Any]]:
         att_type = "image"
     elif mime == "application/pdf":
         att_type = "pdf"
+    elif mime.startswith("audio/"):
+        att_type = "audio"
 
     return {
         "kind": "attachment",

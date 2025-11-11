@@ -275,11 +275,20 @@ def command_agent(
     return agent_conf, prompt_str, agent_name, no_tools, mgr
 
 
-def command_file(arg: Optional[str], agent: Agent) -> str:
-    """Read file and return content or marker to inject into conversation.
+async def command_file(
+    arg: Optional[str], agent: Agent, config: Dict[str, Any]
+) -> Union[str, Dict[str, Any]]:
+    """Load a file attachment.
 
-    - Small UTF-8 text files: return inline content with truncation notice if needed.
+    Supports:
+    - Small UTF-8 text files (≤64KB): return inline content with truncation notice if needed.
+    - Audio files: transcribe if possible, otherwise return as multimodal audio content.
     - Binary or large files: return a concise marker.
+
+    Returns:
+    - str: Text content for text files or fallback markers
+    - dict: {"type": "audio", "content": str_marker, "attachment": {...}} for audio files
+            that couldn't be transcribed (for multimodal support)
 
     CRITICAL: Uses is_probably_text() to prevent any binary from being inlined.
     """
@@ -289,6 +298,7 @@ def command_file(arg: Optional[str], agent: Agent) -> str:
     from pathlib import Path
 
     from gptsh.core.stdin_handler import is_probably_text, sniff_mime
+    from gptsh.core.transcribe import transcribe_audio
 
     path = Path(arg.strip()).expanduser()
     if not path.is_file():
@@ -298,13 +308,36 @@ def command_file(arg: Optional[str], agent: Agent) -> str:
     try:
         size = path.stat().st_size
         if size > max_inline:
-            # Too large: return marker
+            # Too large: read header only for MIME detection
             try:
                 with open(path, "rb") as f:
                     head = f.read(512)
                 mime = sniff_mime(head)
             except Exception:
                 mime = "application/octet-stream"
+
+            # Try to transcribe if audio and not too large for Whisper API
+            if mime.startswith("audio/") and size <= 25000000:
+                try:
+                    with open(path, "rb") as f:
+                        audio_data = f.read()
+                    transcript = await transcribe_audio(audio_data, mime, config)
+                    if transcript:
+                        return f"File: {path.name} (audio transcribed)\n\n{transcript}"
+                    # Transcription failed/disabled - return as multimodal audio
+                    return {
+                        "type": "audio",
+                        "content": f"File: {path.name} (audio, {size} bytes)",
+                        "attachment": {
+                            "type": "audio",
+                            "mime": mime,
+                            "data": audio_data,
+                            "truncated": False,
+                        },
+                    }
+                except Exception:
+                    pass  # Fall through to marker
+
             return f"[Attached file: {path.name} ({mime}, {size} bytes)]"
 
         # Read full content for analysis
@@ -316,6 +349,32 @@ def command_file(arg: Optional[str], agent: Agent) -> str:
             data = data[:max_inline]
 
         mime = sniff_mime(data)
+
+        # Try to transcribe audio files
+        if mime.startswith("audio/"):
+            try:
+                # Read full file if needed (under size limit)
+                if not truncated:
+                    audio_data = data
+                else:
+                    with open(path, "rb") as f:
+                        audio_data = f.read()
+                transcript = await transcribe_audio(audio_data, mime, config)
+                if transcript:
+                    return f"File: {path.name} (audio transcribed)\n\n{transcript}"
+                # Transcription failed/disabled - return as multimodal audio
+                return {
+                    "type": "audio",
+                    "content": f"File: {path.name} (audio, {len(audio_data)} bytes)",
+                    "attachment": {
+                        "type": "audio",
+                        "mime": mime,
+                        "data": audio_data,
+                        "truncated": truncated,
+                    },
+                }
+            except Exception:
+                pass  # Fall through to marker
 
         # CRITICAL: Only inline if MIME is text/plain AND passes safety check
         if mime == "text/plain" and is_probably_text(data):
@@ -776,11 +835,25 @@ async def run_agent_repl_async(
                 continue
             if cmd == "/file":
                 try:
-                    file_content = command_file(arg, agent)
+                    file_result = await command_file(arg, agent, config)
                     # Append as a user message to the active session
                     sess = getattr(agent, "session", None)
                     if sess is not None:
-                        sess.history.append({"role": "user", "content": file_content})
+                        # Handle both string content and audio attachments
+                        if isinstance(file_result, dict) and file_result.get("type") == "audio":
+                            # Audio attachment - build multimodal message
+                            from gptsh.core.multimodal import build_user_message
+
+                            model = (getattr(agent.llm, "_base", {}) or {}).get("model", "gpt-4o")
+                            message = build_user_message(
+                                text=file_result.get("content"),
+                                attachments=[file_result.get("attachment")],
+                                model=model,
+                            )
+                            sess.history.append(message)
+                        else:
+                            # Text content
+                            sess.history.append({"role": "user", "content": str(file_result)})
                         click.echo(f"File attached: {arg}")
                     else:
                         click.echo("No active session", err=True)

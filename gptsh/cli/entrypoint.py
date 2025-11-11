@@ -773,7 +773,7 @@ def main(
                 # We cannot re-open stdin so assume session is not interactive
                 pass
 
-    # Construct prompt text
+    # Construct prompt text (text input can be constructed now, attachments need transcription)
     prompt_text = prompt or agent_conf.get("prompt", {}).get("user")
     if prompt_text and stdin_text:
         combined_text = f"{prompt_text}\n\n---\nInput:\n{stdin_text}"
@@ -782,15 +782,14 @@ def main(
     else:
         combined_text = prompt_text
 
-    # Build user message with multimodal support
-    from gptsh.core.multimodal import build_user_message
+    # Store for later async processing of attachments
+    initial_user_message_data = {
+        "text": combined_text,
+        "attachments": stdin_attachments,
+    }
 
-    model = (getattr(agent_obj.llm, "_base", {}) or {}).get("model", "gpt-4o")
-    initial_user_message = build_user_message(
-        text=combined_text,
-        attachments=stdin_attachments if stdin_attachments else None,
-        model=model,
-    )
+    # Check if we have any content to process
+    has_content = bool(combined_text or stdin_attachments)
 
     # Initialize a single ProgressReporter for the REPL session and pass it down
     from gptsh.core.progress import NoOpProgressReporter, RichProgressReporter
@@ -823,7 +822,7 @@ def main(
                 config=config,
                 output_format=output_effective,
                 stream=stream,
-                initial_user_message=initial_user_message,
+                initial_user_message=initial_user_message_data,
                 progress_reporter=reporter,
                 session_ref=session_ref,
                 sessions_enabled=_get_sessions_enabled(
@@ -851,23 +850,56 @@ def main(
         session_output_fmt, _ = _print_session_transcript_or_exit(session_ref)
         output_effective = session_output_fmt
         # If no user message to continue, exit now
-        if not initial_user_message or (
-            isinstance(initial_user_message, dict) and not initial_user_message.get("content")
-        ):
+        if not has_content:
             try:
                 reporter.stop()
             except Exception:
                 pass
             sys.exit(0)
 
-    if initial_user_message:
+    if has_content:
 
         async def _run_once_noninteractive() -> None:
             from gptsh.core.config_api import get_sessions_enabled
+            from gptsh.core.multimodal import build_user_message
             from gptsh.core.sessions import (
                 new_session_doc as _new_session_doc,
                 resolve_small_model as _resolve_small_model,
                 save_session as _save_session,
+            )
+            from gptsh.core.transcribe import transcribe_audio
+
+            # Build initial user message with audio transcription support
+            processed_attachments = []
+            transcribed_text = initial_user_message_data["text"]
+
+            for att in initial_user_message_data["attachments"]:
+                if att["type"] == "audio":
+                    # Try to transcribe audio
+                    transcript = await transcribe_audio(
+                        att["data"],
+                        att["mime"],
+                        config,
+                    )
+                    if transcript:
+                        # Transcription successful - convert to text
+                        prefix = "[Audio transcribed from stdin]\n"
+                        if transcribed_text:
+                            transcribed_text = f"{transcribed_text}\n\n{prefix}{transcript}"
+                        else:
+                            transcribed_text = f"{prefix}{transcript}"
+                        # Skip adding to attachments since we converted to text
+                        continue
+
+                # Keep non-audio or non-transcribed audio as attachments
+                processed_attachments.append(att)
+
+            # Build the final message
+            model = (getattr(agent_obj.llm, "_base", {}) or {}).get("model", "gpt-4o")
+            initial_user_message = build_user_message(
+                text=transcribed_text,
+                attachments=processed_attachments if processed_attachments else None,
+                model=model,
             )
 
             mcp_manager = None if no_tools_effective else MCPManager(config)
