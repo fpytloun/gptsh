@@ -163,7 +163,7 @@ Pipe input from stdin:
 git diff | gptsh "Explain the changes and suggest a commit message"
 ```
 
-Binary stdin (images, PDFs) is automatically detected and sent to capable models:
+Binary stdin (images, PDFs, audio) is automatically detected and sent to capable models:
 
 ```bash
 # Images with vision models (gpt-4o, claude-3.5-sonnet, etc.)
@@ -173,6 +173,10 @@ cat image.png | gptsh "What is in this image?"
 # PDFs with PDF-capable models
 cat document.pdf | gptsh "Summarize this document"
 # → Sends as multimodal content with PDF data
+
+# Audio files with audio-capable models (gpt-4o, gpt-4o-mini)
+cat recording.mp3 | gptsh "What did they say?"
+# → Optionally transcribes with Whisper API, or sends as multimodal audio
 
 # Other binaries fall back to text markers
 cat archive.zip | gptsh "What is this?"
@@ -597,7 +601,7 @@ REPL slash-commands:
 - /tools — List discovered MCP tools for current agent
 - /no-tools [on|off] — Toggle or set MCP tool usage for this session
 - /info — Show session/model info and usage
-- /file <path> — Attach a file to the conversation (text inlined; images/PDFs sent as multimodal if model supports)
+- /file <path> — Attach a file to the conversation (text inlined; images/PDFs/audio sent as multimodal if model supports)
 - /compact — Summarize and compact history (keeps system prompt, inserts labeled USER summary)
 - /help — Show available commands
 (Tab completion works for slash-commands and agent names.)
@@ -657,8 +661,99 @@ Project scripts:
 
 For full development instructions, read `AGENTS.md`.
 
+## Audio Support
+
+gptsh supports audio file processing through two complementary features:
+
+### Audio Transcription
+
+Audio files can be automatically transcribed using OpenAI's Whisper API:
+
+```bash
+# Transcribe audio file
+cat recording.mp3 | gptsh "Summarize the transcript"
+```
+
+**Configuration:**
+
+Transcription uses the provider system for credentials and API endpoints. Configure any LiteLLM provider to handle transcription:
+
+```yaml
+providers:
+  openai:
+    model: gpt-4o
+    api_key: ${OPENAI_API_KEY}    # Or set OPENAI_API_KEY env var
+    base_url: https://api.openai.com/v1
+
+transcribe:
+  enabled: true              # Explicitly enable or auto-enable if provider has API key
+  provider: openai           # Reference the provider name
+  model: whisper-1           # Whisper model to use
+  language: null             # Optional language hint (ISO-639-1, e.g., "en", "es")
+  max_file_size: 25000000   # 25 MB (OpenAI limit)
+  detect_non_speech: true    # Filter music/noise
+```
+
+**Custom Endpoint Example:**
+
+```yaml
+providers:
+  custom_whisper:
+    api_key: ${CUSTOM_API_KEY}
+    base_url: https://api.example.com    # Custom Whisper-compatible endpoint
+
+transcribe:
+  enabled: true
+  provider: custom_whisper
+  model: whisper-1
+```
+
+**Supported Formats:**
+- MP3, WAV, OGG, FLAC, M4A, AAC, WebM
+
+**Speech Detection:**
+- Automatically filters out music and noise
+- Prevents sending irrelevant audio to the LLM
+- Detects markers like `[MUSIC]`, `[NOISE]`, `[SILENCE]`
+
+### Audio as Multimodal Content
+
+If transcription is disabled or unavailable, audio files are sent directly to the LLM as multimodal content (when supported):
+
+```bash
+# Send audio directly to GPT-4o (no transcription)
+cat recording.wav | gptsh --model gpt-4o "What did they say?"
+```
+
+**Models with Audio Support:**
+- ✅ `gpt-4o` — Native audio input support
+- ✅ `gpt-4o-mini` — Native audio input support (more affordable)
+- ✅ `gpt-4-turbo` — Native audio input support
+- ❌ `gpt-4.1-mini` — No audio support
+- ❌ Azure OpenAI — Limited audio support (depends on API version)
+
+**Priority Order:**
+1. Transcription (if enabled and available)
+2. Multimodal audio (if model supports it)
+3. Text marker (fallback for unsupported models)
+
+### REPL Audio Attachment
+
+In the REPL, use `/file` to attach audio files:
+
+```bash
+gptsh -i
+> /file recording.mp3
+# Audio is automatically transcribed or sent as multimodal content
+```
+
+---
 ## Troubleshooting
 
+- Audio not being processed: Ensure model supports audio (use `gpt-4o` or `gpt-4o-mini`)
+- Transcription errors: Check that the configured provider has a valid API key and quota available
+  - Verify `transcribe.provider` references an existing provider in `providers`
+  - Verify the provider has `api_key` and `base_url` configured
 - No tools found: check --mcp-servers path, server definitions, and network access.
 - Stuck spinner: use --no-progress to disable UI or run with --debug for logs.
 - Markdown output looks odd: try -o text to inspect raw content.

@@ -15,7 +15,9 @@ from typing import Any, Dict, List, Optional
 _log = logging.getLogger(__name__)
 
 
-def check_model_capabilities(model: str) -> Dict[str, bool]:
+def check_model_capabilities(
+    model: str, provider_base_url: Optional[str] = None
+) -> Dict[str, bool]:
     """Check what modalities a model supports.
 
     Returns: {"vision": bool, "pdf": bool, "audio": bool}
@@ -27,10 +29,24 @@ def check_model_capabilities(model: str) -> Dict[str, bool]:
             supports_vision,
         )
 
+        audio_support = supports_audio_input(model=model)
+
+        # Workaround: litellm detection may not be complete for new models
+        # GPT-4o models support audio input natively (OpenAI only, not Azure)
+        model_lower = model.lower()
+        if not audio_support and ("gpt-4o" in model_lower or "gpt-4-turbo" in model_lower):
+            # Check if using Azure - Azure may not support input_audio yet
+            if provider_base_url and "azure" in provider_base_url.lower():
+                _log.debug("Audio support disabled for Azure provider (not yet supported)")
+                audio_support = False
+            else:
+                _log.debug("Enabling audio support for %s based on model name", model)
+                audio_support = True
+
         return {
             "vision": supports_vision(model=model),
             "pdf": supports_pdf_input(model=model),
-            "audio": supports_audio_input(model=model),
+            "audio": audio_support,
         }
     except Exception as e:
         _log.debug("Failed to check model capabilities for %s: %s", model, e)
@@ -155,9 +171,19 @@ def build_user_message(
             content_parts.append(make_pdf_content_part(data))
         elif att_type == "audio" and mime.startswith("audio/") and capabilities["audio"]:
             # Model supports audio input - add audio content part
+            _log.debug(
+                "Adding audio content part for %s (model: %s)",
+                mime,
+                model,
+            )
             content_parts.append(make_audio_content_part(data, mime))
         else:
             # Unsupported attachment - use text marker
+            if att_type == "audio" and mime.startswith("audio/"):
+                _log.debug(
+                    "Model %s does not support audio input, using text marker",
+                    model,
+                )
             fallback_markers.append(make_attachment_marker(mime, size, truncated))
 
     # Decide on final content format

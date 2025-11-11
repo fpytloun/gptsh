@@ -10,7 +10,6 @@ This module provides:
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, Optional
 
 import httpx
@@ -22,33 +21,64 @@ _NON_SPEECH_MARKERS = {"[MUSIC]", "[NOISE]", "[SILENCE]", "[APPLAUSE]"}
 
 
 def get_transcribe_config(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract and resolve transcription configuration.
+    """Extract and resolve transcription configuration from provider system.
 
-    Returns dict with resolved settings including API key detection.
+    Resolves API key and base_url from the configured provider instead of
+    hardcoding provider.openai.
+
+    Returns dict with resolved settings including provider credentials.
     """
     transcribe_cfg = config.get("transcribe", {})
+    providers_cfg = config.get("providers", {})
 
-    # Get OpenAI API key
-    api_key_env = transcribe_cfg.get("api_key_env", "OPENAI_API_KEY")
-    api_key = os.environ.get(api_key_env)
+    # Resolve provider name (default to "openai" for backwards compat)
+    provider_name = transcribe_cfg.get("provider", "openai")
+    provider_cfg = providers_cfg.get(provider_name, {})
+
+    # Extract API key from provider config
+    # The config loader already expands ${VAR} references, so this value
+    # is ready to use as-is
+    api_key = provider_cfg.get("api_key")
+
+    # Extract base_url from provider config, with sensible defaults
+    base_url = provider_cfg.get("base_url")
+    if not base_url:
+        # Default to OpenAI API if no base_url provided
+        base_url = "https://api.openai.com/v1"
+
+    # Warn if provider not found (but only if transcription was enabled/configured)
+    if provider_name not in providers_cfg and (
+        transcribe_cfg.get("enabled") is True or "transcribe" in config
+    ):
+        _log.warning(
+            "Transcription provider '%s' not found in config. "
+            "Transcription may fail at runtime if API credentials are needed.",
+            provider_name,
+        )
 
     # Check if transcription should be enabled
-    # Default to True if API key is present, otherwise False
+    # Only auto-enable if:
+    # 1. "transcribe" config section exists in config
+    # 2. AND API key is present from provider
+    # This prevents auto-enabling when transcribe isn't configured at all
     enabled = transcribe_cfg.get("enabled")
     if enabled is None:
-        enabled = bool(api_key)
+        # Only auto-enable if transcribe section was explicitly configured
+        has_transcribe_config = "transcribe" in config
+        enabled = has_transcribe_config and bool(api_key)
 
     if not enabled and api_key is None:
         _log.debug(
-            "Audio transcription disabled (%s not set). "
+            "Audio transcription disabled (no API key in provider '%s'). "
             "Audio files will be sent as attachment markers.",
-            api_key_env,
+            provider_name,
         )
 
     return {
         "enabled": enabled,
         "api_key": api_key,
-        "provider": transcribe_cfg.get("provider", "openai"),
+        "base_url": base_url,
+        "provider": provider_name,
         "model": transcribe_cfg.get("model", "whisper-1"),
         "language": transcribe_cfg.get("language"),
         "max_file_size": transcribe_cfg.get("max_file_size", 25000000),  # 25 MB
@@ -111,7 +141,10 @@ async def transcribe_audio(
     mime: str,
     config: Dict[str, Any],
 ) -> Optional[str]:
-    """Transcribe audio data using OpenAI Whisper API.
+    """Transcribe audio data using a configured provider's Whisper API.
+
+    Uses the transcribe.provider configuration to resolve credentials and
+    base_url from the provider system instead of hardcoding provider lookup.
 
     Args:
         data: Raw audio file bytes
@@ -123,9 +156,9 @@ async def transcribe_audio(
         Returns None if:
         - Transcription is disabled
         - File exceeds size limit
+        - Provider not configured
         - API call fails
         - Transcript contains no speech content
-        - Non-OpenAI provider configured (future)
 
     The transcript is logged at debug level for troubleshooting.
     Any errors are logged as warnings but never raise exceptions.
@@ -136,16 +169,12 @@ async def transcribe_audio(
         _log.debug("Audio transcription disabled in config")
         return None
 
-    if transcribe_cfg["provider"] != "openai":
-        _log.warning(
-            "Transcription provider '%s' not yet supported",
-            transcribe_cfg["provider"],
-        )
-        return None
-
     api_key = transcribe_cfg["api_key"]
     if not api_key:
-        _log.debug("OPENAI_API_KEY not set, cannot transcribe audio")
+        _log.debug(
+            "No API key for transcription provider '%s', cannot transcribe audio",
+            transcribe_cfg["provider"],
+        )
         return None
 
     # Check file size
@@ -171,41 +200,41 @@ async def transcribe_audio(
         }
         ext = mime_to_ext.get(mime, mime.split("/")[-1] or "audio")
 
-        # Get base URL from provider config, default to OpenAI
-        providers_cfg = config.get("providers", {})
-        openai_cfg = providers_cfg.get("openai", {})
-        base_url = openai_cfg.get("base_url") or "https://api.openai.com/v1"
-
+        # Use resolved base_url from provider config
+        base_url = transcribe_cfg["base_url"]
         url = f"{base_url}/audio/transcriptions"
 
         # Prepare multipart form data
-        files = {
-            "file": (f"audio.{ext}", data, mime),
-        }
-        params = {
+        # Note: model and other params go in the form data, not query params
+        form_data = {
             "model": transcribe_cfg["model"],
             "response_format": "json",
         }
         if transcribe_cfg.get("language"):
-            params["language"] = transcribe_cfg["language"]
+            form_data["language"] = transcribe_cfg["language"]
+
+        files = {
+            "file": (f"audio.{ext}", data, mime),
+        }
 
         headers = {
             "Authorization": f"Bearer {api_key}",
         }
 
-        # Call OpenAI Whisper API with timeout
+        # Call Whisper API with timeout
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 url,
                 files=files,
-                params=params,
+                data=form_data,
                 headers=headers,
             )
 
         if response.status_code != 200:
             _log.warning(
-                "OpenAI Whisper API error (status %d): %s",
+                "Whisper API error (status %d, provider '%s'): %s",
                 response.status_code,
+                transcribe_cfg["provider"],
                 response.text[:200],
             )
             return None

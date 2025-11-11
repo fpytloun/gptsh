@@ -7,8 +7,8 @@
 ## Multimodal support
 - [x] Pass images into stdin
 - [x] Pass pdf into stdin
-- [ ] Pass audio into stdin
-- [ ] Add /file REPL command
+- [x] Pass audio into stdin
+- [x] Add /file REPL command
 
 ## MCP Integration
 - [x] Support for querying shell history (builtin tool)
