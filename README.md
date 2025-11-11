@@ -10,6 +10,7 @@ A modern, modular shell assistant powered by LLMs with first-class Model Context
 - MCP tools discovery and invocation with resilient lifecycle
 - Interactive REPL with a persistent session and history
 - Clean CLI UX with progress spinners and Markdown rendering
+- Multimodal inputs (images, audio, PDFs) when supported by the model
 - Predictable I/O for maximum flexibility
 
 ![Demo](./files/gptsh.gif)
