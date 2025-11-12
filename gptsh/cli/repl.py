@@ -694,18 +694,31 @@ async def run_agent_repl_async(
         return ("", msgs)
 
     while True:
+        line = None
         if initial_user_message:
             # Handle initial message (may be multimodal dict or string)
             if isinstance(initial_user_message, dict):
-                # Multimodal message - run it and continue REPL
-                await _run_once(initial_user_message)
+                # Check if the multimodal message has actual content
+                text_content = initial_user_message.get("text") or ""
+                has_text = bool(isinstance(text_content, str) and text_content.strip())
+                has_attachments = bool(initial_user_message.get("attachments"))
+                if has_text or has_attachments:
+                    # Multimodal message with content - run it and continue REPL
+                    await _run_once(initial_user_message)
                 initial_user_message = None
-                continue
-            else:
-                # Plain string - use as line
+                # If dict was empty, proceed to input prompt (don't set line, let it fall through)
+                if not (has_text or has_attachments):
+                    line = None
+                else:
+                    continue
+            elif initial_user_message:
+                # Plain string - use as line if not empty
                 line = initial_user_message
                 initial_user_message = None
-        else:
+            else:
+                initial_user_message = None
+
+        if line is None:
             try:
                 doc = getattr(rl, "__doc__", "") or ""
                 if "libedit" in doc.lower():
