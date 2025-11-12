@@ -703,8 +703,16 @@ async def run_agent_repl_async(
                 has_text = bool(isinstance(text_content, str) and text_content.strip())
                 has_attachments = bool(initial_user_message.get("attachments"))
                 if has_text or has_attachments:
-                    # Multimodal message with content - run it and continue REPL
-                    await _run_once(initial_user_message)
+                    # Convert to proper message format before running
+                    from gptsh.core.multimodal import build_user_message as _build_user_message
+
+                    model = (getattr(agent.llm, "_base", {}) or {}).get("model", "gpt-4o")
+                    user_msg = _build_user_message(
+                        text=text_content,
+                        attachments=initial_user_message.get("attachments"),
+                        model=model,
+                    )
+                    await _run_once(user_msg)
                 initial_user_message = None
                 # If dict was empty, proceed to input prompt (don't set line, let it fall through)
                 if not (has_text or has_attachments):
