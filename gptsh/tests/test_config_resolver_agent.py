@@ -362,3 +362,105 @@ async def test_yaml_mapping_with_mcpServers_unwrapped(monkeypatch):
     monkeypatch.setattr("gptsh.mcp.tools_resolver.resolve_tools", fake_resolve_tools)
     agent = await build_agent(config, cli_agent="dev", cli_provider="openai")
     assert set(agent.tools.keys()) == {"yaml_json"}
+
+
+@pytest.mark.asyncio
+async def test_agent_level_autoApprove_server_name(monkeypatch):
+    """Test that agent-level autoApprove with server name auto-approves all tools from that server."""
+    config: Dict[str, Any] = {
+        "default_agent": "dev",
+        "providers": {"openai": {"model": "m"}},
+        "mcp": {
+            "servers": {
+                "rohlik": {"transport": {"type": "stdio"}, "command": "echo"},
+                "other": {"transport": {"type": "stdio"}, "command": "echo"},
+            }
+        },
+        "agents": {
+            "dev": {
+                "autoApprove": ["rohlik"],  # Auto-approve all tools from rohlik server
+            }
+        },
+    }
+
+    async def fake_resolve_tools(conf: Dict[str, Any], allowed_servers: Optional[List[str]] = None):
+        async def _exec(server: str, name: str, args: Dict[str, Any]) -> str:
+            return "ok"
+
+        return {
+            "rohlik": [
+                ToolHandle(
+                    server="rohlik", name="search", description="", input_schema={}, _executor=_exec
+                ),
+                ToolHandle(
+                    server="rohlik", name="get", description="", input_schema={}, _executor=_exec
+                ),
+            ],
+            "other": [
+                ToolHandle(
+                    server="other", name="cmd", description="", input_schema={}, _executor=_exec
+                ),
+            ],
+        }
+
+    monkeypatch.setattr("gptsh.mcp.tools_resolver.resolve_tools", fake_resolve_tools)
+    agent = await build_agent(config, cli_agent="dev", cli_provider="openai")
+
+    # Verify the approval policy has rohlik auto-approved with "*" (all tools)
+    assert agent.policy.is_auto_allowed("rohlik", "search") is True
+    assert agent.policy.is_auto_allowed("rohlik", "get") is True
+    # other server should not be auto-approved
+    assert agent.policy.is_auto_allowed("other", "cmd") is False
+
+
+@pytest.mark.asyncio
+async def test_agent_level_autoApprove_tool_name(monkeypatch):
+    """Test that agent-level autoApprove with tool name auto-approves that tool across all servers."""
+    config: Dict[str, Any] = {
+        "default_agent": "dev",
+        "providers": {"openai": {"model": "m"}},
+        "mcp": {
+            "servers": {
+                "fs": {"transport": {"type": "stdio"}, "command": "echo"},
+                "git": {"transport": {"type": "stdio"}, "command": "echo"},
+            }
+        },
+        "agents": {
+            "dev": {
+                "autoApprove": ["read"],  # Auto-approve "read" tool on any server
+            }
+        },
+    }
+
+    async def fake_resolve_tools(conf: Dict[str, Any], allowed_servers: Optional[List[str]] = None):
+        async def _exec(server: str, name: str, args: Dict[str, Any]) -> str:
+            return "ok"
+
+        return {
+            "fs": [
+                ToolHandle(
+                    server="fs", name="read", description="", input_schema={}, _executor=_exec
+                ),
+                ToolHandle(
+                    server="fs", name="write", description="", input_schema={}, _executor=_exec
+                ),
+            ],
+            "git": [
+                ToolHandle(
+                    server="git", name="read", description="", input_schema={}, _executor=_exec
+                ),
+                ToolHandle(
+                    server="git", name="commit", description="", input_schema={}, _executor=_exec
+                ),
+            ],
+        }
+
+    monkeypatch.setattr("gptsh.mcp.tools_resolver.resolve_tools", fake_resolve_tools)
+    agent = await build_agent(config, cli_agent="dev", cli_provider="openai")
+
+    # Verify the "read" tool is auto-approved on all servers
+    assert agent.policy.is_auto_allowed("fs", "read") is True
+    assert agent.policy.is_auto_allowed("git", "read") is True
+    # Other tools should not be auto-approved
+    assert agent.policy.is_auto_allowed("fs", "write") is False
+    assert agent.policy.is_auto_allowed("git", "commit") is False

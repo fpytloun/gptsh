@@ -30,6 +30,7 @@ class AgentConfig:
     no_tools: bool = False
     output: Optional[str] = None  # text|markdown
     sessions: Dict[str, Any] = field(default_factory=dict)
+    autoApprove: Optional[List[str]] = None  # Auto-approve tools by server or tool name
 
 
 @dataclass
@@ -65,6 +66,7 @@ def map_config_to_models(
         if not isinstance(a, dict):
             a = {}
         prompt_cfg = _as_dict(a.get("prompt"))
+        auto_approve = a.get("autoApprove")
         agents[name] = AgentConfig(
             name=name,
             provider=a.get("provider"),
@@ -76,6 +78,7 @@ def map_config_to_models(
             no_tools=bool(a.get("no_tools", False)),
             output=a.get("output"),
             sessions=_as_dict(a.get("sessions")),
+            autoApprove=(auto_approve if isinstance(auto_approve, list) else None),
         )
     return defaults, providers, agents
 

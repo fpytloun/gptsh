@@ -26,6 +26,7 @@ def select_agent_provider_dicts(
         "no_tools": agent_dm.no_tools,
         "output": agent_dm.output,
         "sessions": agent_dm.sessions,
+        "autoApprove": agent_dm.autoApprove,
     }
     return agent_conf, provider_conf
 
