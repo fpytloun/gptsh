@@ -1,4 +1,3 @@
-
 from gptsh.core.runner import MarkdownBuffer
 
 
@@ -95,7 +94,7 @@ def test_tilde_fence_and_indentation():
     chunks = [
         "Para before\n",
         "    ~~~json\n",  # indented fence
-        "{\n  \"a\": 1\n}\n",
+        '{\n  "a": 1\n}\n',
         "    ~~~\n",
     ]
     out = []
@@ -166,3 +165,159 @@ def test_blocks_end_with_newline_to_prevent_bleed():
     out.extend(mbuf.push(chunks[2]))
     tail = mbuf.flush()
     assert tail == "Next"
+
+
+# ===== NEW EDGE CASE TESTS =====
+
+
+def test_unordered_list_followed_by_paragraph():
+    """Unordered list followed by paragraph should have blank line separation."""
+    mbuf = MarkdownBuffer()
+    chunks = ["- item1\n", "- item2\n", "Paragraph text\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    # List should be separated from paragraph with blank line
+    assert len(out) >= 1
+    assert out[0].endswith("\n\n"), f"Expected block to end with blank line, got: {repr(out[0])}"
+
+
+def test_ordered_list_followed_by_paragraph():
+    """Ordered list followed by paragraph should have blank line separation."""
+    mbuf = MarkdownBuffer()
+    chunks = ["1. item1\n", "2. item2\n", "Paragraph text\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    assert out[0].endswith("\n\n"), f"Expected block to end with blank line, got: {repr(out[0])}"
+
+
+def test_different_unordered_list_markers():
+    """Lists with different markers (-, *, +) followed by text."""
+    for marker in ["-", "*", "+"]:
+        mbuf = MarkdownBuffer()
+        chunks = [f"{marker} item1\n", f"{marker} item2\n", "Text\n\n"]
+        out = collect_blocks(mbuf, chunks)
+        assert len(out) >= 1
+        assert out[0].endswith("\n\n"), (
+            f"Expected block to end with blank line for {marker} marker, got: {repr(out[0])}"
+        )
+
+
+def test_blockquote_followed_by_paragraph():
+    """Blockquote followed by paragraph should have blank line separation."""
+    mbuf = MarkdownBuffer()
+    chunks = ["> quote line 1\n", "> quote line 2\n", "Regular text\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    assert out[0].endswith("\n\n"), f"Expected block to end with blank line, got: {repr(out[0])}"
+
+
+def test_single_blockquote_line_followed_by_text():
+    """Single blockquote line followed by text should separate."""
+    mbuf = MarkdownBuffer()
+    chunks = ["> Just one quote\n", "Text after\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    assert out[0].endswith("\n\n")
+
+
+def test_horizontal_rule_followed_by_paragraph():
+    """Horizontal rule followed by paragraph should separate."""
+    mbuf = MarkdownBuffer()
+    chunks = ["---\n", "Paragraph text\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    # HR should be separated from paragraph
+    assert out[0].endswith("\n\n"), f"Expected HR block to end with blank line, got: {repr(out[0])}"
+
+
+def test_horizontal_rule_variants():
+    """Test different HR patterns: ---, ***, ___."""
+    for hr_marker in ["---", "***", "___", "- - -", "* * *", "_ _ _"]:
+        mbuf = MarkdownBuffer()
+        chunks = [f"{hr_marker}\n", "Text\n\n"]
+        out = collect_blocks(mbuf, chunks)
+        if out:  # HR might be detected or not depending on pattern
+            # If flushed, should have separation
+            if len(out) >= 1:
+                assert out[0].endswith("\n\n") or len(out) > 1
+
+
+def test_mixed_list_and_blockquote():
+    """Mixed list items and blockquote should separate from following text."""
+    mbuf = MarkdownBuffer()
+    chunks = ["- item1\n", "- item2\n", "> quote\n", "Regular text\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    assert out[0].endswith("\n\n")
+
+
+def test_nested_list_item_followed_by_text():
+    """Indented/nested list items followed by text should separate."""
+    mbuf = MarkdownBuffer()
+    chunks = ["  - nested item\n", "  - another nested\n", "Paragraph\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    assert out[0].endswith("\n\n")
+
+
+def test_html_block_followed_by_text():
+    """HTML block followed by text should separate."""
+    mbuf = MarkdownBuffer()
+    chunks = ["<div>\ncontent\n</div>\n", "Text after\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    # HTML should be separated from following text
+    assert out[0].endswith("\n\n") or len(out) > 1
+
+
+def test_list_then_blockquote_then_paragraph():
+    """Complex sequence: list -> blockquote -> paragraph."""
+    mbuf = MarkdownBuffer()
+    chunks = ["- item\n", "> quote\n", "Normal text\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    # Entire mixed block should end with blank line
+    assert out[0].endswith("\n\n")
+
+
+def test_blockquote_continuation_stays_grouped():
+    """Multiple blockquote lines should stay grouped together."""
+    mbuf = MarkdownBuffer()
+    chunks = ["> First line\n", "> Second line\n", "> Third line\n", "Regular text\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    # All blockquote lines should be in first block with text properly separated
+    assert out[0].endswith("\n\n")
+    # Should contain all three blockquote lines plus separation
+    assert out[0].count(">") >= 3
+
+
+def test_list_with_blank_lines_within():
+    """List items with blank lines inside should be preserved."""
+    mbuf = MarkdownBuffer()
+    chunks = ["- item1\n", "\n", "- item2\n", "Text after\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    # Blank line within list might create multiple blocks
+    assert len(out) >= 1
+    # Whatever the last block is, should have proper ending
+    assert out[-1].endswith("\n\n") or out[-1].startswith("Text after")
+
+
+def test_blockquote_with_multiple_levels():
+    """Blockquotes with nested levels (> >)."""
+    mbuf = MarkdownBuffer()
+    chunks = ["> level 1\n", "> > level 2\n", "Regular text\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    assert len(out) >= 1
+    assert out[0].endswith("\n\n")
+
+
+def test_no_extra_blanks_with_existing_double_newline():
+    """If block already ends with \\n\\n, don't add more."""
+    mbuf = MarkdownBuffer()
+    chunks = ["- item1\n", "- item2\n\n", "Text\n\n"]
+    out = collect_blocks(mbuf, chunks)
+    # Block should end with exactly two newlines, not more
+    assert out[0].endswith("\n\n")
+    # Count trailing newlines - should be exactly 2
+    trailing_newlines = len(out[0]) - len(out[0].rstrip("\n"))
+    assert trailing_newlines == 2

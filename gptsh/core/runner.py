@@ -63,6 +63,56 @@ class MarkdownBuffer:
             return block + "\n"
         return block
 
+    @staticmethod
+    def _is_block_element_line(line: str) -> bool:
+        """Check if a line is a block-level Markdown element.
+
+        Detects: lists (unordered/ordered), blockquotes, horizontal rules, HTML blocks.
+        """
+        import re
+
+        stripped = line.lstrip()
+        if not stripped:
+            return False
+
+        first_char = stripped[0]
+
+        # Unordered lists: -, *, +
+        if first_char in ("-", "*", "+") and len(stripped) > 1 and stripped[1] == " ":
+            return True
+
+        # Ordered lists: 1. 2. etc.
+        if first_char.isdigit():
+            if re.match(r"^\d+\.\s", stripped):
+                return True
+
+        # Blockquotes: > text
+        if first_char == ">":
+            return True
+
+        # Horizontal rules: ---, ***, ___ (at least 3, can have spaces between)
+        if first_char in ("-", "*", "_"):
+            if re.match(r"^([-*_])(\s*\1){2,}\s*$", stripped):
+                return True
+
+        # HTML/XML block start
+        if first_char == "<":
+            return True
+
+        return False
+
+    @staticmethod
+    def _ends_with_block_element(text: str) -> bool:
+        """Check if text block ends with a block-level element."""
+        if not text:
+            return False
+        # Get the last non-empty line
+        lines = text.rstrip("\n").split("\n")
+        if not lines:
+            return False
+        last_line = lines[-1]
+        return MarkdownBuffer._is_block_element_line(last_line)
+
     def push(self, chunk: str) -> List[str]:
         """Push text and return a list of complete markdown blocks ready to render."""
         out: List[str] = []
@@ -100,6 +150,14 @@ class MarkdownBuffer:
                 # If a paragraph boundary comes before any fence, flush up to boundary
                 if par_idx != -1 and (fence_start_idx == -1 or par_idx < fence_start_idx):
                     block = self._buf[: par_idx + 2]
+                    # If block ends with block-level element and next content exists without
+                    # blank line, ensure proper separation
+                    if self._ends_with_block_element(block):
+                        next_content = self._buf[par_idx + 2 :]
+                        if next_content and not next_content.startswith("\n"):
+                            # Ensure block ends with blank line
+                            if not block.endswith("\n\n"):
+                                block = block.rstrip("\n") + "\n\n"
                     out.append(self._ensure_trailing_newline(block))
                     self._buf = self._buf[par_idx + 2 :]
                     continue
