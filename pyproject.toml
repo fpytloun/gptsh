@@ -12,19 +12,16 @@ dependencies = [
   "python-dotenv",
   "pyyaml",
   "rich",
+  # Platform-specific clipboard support (always installed)
+  "pasteboard>=0.3.3 ; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
-clipboard-macos = [
-  "pasteboard>=0.3.3",
-]
 dev = [
   "pytest",
   "pytest-asyncio",
   # linters/formatters (ruff is preferred primary linter)
   "ruff",
-  # optional dependencies for testing
-  "pasteboard>=0.3.3",
 ]
 
 [project.scripts]

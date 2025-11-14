@@ -65,7 +65,7 @@ def _is_ssh_session() -> bool:
 
 def _is_tty() -> bool:
     """Check if stdout is connected to a terminal."""
-    return sys.stdout.isatty()
+    return sys.__stdout__.isatty()
 
 
 def _detect_platform() -> str:
@@ -77,18 +77,21 @@ def _detect_platform() -> str:
     return "unsupported"
 
 
-def _write_osc52(text: str, clipboard_name: str = "c") -> None:
+def _get_osc52_sequence(text: str, clipboard_name: str = "c") -> Optional[str]:
     """
-    Write to clipboard via OSC52 escape sequence.
+    Generate OSC52 escape sequence for clipboard.
 
     Format: ESC ] 52 ; <clipboard_name> ; <base64_data> BEL
 
     Args:
         text: Text to write to clipboard
         clipboard_name: Clipboard target (c=clipboard, p=primary, s=select)
+
+    Returns:
+        OSC52 escape sequence string, or None if not applicable (not TTY)
     """
     if not _is_tty():
-        return
+        return None
 
     try:
         # Encode text to base64
@@ -96,12 +99,10 @@ def _write_osc52(text: str, clipboard_name: str = "c") -> None:
 
         # Build OSC52 sequence: ESC ] 52 ; <clipboard> ; <data> BEL
         osc52_seq = f"\033]52;{clipboard_name};{data_b64}\007"
-
-        # Send to stdout (goes to terminal)
-        sys.stdout.write(osc52_seq)
-        sys.stdout.flush()
+        return osc52_seq
     except Exception as e:
-        logger.debug("OSC52 write failed: %s", e)
+        logger.debug("OSC52 sequence generation failed: %s", e)
+        return None
 
 
 def _read_clipboard_macos() -> str:
@@ -238,8 +239,11 @@ def _tool_clipboard_write(arguments: Dict[str, Any]) -> str:
     - osc52: Only use OSC52
 
     Returns JSON:
-      - Success: {"ok": true, "method": "native|osc52|both"}
+      - Success: {"ok": true, "method": "native|osc52|both", "osc52_sequence": "..."}
       - Error: {"ok": false, "error": "..."}
+
+    The osc52_sequence (if present) should be written to stdout by the caller
+    in an async context with proper output locking (aio_io()).
     """
     if not _is_clipboard_enabled():
         return json.dumps({"ok": False, "error": "Clipboard tool disabled in config"})
@@ -250,12 +254,15 @@ def _tool_clipboard_write(arguments: Dict[str, Any]) -> str:
 
     mode = _get_clipboard_mode()
     method = None
+    osc52_sequence = None
 
     try:
         # Determine strategy based on mode
         if mode == "osc52":
             # Only use OSC52
-            _write_osc52(text)
+            osc52_sequence = _get_osc52_sequence(text)
+            if not osc52_sequence:
+                return json.dumps({"ok": False, "error": "OSC52 not available (not a TTY)"})
             method = "osc52"
         elif mode == "native":
             # Only use native clipboard
@@ -263,33 +270,59 @@ def _tool_clipboard_write(arguments: Dict[str, Any]) -> str:
             method = "native"
         elif mode == "both":
             # Always try both
-            try:
-                _write_osc52(text)
-            except Exception as e:
-                logger.debug("OSC52 write in 'both' mode failed: %s", e)
+            osc52_sequence = _get_osc52_sequence(text)
             _write_system_clipboard(text)
             method = "both"
         else:
             # mode == "auto" (default): Smart detection
             # In SSH: try both; Otherwise: native only
             if _is_ssh_session():
-                # In SSH session - try both methods
-                try:
-                    _write_osc52(text)
-                except Exception as e:
-                    logger.debug("OSC52 write in SSH session failed: %s", e)
-                # Always try native as well in case we're in a nested session
+                # In SSH session - try native first, then OSC52 as fallback
+                native_ok = False
+                osc52_sequence = None
+
                 try:
                     _write_system_clipboard(text)
+                    native_ok = True
+                except Exception as e:
+                    logger.debug("Native clipboard write failed in SSH: %s", e)
+
+                # Try to get OSC52 as additional method
+                osc52_sequence = _get_osc52_sequence(text)
+
+                if native_ok and osc52_sequence:
                     method = "both"
-                except Exception:
+                elif native_ok:
+                    method = "native"
+                elif osc52_sequence:
+                    # OSC52 available, will be written in session.write_pending_osc52()
                     method = "osc52"
+                else:
+                    # Neither method available - still try to report success
+                    # as a best-effort attempt for user feedback
+                    logger.warning(
+                        "No clipboard mechanism available (native or OSC52). "
+                        "Clipboard write will not be performed."
+                    )
+                    return json.dumps(
+                        {
+                            "ok": False,
+                            "error": (
+                                "No clipboard integration available—neither native "
+                                "clipboard access (requires pasteboard/tkinter) nor OSC52 "
+                                "(requires SSH terminal support) could be used."
+                            ),
+                        }
+                    )
             else:
                 # Local session - use native only
                 _write_system_clipboard(text)
                 method = "native"
 
-        return json.dumps({"ok": True, "method": method or "native"})
+        result = {"ok": True, "method": method or "native"}
+        if osc52_sequence:
+            result["osc52_sequence"] = osc52_sequence
+        return json.dumps(result)
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)})
 

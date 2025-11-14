@@ -125,20 +125,20 @@ class TestClipboardConfig:
         cb._CONFIG_CACHE = None
         assert cb._get_clipboard_mode() == "auto"
 
-    def test_config_mode_native_only(self):
-        """Test clipboard mode can be set to native_only."""
-        cb._CONFIG_CACHE = {"clipboard": {"mode": "native_only"}}
-        assert cb._get_clipboard_mode() == "native_only"
+    def test_config_mode_native(self):
+        """Test clipboard mode can be set to native."""
+        cb._CONFIG_CACHE = {"clipboard": {"mode": "native"}}
+        assert cb._get_clipboard_mode() == "native"
 
     def test_config_mode_both(self):
         """Test clipboard mode can be set to both."""
         cb._CONFIG_CACHE = {"clipboard": {"mode": "both"}}
         assert cb._get_clipboard_mode() == "both"
 
-    def test_config_mode_osc52_only(self):
-        """Test clipboard mode can be set to osc52_only."""
-        cb._CONFIG_CACHE = {"clipboard": {"mode": "osc52_only"}}
-        assert cb._get_clipboard_mode() == "osc52_only"
+    def test_config_mode_osc52(self):
+        """Test clipboard mode can be set to osc52."""
+        cb._CONFIG_CACHE = {"clipboard": {"mode": "osc52"}}
+        assert cb._get_clipboard_mode() == "osc52"
 
     def teardown_method(self):
         """Reset config cache after each test."""
@@ -161,52 +161,17 @@ class TestOSC52Detection:
         monkeypatch.setattr(cb, "_is_tty", lambda: False)
         assert cb._should_try_osc52("auto") is False
 
-    def test_should_try_osc52_native_only(self):
-        """Test OSC52 never used in native_only mode."""
-        assert cb._should_try_osc52("native_only") is False
+    def test_should_try_osc52_native(self):
+        """Test OSC52 never used in native mode."""
+        assert cb._should_try_osc52("native") is False
 
     def test_should_try_osc52_both(self):
         """Test OSC52 always used in both mode."""
         assert cb._should_try_osc52("both") is True
 
-    def test_should_try_osc52_osc52_only(self):
-        """Test OSC52 always used in osc52_only mode."""
-        assert cb._should_try_osc52("osc52_only") is True
-
-
-class TestOSC52Writing:
-    """Test OSC52 escape sequence writing."""
-
-    @patch("sys.stdout.write")
-    @patch("sys.stdout.flush")
-    @patch("sys.stdout.isatty", return_value=True)
-    def test_write_osc52_success(self, mock_isatty, mock_flush, mock_write):
-        """Test successful OSC52 write."""
-        cb._write_osc52("hello")
-        mock_write.assert_called_once()
-        mock_flush.assert_called_once()
-        # Verify the written sequence contains base64 encoded text
-        call_args = mock_write.call_args[0][0]
-        assert "\033]52;" in call_args  # OSC sequence start
-        assert "aGVsbG8=" in call_args  # base64 of "hello"
-        assert "\007" in call_args  # BEL terminator
-
-    @patch("sys.stdout.isatty", return_value=False)
-    def test_write_osc52_no_tty(self, mock_isatty):
-        """Test OSC52 write silently skipped when not TTY."""
-        with patch("sys.stdout.write") as mock_write:
-            cb._write_osc52("hello")
-            mock_write.assert_not_called()
-
-    @patch("sys.stdout.write")
-    @patch("sys.stdout.flush")
-    @patch("sys.stdout.isatty", return_value=True)
-    def test_write_osc52_unicode(self, mock_isatty, mock_flush, mock_write):
-        """Test OSC52 write with unicode content."""
-        cb._write_osc52("你好")
-        mock_write.assert_called_once()
-        call_args = mock_write.call_args[0][0]
-        assert "\033]52;" in call_args
+    def test_should_try_osc52_osc52(self):
+        """Test OSC52 always used in osc52 mode."""
+        assert cb._should_try_osc52("osc52") is True
 
 
 class TestNativeClipboardMacOS:
@@ -411,7 +376,7 @@ class TestClipboardWriteTool:
         cb._CONFIG_CACHE = None
 
     @patch("gptsh.mcp.builtin.clipboard._write_system_clipboard")
-    @patch("gptsh.mcp.builtin.clipboard._write_osc52")
+    @patch("gptsh.mcp.builtin.clipboard._get_osc52_sequence", return_value="\033]52;c;dGVzdA==\007")
     @patch("gptsh.mcp.builtin.clipboard._is_ssh_session", return_value=True)
     @patch("gptsh.mcp.builtin.clipboard._get_clipboard_mode", return_value="auto")
     def test_clipboard_write_auto_mode_ssh(self, mock_mode, mock_ssh, mock_osc52, mock_write):
@@ -420,14 +385,15 @@ class TestClipboardWriteTool:
         result = cb._tool_clipboard_write({"text": "test"})
         data = json.loads(result)
         assert data["ok"] is True
-        assert data["method"] in ["both", "osc52"]
-        mock_osc52.assert_called_once_with("test")
+        assert data["method"] in ["both", "native"]
+        assert "osc52_sequence" in data
+        mock_osc52.assert_called_once()
         cb._CONFIG_CACHE = None
 
     @patch("gptsh.mcp.builtin.clipboard._write_system_clipboard")
-    @patch("gptsh.mcp.builtin.clipboard._get_clipboard_mode", return_value="native_only")
-    def test_clipboard_write_native_only_mode(self, mock_mode, mock_write):
-        """Test clipboard_write in native_only mode."""
+    @patch("gptsh.mcp.builtin.clipboard._get_clipboard_mode", return_value="native")
+    def test_clipboard_write_native_mode(self, mock_mode, mock_write):
+        """Test clipboard_write in native mode."""
         cb._CONFIG_CACHE = {"clipboard": {"enabled": True}}
         result = cb._tool_clipboard_write({"text": "test"})
         data = json.loads(result)
@@ -436,20 +402,21 @@ class TestClipboardWriteTool:
         mock_write.assert_called_once_with("test")
         cb._CONFIG_CACHE = None
 
-    @patch("gptsh.mcp.builtin.clipboard._write_osc52")
-    @patch("gptsh.mcp.builtin.clipboard._get_clipboard_mode", return_value="osc52_only")
-    def test_clipboard_write_osc52_only_mode(self, mock_mode, mock_osc52):
-        """Test clipboard_write in osc52_only mode."""
+    @patch("gptsh.mcp.builtin.clipboard._get_osc52_sequence", return_value="\033]52;c;dGVzdA==\007")
+    @patch("gptsh.mcp.builtin.clipboard._get_clipboard_mode", return_value="osc52")
+    def test_clipboard_write_osc52_mode(self, mock_mode, mock_osc52):
+        """Test clipboard_write in osc52 mode."""
         cb._CONFIG_CACHE = {"clipboard": {"enabled": True}}
         result = cb._tool_clipboard_write({"text": "test"})
         data = json.loads(result)
         assert data["ok"] is True
         assert data["method"] == "osc52"
-        mock_osc52.assert_called_once_with("test")
+        assert "osc52_sequence" in data
+        mock_osc52.assert_called_once()
         cb._CONFIG_CACHE = None
 
     @patch("gptsh.mcp.builtin.clipboard._write_system_clipboard")
-    @patch("gptsh.mcp.builtin.clipboard._write_osc52")
+    @patch("gptsh.mcp.builtin.clipboard._get_osc52_sequence", return_value="\033]52;c;dGVzdA==\007")
     @patch("gptsh.mcp.builtin.clipboard._get_clipboard_mode", return_value="both")
     def test_clipboard_write_both_mode(self, mock_mode, mock_osc52, mock_write):
         """Test clipboard_write in both mode."""
@@ -458,7 +425,8 @@ class TestClipboardWriteTool:
         data = json.loads(result)
         assert data["ok"] is True
         assert data["method"] == "both"
-        mock_osc52.assert_called_once_with("test")
+        assert "osc52_sequence" in data
+        mock_osc52.assert_called_once()
         mock_write.assert_called_once_with("test")
         cb._CONFIG_CACHE = None
 

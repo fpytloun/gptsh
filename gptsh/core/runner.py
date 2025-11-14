@@ -362,6 +362,9 @@ async def run_turn(
                 messages_sink.extend(new_msgs)
             except Exception:
                 pass
+
+        # Write any pending OSC52 clipboard sequence after all output is complete
+        await session.write_pending_osc52()
     except asyncio.TimeoutError:
         async with pr.aio_io():
             click.echo("Operation timed out", err=True)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from litellm.types.utils import Usage
@@ -49,6 +50,8 @@ class ChatSession:
         self.history: List[Dict[str, Any]] = []
         # Optional title for the conversation
         self.title: Optional[str] = None
+        # OSC52 clipboard sequence to be written after turn completes
+        self.pending_osc52_sequence: Optional[str] = None
 
     async def ensure_title(self, small_model: Optional[str]) -> Optional[str]:
         """Generate and set a short title for this session if not set yet.
@@ -499,12 +502,8 @@ class ChatSession:
 
                     allowed = self._approval.is_auto_allowed(server, toolname)
                     if not allowed:
-                        if self._progress:
-                            async with PROMPT_LOCK:
-                                async with self._progress.aio_io():
-                                    allowed = await self._approval.confirm(server, toolname, args)
-                        else:
-                            async with PROMPT_LOCK:
+                        async with PROMPT_LOCK:
+                            async with self._progress.aio_io():
                                 allowed = await self._approval.confirm(server, toolname, args)
 
                     if not allowed:
@@ -561,12 +560,23 @@ class ChatSession:
                                 f"[green]✔[/green] {server}__{toolname} args={tool_args_str}",
                             )
 
+                    # Handle OSC52 clipboard sequences with proper output locking
+                    # Extract osc52_sequence from result but don't pass it to LLM
+                    osc52_sequence = None
+                    try:
+                        result_json = json.loads(result)
+                        if isinstance(result_json, dict) and "osc52_sequence" in result_json:
+                            osc52_sequence = result_json.pop("osc52_sequence")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
                     return {
                         "role": "tool",
                         "tool_call_id": call.get("id"),
                         "name": call.get("name", ""),
                         "content": result,
                         "_log": f"[green]✔[/green] [grey50]Executed tool [dim yellow]{server}__{toolname}[/dim yellow] with args [dim]{display_args}[/dim][/grey50]",
+                        "_osc52_sequence": osc52_sequence,
                     }
 
                 results = await asyncio.gather(*[_exec_one_enriched(e) for e in enriched])
@@ -574,15 +584,17 @@ class ChatSession:
                     log_line = tool_msg.pop("_log", None)
                     if isinstance(log_line, str):
                         logs_to_print.append(log_line)
+
+                    osc52_sequence = tool_msg.pop("_osc52_sequence", None)
+                    if isinstance(osc52_sequence, str) and not self.pending_osc52_sequence:
+                        # Store first OSC52 sequence to write at end of turn
+                        self.pending_osc52_sequence = osc52_sequence
+
                     conversation.append(tool_msg)
                     turn_deltas.append(tool_msg)
 
                 if logs_to_print:
-                    if self._progress:
-                        async with self._progress.aio_io():
-                            for line in logs_to_print:
-                                console_log.print(line)
-                    else:
+                    async with self._progress.aio_io():
                         for line in logs_to_print:
                             console_log.print(line)
         finally:
@@ -591,3 +603,31 @@ class ChatSession:
                     self._progress.remove_task(working_task_id)
             except Exception:
                 pass
+
+    async def write_pending_osc52(self) -> None:
+        """Write any pending OSC52 clipboard sequence to stdout.
+
+        This should be called after all output from the turn is complete,
+        to avoid interference with progress bar or other output.
+
+        Uses direct pause/resume instead of aio_io() to avoid debounced
+        resume interference with OSC52 terminal processing.
+        """
+        if not self.pending_osc52_sequence:
+            return
+
+        if self._progress:
+            # Directly pause progress (avoid debounced resume from aio_io context manager)
+            self._progress.pause()
+            await asyncio.sleep(0.01)
+
+        try:
+            sys.stdout.write(self.pending_osc52_sequence)
+            sys.stdout.flush()
+            # Give terminal time to process OSC52 escape sequence
+            await asyncio.sleep(0.05)
+        finally:
+            if self._progress:
+                self._progress.resume()
+
+        self.pending_osc52_sequence = None
