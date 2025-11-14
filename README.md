@@ -531,9 +531,44 @@ agents:
         - It is likely to be passed to sh/bash via stdin
         - If command is destructive, make sure to use echo/read for user confirmation unless user commands to skip confirmation
   hello:
-    tools: []
-    prompt:
-      user: "Hello, are you here?"
+     tools: []
+     prompt:
+       user: "Hello, are you here?"
+```
+
+**Global Prompt Configuration:**
+
+You can configure REPL prompt behavior globally:
+
+```yaml
+prompt:
+  format: "{agent}|{model}> "        # Templized prompt (see below for placeholders)
+  multiline: false                    # Enable Ctrl+S multi-line mode
+  hint: true                          # Show "Press Ctrl+S to submit" on startup (multiline mode)
+```
+
+**Prompt Template Placeholders:**
+- `{agent}` - Agent name with cyan bold color
+- `{model}` - Model name with magenta color
+- `{agent_plain}` - Agent name without color
+- `{model_plain}` - Model name without color
+
+**Examples:**
+
+```yaml
+# Custom separator
+prompt:
+  format: "[{agent_plain}:{model_plain}] "
+
+# Different layout
+prompt:
+  format: "({agent}) {model}→ "
+
+# With multi-line mode
+prompt:
+  format: "{agent}|{model}> "
+  multiline: true
+  hint: true
 ```
 
 Agents at a glance:

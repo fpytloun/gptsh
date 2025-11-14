@@ -32,13 +32,39 @@ def build_prompt(
     *,
     agent_name: Optional[str],
     model: Optional[str],
+    template: Optional[str] = None,
 ) -> ANSI:
+    """Build the REPL prompt with optional templating.
+
+    Args:
+        agent_name: Name of the agent
+        model: Model identifier
+        template: Optional format template with placeholders:
+                  {agent} - colored agent name
+                  {model} - colored model name
+                  {agent_plain} - plain agent name
+                  {model_plain} - plain model name
+                  Defaults to "{agent}|{model}> "
+    """
     model_label = str(model or "?").rsplit("/", 1)[-1]
     agent_label = agent_name or "default"
     agent_col = click.style(agent_label, fg="cyan", bold=True)
     model_col = click.style(model_label, fg="magenta")
+
+    # Use provided template or default
+    if template is None:
+        template = "{agent}|{model}> "
+
+    # Format the template
+    prompt_text = template.format(
+        agent=agent_col,
+        model=model_col,
+        agent_plain=agent_label,
+        model_plain=model_label,
+    )
+
     # Return as ANSI so prompt_toolkit handles color codes properly
-    return ANSI(f"{agent_col}|{model_col}> ")
+    return ANSI(prompt_text)
 
 
 def command_exit() -> None:
@@ -50,6 +76,7 @@ def command_model(
     *,
     agent: Agent,
     agent_name: Optional[str],
+    template: Optional[str] = None,
 ) -> Tuple[str, ANSI]:
     if not arg:
         raise ValueError("Usage: /model <model>")
@@ -58,6 +85,7 @@ def command_model(
     prompt_str = build_prompt(
         agent_name=agent_name,
         model=new_model,
+        template=template,
     )
     return new_model, prompt_str
 
@@ -243,6 +271,7 @@ def command_agent(
     no_tools: bool,
     mgr: Any,
     loop: Any,
+    template: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], ANSI, str, bool, Any]:
     if not arg:
         raise ValueError("Usage: /agent <agent>")
@@ -270,6 +299,7 @@ def command_agent(
     prompt_str = build_prompt(
         agent_name=agent_name,
         model=cli_model_override,
+        template=template,
     )
     return agent_conf, prompt_str, agent_name, no_tools, mgr
 
@@ -722,13 +752,18 @@ async def run_agent_repl_async(
     model = (getattr(agent.llm, "_base", {}) or {}).get("model")
     agent_label = getattr(agent, "name", "default") or "default"
     cli_model_override: Optional[str] = model
+
+    # Extract prompt config options
+    prompt_config = config.get("prompt", {})
+    prompt_template = prompt_config.get("format")  # Optional: templized prompt format
+    multiline_mode = prompt_config.get("multiline", False)
+    show_hint = prompt_config.get("hint", True)  # Default: True (show help text)
+
     prompt_str = build_prompt(
         agent_name=agent_label,
         model=cli_model_override,
+        template=prompt_template,
     )
-
-    # Extract multiline mode from config (default: False for auto-continuation)
-    multiline_mode = config.get("prompt", {}).get("multiline", False)
 
     # Setup prompt_toolkit session
     history_file = Path.home() / ".gptsh_history"
@@ -747,8 +782,8 @@ async def run_agent_repl_async(
     except Exception:
         pass
 
-    # Show help text for multiline mode on startup
-    if multiline_mode:
+    # Show help text for multiline mode on startup (if hint enabled)
+    if multiline_mode and show_hint:
         try:
             from rich.console import Console as _Console
 
@@ -978,6 +1013,7 @@ async def run_agent_repl_async(
                         arg,
                         agent=agent,
                         agent_name=agent_label,
+                        template=prompt_template,
                     )
                 except ValueError as ve:
                     click.echo(str(ve), err=True)
@@ -1005,6 +1041,7 @@ async def run_agent_repl_async(
                         no_tools=no_tools,
                         mgr=None,
                         loop=loop,
+                        template=prompt_template,
                     )
                     from gptsh.core.config_resolver import build_agent as _build_agent
 
