@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import click
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.document import Document
+from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 
 from gptsh.core.agent import Agent
 from gptsh.core.config_api import compute_tools_policy
@@ -25,17 +32,13 @@ def build_prompt(
     *,
     agent_name: Optional[str],
     model: Optional[str],
-    readline_enabled: bool,
-) -> str:
+) -> ANSI:
     model_label = str(model or "?").rsplit("/", 1)[-1]
     agent_label = agent_name or "default"
     agent_col = click.style(agent_label, fg="cyan", bold=True)
     model_col = click.style(model_label, fg="magenta")
-    return (
-        re.sub("(\x1b\\[[0-9;]*[A-Za-z])", r"\001\1\002", f"{agent_col}|{model_col}> ")
-        if readline_enabled
-        else f"{agent_col}|{model_col}> "
-    )
+    # Return as ANSI so prompt_toolkit handles color codes properly
+    return ANSI(f"{agent_col}|{model_col}> ")
 
 
 def command_exit() -> None:
@@ -47,8 +50,7 @@ def command_model(
     *,
     agent: Agent,
     agent_name: Optional[str],
-    readline_enabled: bool,
-) -> Tuple[str, str]:
+) -> Tuple[str, ANSI]:
     if not arg:
         raise ValueError("Usage: /model <model>")
     new_model = arg.strip()
@@ -56,7 +58,6 @@ def command_model(
     prompt_str = build_prompt(
         agent_name=agent_name,
         model=new_model,
-        readline_enabled=readline_enabled,
     )
     return new_model, prompt_str
 
@@ -242,8 +243,7 @@ def command_agent(
     no_tools: bool,
     mgr: Any,
     loop: Any,
-    readline_enabled: bool,
-) -> Tuple[Dict[str, Any], str, str, bool, Any]:
+) -> Tuple[Dict[str, Any], ANSI, str, bool, Any]:
     if not arg:
         raise ValueError("Usage: /agent <agent>")
     new_agent = arg.strip()
@@ -270,7 +270,6 @@ def command_agent(
     prompt_str = build_prompt(
         agent_name=agent_name,
         model=cli_model_override,
-        readline_enabled=readline_enabled,
     )
     return agent_conf, prompt_str, agent_name, no_tools, mgr
 
@@ -498,99 +497,199 @@ def command_help() -> str:
     return "\n".join(lines)
 
 
-def setup_readline(get_agent_names: Callable[[], List[str]]) -> Tuple[bool, Any]:
-    """Configure readline/libedit with a simple completer for REPL slash-commands.
-    Returns (enabled, readline_module_or_None).
+def _is_continuation(text: str, multiline_mode: bool = False) -> bool:
+    """Check if a line expects continuation (has unclosed brackets/parens/backticks).
 
-    Notes:
-    - On macOS Python is often linked against libedit instead of GNU readline.
-      In that case the correct binding for tab completion is
-      "bind ^I rl_complete" instead of "tab: complete".
+    Args:
+        text: The accumulated text so far
+        multiline_mode: If True, never auto-continue (user controls via Ctrl+S)
+
+    Returns True if:
+    - Line ends with backslash (explicit continuation)
+    - Has unclosed brackets/parens/braces
+    - Has unclosed markdown code blocks (triple backticks)
     """
-    try:
-        try:
-            import gnureadline as _readline  # type: ignore
-        except ImportError:
-            import readline as _readline  # type: ignore
-    except Exception as e:
-        _log.warning("readline import failed: %s", e)
-        return False, None
-    try:
-        try:
-            doc = getattr(_readline, "__doc__", "") or ""
-            if "libedit" in doc.lower():
-                _log.debug("readline: libedit detected")
-                _readline.parse_and_bind("bind ^I rl_complete")
-                _readline.parse_and_bind("bind ^R em-inc-search-prev")
-                _readline.parse_and_bind("bind ^S em-inc-search-next")
-            else:
-                _readline.parse_and_bind("tab: complete")
-                _readline.parse_and_bind('"\\C-r": reverse-search-history')
-                _readline.parse_and_bind('"\\C-s": forward-search-history')
-        except Exception as e:
-            _log.debug("readline parse_and_bind failed: %s", e)
-        try:
-            delims = _readline.get_completer_delims()
-            if "/" in delims:
-                _readline.set_completer_delims(delims.replace("/", ""))
-        except Exception as e:
-            _log.debug("failed to adjust completer delimiters: %s", e)
-        commands = get_command_names()
+    # If in multiline mode, user controls submission via Ctrl+S
+    if multiline_mode:
+        return False
 
-        def _completer(text, state):
+    stripped = text.rstrip()
+
+    # 1. Check for trailing backslash (explicit continuation)
+    if stripped.endswith("\\"):
+        return True
+
+    # 2. Count brackets to detect unclosed ones
+    try:
+        open_parens = stripped.count("(") - stripped.count(")")
+        open_brackets = stripped.count("[") - stripped.count("]")
+        open_braces = stripped.count("{") - stripped.count("}")
+
+        if open_parens > 0 or open_brackets > 0 or open_braces > 0:
+            return True
+    except Exception:
+        pass
+
+    # 3. Markdown code blocks (triple backticks)
+    # Odd count of ``` means we're inside a code block
+    try:
+        backtick_count = stripped.count("```")
+        if backtick_count % 2 == 1:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def setup_multiline_key_bindings() -> KeyBindings:
+    """Setup key bindings for multiline mode.
+
+    - Enter: insert newline (normal editing)
+    - Ctrl+S: accept/submit input
+    """
+    bindings = KeyBindings()
+
+    @bindings.add(Keys.ControlS)
+    def _(event):
+        """Ctrl+S - accept input and exit."""
+        event.app.current_buffer.validate_and_handle()
+
+    return bindings
+
+
+async def _read_multiline_input(
+    prompt_session: PromptSession,
+    prompt_str: ANSI,
+    continuation_prompt: str = "...> ",
+    multiline_mode: bool = False,
+) -> str:
+    """Read input with support for multi-line modes.
+
+    Two modes:
+    1. Auto-continuation (multiline_mode=False, default):
+       - When a line ends with backslash or has unclosed brackets/backticks,
+         automatically prompt for continuation (shows "...> ")
+       - This mimics Python's interactive mode
+
+    2. Full multi-line (multiline_mode=True):
+       - Enables true multi-line editing
+       - Press Ctrl+S to submit
+       - User controls when to submit
+
+    Args:
+        prompt_session: The PromptSession to use
+        prompt_str: The main prompt to display
+        continuation_prompt: Prompt for continuation lines (auto mode)
+        multiline_mode: If True, use full multi-line mode with Ctrl+S
+    """
+    if multiline_mode:
+        # Full multi-line mode: user presses Ctrl+S to submit
+        line = await prompt_session.prompt_async(prompt_str)
+        return line
+    else:
+        # Auto-continuation mode: detect and accumulate lines
+        lines = []
+        current_prompt = prompt_str
+
+        while True:
             try:
-                buf = _readline.get_line_buffer()
-            except Exception as e:
-                _log.debug("readline.get_line_buffer failed: %s", e)
-                buf = ""
-            if not buf.startswith("/"):
-                return None
-            parts = buf.strip().split()
-            if len(parts) <= 1 and not buf.endswith(" "):
-                opts = [c for c in commands if c.startswith(text or "")]
-                return opts[state] if state < len(opts) else None
+                line = await prompt_session.prompt_async(current_prompt)
+            except KeyboardInterrupt:
+                raise
+            except EOFError:
+                if lines:
+                    # Return what we have accumulated
+                    break
+                raise
+
+            lines.append(line)
+
+            # Check if we need continuation
+            accumulated = "\n".join(lines)
+            if not _is_continuation(accumulated, multiline_mode=False):
+                break
+
+            # Switch to continuation prompt
+            current_prompt = continuation_prompt
+
+        return "\n".join(lines)
+
+
+class ReplCompleter(Completer):
+    """Custom completer for REPL slash commands and arguments."""
+
+    def __init__(self, get_agent_names: Callable[[], List[str]]):
+        self.get_agent_names = get_agent_names
+        self.commands = get_command_names()
+
+    def get_completions(self, document: Document, complete_event) -> List[Completion]:
+        """Return completions for current input."""
+        text = document.text_before_cursor
+        completions: List[Completion] = []
+
+        # If input doesn't start with /, no completions
+        if not text.startswith("/"):
+            return completions
+
+        # Handle command completion (e.g., "/mod" -> "/model")
+        parts = text.strip().split(None, 1)
+        if len(parts) == 1 and not text.endswith(" "):
+            # Completing the command itself
+            cmd_prefix = parts[0]
+            for cmd in self.commands:
+                if cmd.startswith(cmd_prefix):
+                    completions.append(Completion(cmd, start_position=-(len(cmd_prefix))))
+
+        elif len(parts) > 1:
+            # Completing arguments
             cmd = parts[0]
-            arg_prefix = ""
-            try:
-                arg_prefix = "" if buf.endswith(" ") else (text or "")
-            except Exception as e:
-                _log.debug("computing arg_prefix failed: %s", e)
-                arg_prefix = text or ""
+            arg_text = parts[1] if len(parts) > 1 else ""
+
             if cmd == "/agent":
-                names = []
+                # Complete agent names
                 try:
-                    names = list(get_agent_names() or [])
-                except Exception as e:
-                    _log.debug("get_agent_names failed: %s", e)
-                    names = []
-                opts = [n for n in names if n.startswith(arg_prefix)]
-                return opts[state] if state < len(opts) else None
-            if cmd == "/reasoning_effort":
-                opts = [o for o in ["minimal", "low", "medium", "high"] if o.startswith(arg_prefix)]
-                return opts[state] if state < len(opts) else None
-            if cmd == "/model":
-                return None
-            if cmd == "/help":
-                return None
-            return None
+                    agent_names = self.get_agent_names()
+                    for name in agent_names:
+                        if name.startswith(arg_text):
+                            completions.append(Completion(name, start_position=-(len(arg_text))))
+                except Exception:
+                    pass
 
-        try:
-            _readline.set_completer(_completer)
-        except Exception as e:
-            _log.debug("set_completer failed: %s", e)
-        return True, _readline
-    except Exception as e:
-        _log.warning("setup_readline failed: %s", e)
-        return False, None
+            elif cmd == "/reasoning_effort":
+                # Complete reasoning effort levels
+                for level in ["minimal", "low", "medium", "high"]:
+                    if level.startswith(arg_text):
+                        completions.append(Completion(level, start_position=-(len(arg_text))))
 
+            elif cmd == "/file":
+                # Complete file paths
+                try:
+                    if arg_text.startswith("~"):
+                        arg_text = str(Path(arg_text).expanduser())
 
-def add_history(readline_module: Any, line: str) -> None:
-    if readline_module is None:
-        return
-    try:
-        readline_module.add_history(line)
-    except Exception as e:
-        _log.debug("add_history failed: %s", e)
+                    path = Path(arg_text)
+                    if path.is_dir():
+                        parent = path
+                        prefix = ""
+                    else:
+                        parent = path.parent
+                        prefix = path.name
+
+                    if parent.exists():
+                        for item in parent.iterdir():
+                            if item.name.startswith(prefix):
+                                suffix = "/" if item.is_dir() else ""
+                                completions.append(
+                                    Completion(
+                                        item.name + suffix,
+                                        start_position=-(len(prefix)),
+                                    )
+                                )
+                except Exception:
+                    pass
+
+        return completions
 
 
 async def run_agent_repl_async(
@@ -619,7 +718,6 @@ async def run_agent_repl_async(
 
     console = Console()
     console_err = Console(stderr=True)
-    rl_enabled, rl = setup_readline(lambda: list((config.get("agents") or {}).keys()))
 
     model = (getattr(agent.llm, "_base", {}) or {}).get("model")
     agent_label = getattr(agent, "name", "default") or "default"
@@ -627,7 +725,19 @@ async def run_agent_repl_async(
     prompt_str = build_prompt(
         agent_name=agent_label,
         model=cli_model_override,
-        readline_enabled=rl_enabled,
+    )
+
+    # Extract multiline mode from config (default: False for auto-continuation)
+    multiline_mode = config.get("prompt", {}).get("multiline", False)
+
+    # Setup prompt_toolkit session
+    history_file = Path.home() / ".gptsh_history"
+    prompt_session = PromptSession(
+        history=FileHistory(str(history_file)),
+        completer=ReplCompleter(lambda: list((config.get("agents") or {}).keys())),
+        multiline=multiline_mode,  # True for Ctrl+S mode, False for auto-detection
+        mouse_support=False,
+        key_bindings=setup_multiline_key_bindings() if multiline_mode else None,
     )
 
     # Ensure progress reporter is initialized for REPL turns
@@ -636,6 +746,16 @@ async def run_agent_repl_async(
             progress_reporter.start()
     except Exception:
         pass
+
+    # Show help text for multiline mode on startup
+    if multiline_mode:
+        try:
+            from rich.console import Console as _Console
+
+            _c = _Console(stderr=False)
+            _c.print("[grey50]Press Ctrl+S to submit[/grey50]")
+        except Exception:
+            click.echo("(Press Ctrl+S to submit)", err=True)
 
     try:
         no_tools = not any(len(v or []) > 0 for v in (agent.tools or {}).values())
@@ -817,14 +937,10 @@ async def run_agent_repl_async(
 
         if line is None:
             try:
-                doc = getattr(rl, "__doc__", "") or ""
-                if "libedit" in doc.lower():
-                    async with progress_reporter.aio_io():
-                        click.echo(prompt_str, nl=False)
-                        line = input()
-                else:
-                    async with progress_reporter.aio_io():
-                        line = input(prompt_str)
+                async with progress_reporter.aio_io():
+                    line = await _read_multiline_input(
+                        prompt_session, prompt_str, multiline_mode=multiline_mode
+                    )
             except KeyboardInterrupt:
                 now = time.monotonic()
                 if now - last_interrupt <= 1.5:
@@ -842,8 +958,6 @@ async def run_agent_repl_async(
         sline = line.strip()
         if not sline:
             continue
-
-        add_history(rl, sline)
 
         if sline.startswith("/"):
             parts = sline.split(None, 1)
@@ -864,7 +978,6 @@ async def run_agent_repl_async(
                         arg,
                         agent=agent,
                         agent_name=agent_label,
-                        readline_enabled=rl_enabled,
                     )
                 except ValueError as ve:
                     click.echo(str(ve), err=True)
@@ -892,7 +1005,6 @@ async def run_agent_repl_async(
                         no_tools=no_tools,
                         mgr=None,
                         loop=loop,
-                        readline_enabled=rl_enabled,
                     )
                     from gptsh.core.config_resolver import build_agent as _build_agent
 

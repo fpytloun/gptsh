@@ -37,7 +37,6 @@ async def test_repl_commands_basic(monkeypatch):
         "m1",
         agent=agent,
         agent_name=agent.name,
-        readline_enabled=False,
     )
     assert cli_model_override == "m1"
     agent.llm._base["model"] = cli_model_override

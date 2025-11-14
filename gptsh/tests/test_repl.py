@@ -15,9 +15,10 @@ def test_build_prompt_contains_agent_and_model():
     prompt = build_prompt(
         agent_name="dev",
         model="ns/m1",
-        readline_enabled=False,
     )
-    assert ">" in prompt and "dev" in prompt and "m1" in prompt
+    # prompt is ANSI formatted text, convert to string to check content
+    prompt_str = str(prompt.value) if hasattr(prompt, "value") else str(prompt)
+    assert ">" in prompt_str and "dev" in prompt_str and "m1" in prompt_str
 
 
 def test_command_model_updates_override_and_prompt():
@@ -39,10 +40,11 @@ def test_command_model_updates_override_and_prompt():
         "org/new-model",
         agent=agent,
         agent_name="tester",
-        readline_enabled=False,
     )
     assert new_override == "org/new-model"
-    assert "new-model" in new_prompt
+    # new_prompt is ANSI formatted text
+    prompt_str = str(new_prompt.value) if hasattr(new_prompt, "value") else str(new_prompt)
+    assert "new-model" in prompt_str
 
 
 def test_command_reasoning_effort_sets_and_validates():
@@ -99,12 +101,13 @@ def test_command_agent_switches_and_applies_policy(monkeypatch):
         no_tools=False,
         mgr=DummyMgr(),
         loop=DummyLoop(),
-        readline_enabled=False,
     )
     assert agent_name == "dev"
     assert no_tools is True  # tools disabled due to empty list
     assert config["mcp"].get("allowed_servers") == []
-    assert ">" in prompt_str and "dev" in prompt_str
+    # prompt_str is ANSI formatted text
+    prompt_str_content = str(prompt_str.value) if hasattr(prompt_str, "value") else str(prompt_str)
+    assert ">" in prompt_str_content and "dev" in prompt_str_content
 
 
 def test_command_exit_raises():

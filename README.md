@@ -8,9 +8,10 @@ A modern, modular shell assistant powered by LLMs with first-class Model Context
 - Async-first core
 - Configurable providers via LiteLLM (OpenAI, Claude, Perplexity, Azure, etc.)
 - MCP tools discovery and invocation with resilient lifecycle
-- Interactive REPL with a persistent session and history
+- Interactive REPL with persistent session, history, and multi-line input support
 - Clean CLI UX with progress spinners and Markdown rendering
 - Multimodal inputs (images, audio, PDFs) when supported by the model
+- Dual multi-line modes: auto-continuation (default) or explicit Ctrl+S submission
 - Predictable I/O for maximum flexibility
 
 ![Demo](./files/gptsh.gif)
@@ -229,8 +230,9 @@ Options:
   --no-tools                    Disable MCP tools (discovery and execution)
   --tools TEXT                  Comma/space-separated MCP server labels to
                                 allow (others skipped)
-  -i, --interactive             Run in interactive REPL mode
-  -s, --session TEXT            Session reference (index or id)
+   -i, --interactive             Run in interactive REPL mode
+   --multiline                   Enable full multi-line mode (Ctrl+S to submit)
+   -s, --session TEXT            Session reference (index or id)
   --show-session TEXT           Show a saved session by id or index and exit
   --print-session               Print saved session (requires --session) and continue
   --summarize-session TEXT      Summarize a saved session and print only the summary
@@ -686,6 +688,76 @@ REPL slash-commands:
 - /copy — Copy the last assistant message to clipboard (uses native clipboard or OSC52 over SSH)
 - /help — Show available commands
 (Tab completion works for slash-commands and agent names.)
+
+### Multi-line Input Modes
+
+gptsh supports two multi-line input modes, controlled by the `prompt.multiline` config option:
+
+#### Mode A: Auto-Continuation (Default, `prompt.multiline: false`)
+
+Automatically detects continuation lines and prompts for more input. Perfect for natural, intuitive interactions.
+
+**Continuation triggers:**
+1. **Trailing backslash** — Explicitly continue on next line:
+```
+> Explain this concept \
+...> in simple terms
+```
+
+2. **Unclosed brackets/parentheses** — Automatically detect incomplete grouping:
+```
+> Process these items: [
+...> "item1",
+...> "item2"
+...> ]
+```
+
+3. **Markdown code blocks** — Detect triple backticks for code:
+```
+> Here's the code:
+...> ```python
+...> def hello():
+...>     print("world")
+...> ```
+```
+
+#### Mode B: Full Multi-line Mode (`prompt.multiline: true`)
+
+Enable true multi-line editing with explicit submission. Press **Ctrl+S** to submit.
+
+**Configuration:**
+```yaml
+# ~/.config/gptsh/config.yml or ./.gptsh/config.yml
+prompt:
+  multiline: true
+```
+
+**Usage:**
+```
+> Line 1
+> Line 2
+> Line 3
+> [Press Ctrl+S to submit]
+```
+
+**Features:**
+- Enter key inserts newlines (doesn't submit)
+- Ctrl+S submits the accumulated input
+- Full line editing until submission
+- Useful for complex multi-paragraph prompts
+
+**CLI Override:**
+
+You can enable multi-line mode from the command line without config:
+
+```bash
+gptsh -i --multiline              # Interactive REPL with Ctrl+S mode
+gptsh --multiline "Your prompt"   # Single-shot with Ctrl+S mode
+```
+
+The `--multiline` CLI flag overrides the config file setting (which defaults to false).
+
+**Default:** `prompt.multiline: false` (auto-continuation mode)
 
 Disable progress:
 

@@ -54,7 +54,7 @@
 - [ ] Add desktop notifications and/or bell to notify when LLM work is done
 - [ ] Handle large stdin to avoid overflow of context window, compact or process in batches
 - [ ] Add support for prompts, executable in REPL via `/prompt` or in normal mode via `--prompt PROMPT`. Also add `--list-prompts` argument. Prompt can be defined in `prompts` key (utilizing `!include prompts/*.yml` similar to agents) or then can be also agent-specific (eg. `agents.myagent.prompts.myprompt`). Also support loading prompts provided by MCP client.
-- [ ] Support multi-line input in REPL mode (shift+enter like)
+- [x] Support multi-line input in REPL mode (shift+enter like)
 - [ ] Support for editing input in external editor in REPL mode
 
 ## Session management

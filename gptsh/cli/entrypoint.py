@@ -230,9 +230,7 @@ def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, 
     return fmt, doc
 
 
-def _copy_session_message_or_exit(
-    session_ref: Optional[str], config: Dict[str, Any]
-) -> None:
+def _copy_session_message_or_exit(session_ref: Optional[str], config: Dict[str, Any]) -> None:
     """Load session and copy last assistant message to clipboard, then exit.
 
     Args:
@@ -377,6 +375,13 @@ def _copy_session_message_or_exit(
     default=False,
     help="Disable saving/loading conversation sessions",
 )
+@click.option(
+    "--multiline",
+    "multiline",
+    is_flag=True,
+    default=False,
+    help="Enable full multi-line mode (Ctrl+S to submit, default: auto-continuation)",
+)
 @click.option("--assume-tty", is_flag=True, default=False, help="Assume TTY (for tests/CI)")
 @click.option(
     "--cleanup-sessions",
@@ -445,6 +450,7 @@ def main(
     interactive,
     session_ref,
     no_sessions,
+    multiline,
     assume_tty,
     prompt,
     cleanup_sessions_flag,
@@ -910,6 +916,10 @@ def main(
         try:
             # Hand off to agent-only REPL
             from gptsh.core.config_api import get_sessions_enabled as _get_sessions_enabled
+
+            # Override multiline config if CLI flag is set
+            if multiline:
+                config.setdefault("prompt", {})["multiline"] = True
 
             run_agent_repl(
                 agent=agent_obj,

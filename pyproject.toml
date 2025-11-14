@@ -5,10 +5,10 @@ license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
   "click",
-  "gnureadline",
   "httpx",
   "litellm",
   "mcp>=1.15.0",
+  "prompt_toolkit>=3.0.0",
   "python-dotenv",
   "pyyaml",
   "rich",
