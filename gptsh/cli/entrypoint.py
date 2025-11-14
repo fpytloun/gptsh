@@ -230,6 +230,87 @@ def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, 
     return fmt, doc
 
 
+def _copy_session_message_or_exit(
+    session_ref: Optional[str], config: Dict[str, Any]
+) -> None:
+    """Load session and copy last assistant message to clipboard, then exit.
+
+    Args:
+        session_ref: Session reference (index or id)
+        config: Configuration dict
+
+    Raises:
+        sys.exit: Exits with code 0 on success, 1 on error
+    """
+    doc = _load_session_by_ref_or_exit(session_ref)
+
+    # Resolve an agent consistent with the stored session
+    try:
+        agent_obj, _, _, _, _, _ = asyncio.run(
+            _resolve_agent_and_settings(
+                config=config,
+                agent_name=(doc.get("agent") or {}).get("name"),
+                provider_name=(doc.get("provider") or {}).get("name"),
+                model_override=(doc.get("agent") or {}).get("model"),
+                tools_filter_labels=None,
+                no_tools_flag=True,
+                output_format="markdown",
+            )
+        )
+    except Exception:
+        # Fallback to default agent
+        agent_obj, _, _, _, _, _ = asyncio.run(
+            _resolve_agent_and_settings(
+                config=config,
+                agent_name=None,
+                provider_name=None,
+                model_override=None,
+                tools_filter_labels=None,
+                no_tools_flag=True,
+                output_format="markdown",
+            )
+        )
+
+    # Build a ChatSession and preload saved messages
+    from gptsh.core.session import ChatSession as _ChatSession
+    from gptsh.core.sessions import preload_session_to_chat as _preload
+
+    chat = _ChatSession.from_agent(agent_obj, progress=None, config=config, mcp=None)
+    if hasattr(chat, "start"):
+        try:
+            asyncio.run(chat.start())
+        except Exception:
+            pass
+    _preload(doc, chat)
+
+    # Store the session on the agent so command_copy can access it
+    agent_obj.session = chat
+
+    # Extract and copy the last assistant message
+    try:
+        from rich.console import Console
+
+        from gptsh.cli.repl import command_copy
+
+        copy_msg = command_copy(agent_obj)
+        console_err = Console(stderr=True)
+        console_err.print(f"[grey50]{copy_msg}[/grey50]")
+
+        # Write any pending OSC52 sequence for clipboard over SSH
+        try:
+            asyncio.run(chat.write_pending_osc52())
+        except Exception:
+            pass
+
+        sys.exit(0)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: Failed to copy message: {e}", err=True)
+        sys.exit(1)
+
+
 # --- CLI Entrypoint ---
 
 
@@ -545,6 +626,11 @@ def main(
         except Exception:
             click.echo(summary)
         sys.exit(0)
+
+    # Handle copy-session early (load session and copy last message, no prompt)
+    # This enables: gptsh -s <ref> --copy (without a prompt argument)
+    if copy and session_ref and not prompt:
+        _copy_session_message_or_exit(session_ref, config)
 
     # Validate --print-session requires --session
     if print_session and not session_ref:

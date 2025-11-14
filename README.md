@@ -718,6 +718,31 @@ gptsh --copy "Generate a docker command"
 - **Error handling:** Silently continues if copy fails (doesn't interrupt workflow)
 - **Works with multimodal:** Copies text content from the assistant message
 
+### Copy Previous Session Messages
+
+You can also copy the last message from a previous session without continuing:
+
+```bash
+# List sessions to find the one you want
+gptsh --list-sessions
+# [0] abc123 2024-01-15 10:30 "Summarize docs" (default|gpt-4.1)
+
+# Copy from most recent session
+gptsh -s 0 --copy
+Copied to clipboard (342 chars) via native
+
+# Copy from specific session by ID
+gptsh -s abc123 --copy
+Copied to clipboard (1024 chars) via native
+
+# Over SSH - clipboard will be updated on local machine via OSC52
+ssh user@remote
+gptsh -s 0 --copy
+Copied to clipboard (500 chars) via osc52
+```
+
+This is useful for quickly retrieving outputs from recent conversations without needing to re-run them or start a new REPL.
+
 ## Tool I/O
 
 - **stdin** — If available (e.g., from a pipe), non-interactive stdin is read and appended to the active prompt. Binary content (images, audio, PDFs) is auto-detected via magic bytes and injected as a concise marker. In REPL mode, stdin is then switched to /dev/tty to accept further interactive input.
