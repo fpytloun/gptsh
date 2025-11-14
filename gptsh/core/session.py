@@ -503,7 +503,10 @@ class ChatSession:
                     allowed = self._approval.is_auto_allowed(server, toolname)
                     if not allowed:
                         async with PROMPT_LOCK:
-                            async with self._progress.aio_io():
+                            if self._progress:
+                                async with self._progress.aio_io():
+                                    allowed = await self._approval.confirm(server, toolname, args)
+                            else:
                                 allowed = await self._approval.confirm(server, toolname, args)
 
                     if not allowed:
@@ -594,7 +597,11 @@ class ChatSession:
                     turn_deltas.append(tool_msg)
 
                 if logs_to_print:
-                    async with self._progress.aio_io():
+                    if self._progress:
+                        async with self._progress.aio_io():
+                            for line in logs_to_print:
+                                console_log.print(line)
+                    else:
                         for line in logs_to_print:
                             console_log.print(line)
         finally:

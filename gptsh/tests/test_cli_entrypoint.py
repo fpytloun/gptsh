@@ -155,8 +155,9 @@ def test_cli_stream_no_tools(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Monkeypatch ChatSession to control streaming (patch the runner module)
+    # Monkeypatch ChatSession to control streaming (patch both runner and session modules)
     import gptsh.core.runner as runner_mod
+    import gptsh.core.session as session_mod
 
     class DummySession:
         def __init__(self, *a, **k):
@@ -174,7 +175,11 @@ def test_cli_stream_no_tools(monkeypatch):
             yield "hello "
             yield "world"
 
+        async def write_pending_osc52(self):
+            pass
+
     monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
+    monkeypatch.setattr(session_mod, "ChatSession", DummySession)
 
     # Stub resolver path used by entrypoint
     class DummyAgent:
@@ -186,7 +191,7 @@ def test_cli_stream_no_tools(monkeypatch):
         return DummyAgent(), {}, {"model": "x"}, "text", True, None
 
     monkeypatch.setattr(
-        "gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
+        "gptsh.cli.entrypoint._resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
     )
 
     runner = CliRunner()
@@ -215,8 +220,9 @@ def test_cli_agent_provider_selection(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Short-circuit LLM path via ChatSession monkeypatch (patch the runner module)
+    # Short-circuit LLM path via ChatSession monkeypatch (patch both runner and session modules)
     import gptsh.core.runner as runner_mod
+    import gptsh.core.session as session_mod
 
     class DummySession:
         def __init__(self, *a, **k):
@@ -240,7 +246,11 @@ def test_cli_agent_provider_selection(monkeypatch):
         async def run(self, *a, **k):
             return ""
 
+        async def write_pending_osc52(self):
+            pass
+
     monkeypatch.setattr(runner_mod, "ChatSession", DummySession)
+    monkeypatch.setattr(session_mod, "ChatSession", DummySession)
 
     class DummyAgent:
         llm = object()
@@ -251,7 +261,7 @@ def test_cli_agent_provider_selection(monkeypatch):
         return DummyAgent(), {}, {"model": "m2"}, "markdown", True, None
 
     monkeypatch.setattr(
-        "gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
+        "gptsh.cli.entrypoint._resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
     )
 
     runner = CliRunner()
@@ -305,8 +315,9 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Monkeypatch to simulate denial exception (patch both runner and api paths)
+    # Monkeypatch to simulate denial exception (patch both runner and session paths)
     import gptsh.core.runner as runner_mod
+    import gptsh.core.session as session_mod
 
     # Simulate tool approval denied by having run_llm path raise it via ChatSession.run
     from gptsh.core.exceptions import ToolApprovalDenied
@@ -330,9 +341,13 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
         async def run(self, *a, **k):
             raise ToolApprovalDenied("fs__delete")
 
+        async def write_pending_osc52(self):
+            pass
+
         # stream_with_params removed in favor of stream_turn
 
     monkeypatch.setattr(runner_mod, "ChatSession", DenySession)
+    monkeypatch.setattr(session_mod, "ChatSession", DenySession)
 
     # core.api removed; ensure no import usage here
     class DummyAgent:
@@ -344,7 +359,7 @@ def test_cli_tool_approval_denied_exit_code(monkeypatch):
         return DummyAgent(), {}, {"model": "m1"}, "text", False, None
 
     monkeypatch.setattr(
-        "gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
+        "gptsh.cli.entrypoint._resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
     )
 
     # Avoid potential progress setup in non-tty
@@ -372,11 +387,13 @@ def test_cli_timeout_exit_code(monkeypatch):
 
     monkeypatch.setattr(ep, "load_config", fake_load_config)
 
-    # Define and patch a TimeoutSession into the runner module
+    # Define and patch a TimeoutSession into the runner and session modules
     import gptsh.core.runner as runner_mod
+    import gptsh.core.session as session_mod
 
     class TimeoutSession:
         def __init__(self, *a, **k):
+            self._progress = None
             pass
 
         @classmethod
@@ -401,7 +418,11 @@ def test_cli_timeout_exit_code(monkeypatch):
 
             raise asyncio.TimeoutError()
 
+        async def write_pending_osc52(self):
+            pass
+
     monkeypatch.setattr(runner_mod, "ChatSession", TimeoutSession)
+    monkeypatch.setattr(session_mod, "ChatSession", TimeoutSession)
 
     async def fake_resolve(**kwargs):
         class DummyAgent:
@@ -412,7 +433,7 @@ def test_cli_timeout_exit_code(monkeypatch):
         return DummyAgent(), {}, {"model": "m"}, "text", True, None
 
     monkeypatch.setattr(
-        "gptsh.cli.utils.resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
+        "gptsh.cli.entrypoint._resolve_agent_and_settings", lambda **kwargs: fake_resolve(**kwargs)
     )
 
     runner = CliRunner()

@@ -39,6 +39,9 @@ def test_runner_stream_fallback_when_tool_delta_no_text(monkeypatch):
             if False:
                 yield ""  # pragma: no cover
 
+        async def write_pending_osc52(self):
+            pass
+
     # With unified stream_turn, fallback is internal. We assert that runner completes
     # and result_sink contains empty string since DummySession yields nothing.
 
@@ -98,6 +101,9 @@ def test_runner_stream_happy_path_output(monkeypatch, capsys):
             yield "hello"
             yield " "
             yield "world"
+
+        async def write_pending_osc52(self):
+            pass
 
     # No external fallback now
 
