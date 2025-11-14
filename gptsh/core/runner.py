@@ -309,6 +309,11 @@ async def run_turn(
                         if block.strip():
                             async with pr.aio_io():
                                 console.print(Markdown(block))
+                                # Ensure blank lines between blocks for proper separation
+                                if block.endswith("\n\n"):
+                                    # But not on separators as that would result in two empty lines
+                                    if not block.startswith("---"):
+                                        console.print("")
                 else:
                     # Plain text: print whole lines only to avoid mid-line restarts
                     buffer += text
