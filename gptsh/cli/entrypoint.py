@@ -336,6 +336,13 @@ def _print_session_transcript_or_exit(session_ref: Optional[str]) -> tuple[str, 
     default=False,
     help="Print saved session output (requires --session) and continue",
 )
+@click.option(
+    "--copy",
+    "copy",
+    is_flag=True,
+    default=False,
+    help="Copy last assistant message to clipboard after execution",
+)
 @click.argument("prompt", required=False)
 def main(
     provider,
@@ -365,6 +372,7 @@ def main(
     show_session,
     summarize_session,
     print_session,
+    copy,
 ):
     """gptsh: Modular shell/LLM agent client."""
     # Restore default SIGINT handler to let REPL manage interrupts
@@ -828,6 +836,7 @@ def main(
                 sessions_enabled=_get_sessions_enabled(
                     config, agent_conf=agent_conf, no_sessions_cli=no_sessions
                 ),
+                copy=copy,
             )
             # After REPL exits, proactively close any attached ChatSession to release resources
             try:
@@ -985,6 +994,21 @@ def main(
             from gptsh.core.runner import run_turn_with_persistence
 
             await run_turn_with_persistence(req)
+
+            # Auto-copy last assistant message if --copy flag is set
+            if copy:
+                try:
+                    from gptsh.cli.repl import command_copy
+
+                    copy_msg = command_copy(agent_obj)
+                    sess = getattr(agent_obj, "session", None)
+                    click.echo(f"\n[Copy]: {copy_msg}", err=True)
+                    # Write OSC52 sequence right after message
+                    if sess is not None:
+                        await sess.write_pending_osc52()
+                except Exception as e:
+                    logger.error("Auto-copy in one-shot mode failed: %s", e)
+                    click.echo(f"Copy error: {e}", err=True)
 
         asyncio.run(_run_once_noninteractive())
 

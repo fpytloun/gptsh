@@ -394,6 +394,69 @@ async def command_file(
         raise ValueError(f"Failed to read file: {e}") from e
 
 
+def command_copy(agent: Agent) -> str:
+    """Copy the last assistant message to clipboard.
+
+    Returns:
+        str: Status message for user feedback
+
+    Raises:
+        ValueError: If no assistant message found or copy fails
+    """
+    import json
+
+    from gptsh.core.multimodal import message_to_text
+    from gptsh.mcp.builtin.clipboard import _tool_clipboard_write
+
+    sess = getattr(agent, "session", None)
+    if sess is None or not sess.history:
+        raise ValueError("No messages in session history yet")
+
+    # Find last assistant message (iterate backwards)
+    last_assistant_msg = None
+    for msg in reversed(sess.history):
+        if msg.get("role") == "assistant":
+            last_assistant_msg = msg
+            break
+
+    if last_assistant_msg is None:
+        raise ValueError("No assistant message found in history")
+
+    # Extract text content (handles both string and multimodal)
+    content = last_assistant_msg.get("content")
+    if isinstance(content, list):
+        # Multimodal content - extract text parts only
+        text = message_to_text(last_assistant_msg)
+    elif isinstance(content, str):
+        text = content
+    else:
+        text = str(content or "")
+
+    if not text or not text.strip():
+        raise ValueError("Assistant message is empty")
+
+    # Write to clipboard
+    text_to_copy = text.strip()
+    try:
+        result_json = _tool_clipboard_write({"text": text_to_copy})
+        result = json.loads(result_json)
+        if result.get("ok"):
+            method = result.get("method", "native")
+            # Extract OSC52 sequence if present and store it in session
+            # so it can be written to stdout later
+            osc52_sequence = result.get("osc52_sequence")
+            if isinstance(osc52_sequence, str) and not sess.pending_osc52_sequence:
+                sess.pending_osc52_sequence = osc52_sequence
+            return f"Copied to clipboard ({len(text_to_copy)} chars) via {method}"
+        else:
+            error_msg = result.get("error", "Unknown error")
+            raise ValueError(error_msg)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse clipboard result: {e}") from e
+    except Exception as e:
+        raise ValueError(f"Failed to copy to clipboard: {e}") from e
+
+
 # Simple command registry and help text
 _COMMANDS_USAGE = {
     "/exit": "Exit the REPL",
@@ -405,6 +468,7 @@ _COMMANDS_USAGE = {
     "/no-tools [on|off]": "Toggle or set MCP tool usage for this session",
     "/info": "Show session/model info and usage",
     "/file <path>": "Attach a file to the conversation",
+    "/copy": "Copy last assistant message to clipboard",
     "/help": "Show available commands",
     "/compact": "Summarize and compact conversation history",
 }
@@ -421,6 +485,7 @@ def get_command_names() -> List[str]:
         "/no-tools",
         "/info",
         "/file",
+        "/copy",
         "/help",
         "/compact",
     ]
@@ -538,6 +603,7 @@ async def run_agent_repl_async(
     progress_reporter: Optional[Any] = None,
     session_ref: Optional[str] = None,
     sessions_enabled: Optional[bool] = None,
+    copy: bool = False,
 ) -> None:
     """Interactive REPL loop using only a resolved Agent.
 
@@ -884,6 +950,20 @@ async def run_agent_repl_async(
                     _log.warning("Failed to attach file: %s", e)
                     click.echo(f"Failed to attach file: {e}", err=True)
                 continue
+            if cmd == "/copy":
+                try:
+                    msg = command_copy(agent)
+                    click.echo(msg)
+                    # Write any pending OSC52 sequence from clipboard operation
+                    sess = getattr(agent, "session", None)
+                    if sess is not None:
+                        await sess.write_pending_osc52()
+                except ValueError as ve:
+                    click.echo(str(ve), err=True)
+                except Exception as e:
+                    _log.warning("Failed to copy to clipboard: %s", e)
+                    click.echo(f"Failed to copy to clipboard: {e}", err=True)
+                continue
             if cmd == "/compact":
                 sess = getattr(agent, "session", None)
                 if sess is None:
@@ -977,6 +1057,24 @@ async def run_agent_repl_async(
 
                 _save_after(session_doc, sess, msgs)
                 preloaded_doc = session_doc
+            # Auto-copy last assistant message if --copy flag is set
+            if copy:
+                try:
+                    copy_msg = command_copy(agent)
+                    sess = getattr(agent, "session", None)
+                    if progress_reporter is not None:
+                        async with progress_reporter.aio_io():
+                            console_err.print(f"[grey50]{copy_msg}[/grey50]")
+                            # Write OSC52 inside aio_io context to avoid buffering issues
+                            if sess is not None:
+                                await sess.write_pending_osc52()
+                    else:
+                        console_err.print(f"[grey50]{copy_msg}[/grey50]")
+                        if sess is not None:
+                            await sess.write_pending_osc52()
+                except Exception as e:
+                    _log.error("Auto-copy failed: %s", e)
+                    console_err.print(f"[red]Copy error: {e}[/red]")
         except (KeyboardInterrupt, asyncio.CancelledError):
             current_task.cancel()
             try:
@@ -999,6 +1097,7 @@ def run_agent_repl(
     progress_reporter: Optional[Any] = None,
     session_ref: Optional[str] = None,
     sessions_enabled: Optional[bool] = None,
+    copy: bool = False,
 ) -> None:
     asyncio.run(
         run_agent_repl_async(
@@ -1010,5 +1109,6 @@ def run_agent_repl(
             progress_reporter=progress_reporter,
             session_ref=session_ref,
             sessions_enabled=sessions_enabled,
+            copy=copy,
         )
     )
