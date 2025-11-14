@@ -121,11 +121,25 @@ To install the **latest unreleased (main branch) version**:
 uv tool install git+https://github.com/fpytloun/gptsh.git@main
 ```
 
-
 This will put executables into `~/.local/bin` so make sure it is in your `$PATH`
 
 ```bash
 export PATH="${PATH}:~/.local/bin"
+
+**⚠️ Warning: macOS + Python 3.13 build issue with pasteboard==0.4.0**
+
+Installing gptsh-cli can fail on macOS with Python 3.13 due to an upstream C extension compatibility issue in pasteboard==0.4.0:
+
+- Symptom: build fails with clang errors like:
+  - cast-function-type-mismatch
+  - errors in pasteboard.m when building pasteboard._native
+- Cause: older pasteboard uses a function signature incompatible with Python 3.13; warnings are treated as errors.
+
+Workaround (temporary): bypass the error by relaxing the specific warning during build:
+
+```bash
+# Install gptsh-cli with warning demoted from error
+CFLAGS="-Wno-error=cast-function-type-mismatch" uv tool install gptsh-cli@git+https://github.com/fpytloun/gptsh.git@c86f275507b8ae63edf974985b3336facd88a815
 ```
 
 #### UVX
