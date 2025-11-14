@@ -684,6 +684,27 @@ async def run_agent_repl_async(
 
         _preload_chat(preloaded_doc, agent.session)
 
+    async def _perform_auto_copy() -> None:
+        """Auto-copy last assistant message if --copy flag is set."""
+        if not copy:
+            return
+        try:
+            copy_msg = command_copy(agent)
+            sess = getattr(agent, "session", None)
+            if progress_reporter is not None:
+                async with progress_reporter.aio_io():
+                    console_err.print(f"[grey50]{copy_msg}[/grey50]")
+                    # Write OSC52 inside aio_io context to avoid buffering issues
+                    if sess is not None:
+                        await sess.write_pending_osc52()
+            else:
+                console_err.print(f"[grey50]{copy_msg}[/grey50]")
+                if sess is not None:
+                    await sess.write_pending_osc52()
+        except Exception as e:
+            _log.error("Auto-copy failed: %s", e)
+            console_err.print(f"[red]Copy error: {e}[/red]")
+
     async def _run_once(
         user_message: Union[str, Dict[str, Any]],
     ) -> tuple[str, List[Dict[str, Any]]]:
@@ -779,6 +800,8 @@ async def run_agent_repl_async(
                         model=model,
                     )
                     await _run_once(user_msg)
+                    # Auto-copy after initial message turn
+                    await _perform_auto_copy()
                 initial_user_message = None
                 # If dict was empty, proceed to input prompt (don't set line, let it fall through)
                 if not (has_text or has_attachments):
@@ -1058,23 +1081,7 @@ async def run_agent_repl_async(
                 _save_after(session_doc, sess, msgs)
                 preloaded_doc = session_doc
             # Auto-copy last assistant message if --copy flag is set
-            if copy:
-                try:
-                    copy_msg = command_copy(agent)
-                    sess = getattr(agent, "session", None)
-                    if progress_reporter is not None:
-                        async with progress_reporter.aio_io():
-                            console_err.print(f"[grey50]{copy_msg}[/grey50]")
-                            # Write OSC52 inside aio_io context to avoid buffering issues
-                            if sess is not None:
-                                await sess.write_pending_osc52()
-                    else:
-                        console_err.print(f"[grey50]{copy_msg}[/grey50]")
-                        if sess is not None:
-                            await sess.write_pending_osc52()
-                except Exception as e:
-                    _log.error("Auto-copy failed: %s", e)
-                    console_err.print(f"[red]Copy error: {e}[/red]")
+            await _perform_auto_copy()
         except (KeyboardInterrupt, asyncio.CancelledError):
             current_task.cancel()
             try:

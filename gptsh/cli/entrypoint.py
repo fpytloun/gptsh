@@ -846,6 +846,13 @@ def main(
                     agent_obj.session = None
             except Exception:
                 pass
+            # Close the agent's LLM client to release aiohttp ClientSession
+            try:
+                llm = getattr(agent_obj, "llm", None)
+                if llm is not None and hasattr(llm, "aclose"):
+                    asyncio.run(llm.aclose())
+            except Exception:
+                pass
         finally:
             try:
                 reporter.stop()
@@ -912,6 +919,22 @@ def main(
             )
 
             mcp_manager = None if no_tools_effective else MCPManager(config)
+
+            # Initialize session for one-shot mode (needed for auto-copy to work)
+            if getattr(agent_obj, "session", None) is None:
+                from gptsh.core.session import ChatSession as _ChatSession
+
+                try:
+                    sess_obj = _ChatSession.from_agent(
+                        agent_obj,
+                        progress=reporter,
+                        config=config,
+                        mcp=(None if no_tools_effective else mcp_manager),
+                    )
+                    await sess_obj.start()
+                    agent_obj.session = sess_obj
+                except Exception as e:
+                    logger.debug("Failed to initialize ChatSession: %s", e)
 
             # Decide if sessions are enabled (CLI > agent.sessions.enabled > global)
             sessions_enabled = get_sessions_enabled(
@@ -986,7 +1009,7 @@ def main(
                 messages_sink=None,
                 mcp_manager=mcp_manager,
                 progress_reporter=reporter,
-                session=None,
+                session=getattr(agent_obj, "session", None),
                 session_doc=doc,
                 small_model=(doc.get("agent") or {}).get("model_small")
                 or (doc.get("agent") or {}).get("model"),
@@ -997,20 +1020,39 @@ def main(
 
             # Auto-copy last assistant message if --copy flag is set
             if copy:
-                try:
+                sess = getattr(agent_obj, "session", None)
+                if sess is not None and sess.history:
+                    from rich.console import Console
+
                     from gptsh.cli.repl import command_copy
 
-                    copy_msg = command_copy(agent_obj)
-                    sess = getattr(agent_obj, "session", None)
-                    click.echo(f"\n[Copy]: {copy_msg}", err=True)
-                    # Write OSC52 sequence right after message
-                    if sess is not None:
+                    console_err = Console(stderr=True)
+                    try:
+                        copy_msg = command_copy(agent_obj)
+                        console_err.print(f"[grey50]{copy_msg}[/grey50]")
+                        # Write OSC52 sequence right after message
                         await sess.write_pending_osc52()
-                except Exception as e:
-                    logger.error("Auto-copy in one-shot mode failed: %s", e)
-                    click.echo(f"Copy error: {e}", err=True)
+                    except Exception as e:
+                        logger.error("Auto-copy in one-shot mode failed: %s", e)
+                        console_err.print(f"[red]Copy error: {e}[/red]")
+                else:
+                    logger.debug("Auto-copy skipped: session not initialized or empty")
+                # Close session to avoid unclosed client session warning
+                if sess is not None:
+                    try:
+                        await sess.close()
+                    except Exception as e:
+                        logger.debug("Failed to close session: %s", e)
 
         asyncio.run(_run_once_noninteractive())
+
+        # Close the agent's LLM client to release aiohttp ClientSession
+        try:
+            llm = getattr(agent_obj, "llm", None)
+            if llm is not None and hasattr(llm, "aclose"):
+                asyncio.run(llm.aclose())
+        except Exception:
+            pass
 
         try:
             reporter.stop()

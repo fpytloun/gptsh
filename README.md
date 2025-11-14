@@ -220,10 +220,11 @@ Options:
   --show-session TEXT           Show a saved session by id or index and exit
   --print-session               Print saved session (requires --session) and continue
   --summarize-session TEXT      Summarize a saved session and print only the summary
-  --cleanup-sessions            Remove older saved sessions, keeping only the most recent ones
-  --keep-sessions INTEGER       How many most recent sessions to keep with --cleanup-sessions
-  --delete-session TEXT         Delete a saved session by id or index
-  -h, --help                    Show this message and exit.
+   --cleanup-sessions            Remove older saved sessions, keeping only the most recent ones
+   --keep-sessions INTEGER       How many most recent sessions to keep with --cleanup-sessions
+   --delete-session TEXT         Delete a saved session by id or index
+   --copy                        Auto-copy last assistant message to clipboard on exit
+   -h, --help                    Show this message and exit.
 ```
 
 ### Sessions: viewing and maintenance
@@ -668,6 +669,7 @@ REPL slash-commands:
 - /info — Show session/model info and usage
 - /file <path> — Attach a file to the conversation (text inlined; images/PDFs/audio sent as multimodal if model supports)
 - /compact — Summarize and compact history (keeps system prompt, inserts labeled USER summary)
+- /copy — Copy the last assistant message to clipboard (uses native clipboard or OSC52 over SSH)
 - /help — Show available commands
 (Tab completion works for slash-commands and agent names.)
 
@@ -676,6 +678,31 @@ Disable progress:
 ```bash
 gptsh --no-progress "Describe current repo structure"
 ```
+
+### Copying Assistant Messages to Clipboard
+
+Use the `/copy` command in REPL or the `--copy` flag in one-shot mode to copy the last assistant message to your clipboard.
+
+**REPL example:**
+```bash
+gptsh -i
+> Generate a docker command for me
+[LLM generates docker run command]
+> /copy
+# Message copied to clipboard!
+```
+
+**One-shot mode with auto-copy:**
+```bash
+gptsh --copy "Generate a docker command"
+# Output is printed, then automatically copied to clipboard on exit
+```
+
+**Features:**
+- **Automatic method selection:** Uses native clipboard on local sessions, falls back to OSC52 over SSH
+- **OSC52 support:** Works seamlessly over SSH to update your local clipboard
+- **Error handling:** Silently continues if copy fails (doesn't interrupt workflow)
+- **Works with multimodal:** Copies text content from the assistant message
 
 ## Tool I/O
 
