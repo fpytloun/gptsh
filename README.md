@@ -81,6 +81,7 @@ flowchart TD
     subgraph Builtins[Builtin Tools]
       T1[[time]]
       T2[[shell]]
+      T3[[clipboard]]
     end
     subgraph Ext[External MCP Servers]
       FS[[filesystem]]
@@ -285,6 +286,70 @@ This flag supports multiple labels with comma/space separation:
 uvx gptsh --tools serena,tavily
 ```
 
+### Builtin Tools
+
+gptsh includes several builtin tools available by default:
+
+- **`time`** — Access system time and timezone operations
+- **`shell`** — Execute shell commands with history search
+- **`clipboard`** — Read from and write to system clipboard with OSC52 support over SSH
+
+#### Clipboard Tool
+
+The clipboard tool provides native clipboard access on macOS and Linux with optional OSC52 support for SSH sessions.
+
+**Features:**
+- Native clipboard access (no subprocess overhead)
+- macOS: Uses `pasteboard` library (Cocoa bindings)
+- Linux: Uses `tkinter` (built-in, no external dependencies)
+- OSC52 support: Works over SSH to update local clipboard
+- Smart auto-detection: Automatically uses optimal method for local vs remote sessions
+
+**Usage examples:**
+
+```bash
+# Read clipboard content
+gptsh "Analyze the code I copied to my clipboard"
+
+# Write to clipboard
+gptsh "Generate a docker command and put it in my clipboard"
+
+# Over SSH - will work via OSC52 and update your local clipboard
+ssh user@server
+gptsh "Generate a backup command and write to clipboard"
+# → Clipboard updated on your LOCAL machine!
+```
+
+**Configuration:**
+
+```yaml
+clipboard:
+  enabled: true                # Enable/disable clipboard tool
+  mode: "auto"                 # Options: "auto", "native", "both", "osc52"
+  # auto (default):   Smart detection - uses both in SSH, native locally
+  # native:      Never use OSC52, native clipboard only
+  # both:             Always attempt both methods (redundant but guaranteed)
+  # osc52:       Only OSC52, useful for remote-only environments
+```
+
+**Platform Support:**
+
+| Platform | Read | Write | Method |
+|----------|------|-------|--------|
+| macOS | ✅ | ✅ | pasteboard (Cocoa) |
+| Linux | ✅ | ✅ | tkinter (stdlib) |
+| SSH (any) | ✅ OSC52 | ✅ OSC52+native | Over terminal |
+
+**Installation for macOS (optional):**
+
+On macOS, the clipboard tool tries to use the `pasteboard` library for better Cocoa integration. It's optional but recommended:
+
+```bash
+uv tool install --with clipboard-macos gptsh-cli
+```
+
+If not installed, the tool will provide a clear error message on use.
+
 ## Configuration
 
 Config is merged from:
@@ -363,7 +428,7 @@ mcp:
     {"mcpServers": {"tavily": {"transport": {"type": "sse", "url": "https://api.tavily.com/mcp"}}}}
 ```
 
-Built-in in-process servers `time` and `shell` are always available and are merged into your configuration (inline or file-based). To limit which servers/tools are used at runtime, use the `tools` allow-list on the agent (e.g., `tools: ["git"]`). This filters the merged set to only those servers. To completely override or effectively disable built-ins for an agent, set `tools` to a list without them.
+Built-in in-process servers `time`, `shell`, and `clipboard` are always available and are merged into your configuration (inline or file-based). To limit which servers/tools are used at runtime, use the `tools` allow-list on the agent (e.g., `tools: ["git"]`). This filters the merged set to only those servers. To completely override or effectively disable built-ins for an agent, set `tools` to a list without them.
 
 Per-agent tools allow-list:
 - Define `agents.<name>.tools` as a list of MCP server labels to expose to that agent (e.g., `tools: ["tavily", "serena"]`).
@@ -406,7 +471,7 @@ gptsh/
     api.py               # facade
     tools_resolver.py    # ToolHandle resolver
     builtin/
-      time.py, shell.py  # builtin tools
+      time.py, shell.py, clipboard.py  # builtin tools
   tests/                 # pytest suite (unit tests)
 ```
 

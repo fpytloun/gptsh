@@ -2,7 +2,7 @@ codereviewer:
   model: "o4-mini"
   reasoning_effort: "medium"
   output: text
-  tools: ["time", "tavily", "filesystem", "git", "sequentialthinking"]
+  tools: ["clipboard", "time", "tavily", "filesystem", "git", "sequentialthinking"]
   prompt:
     user: "Please perform code review of following code:"
     system: |

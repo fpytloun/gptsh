@@ -2,7 +2,7 @@ developer:
   output: text
   model: "gpt-5"
   reasoning_effort: low
-  tools: ["time", "tavily", "git", "filesystem", "serena", "sequentialthinking"]
+  tools: ["clipboard", "time", "tavily", "git", "filesystem", "serena", "sequentialthinking"]
   autoApprove: ["time", "sequentialthinking"]
   prompt:
     system: |

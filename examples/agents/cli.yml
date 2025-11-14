@@ -1,7 +1,7 @@
 cli:
   output: text
   model: "gpt-4.1-nano"
-  tools: ["shell"]
+  tools: ["clipboard", "shell"]
   prompt:
     system: |
       You are expert system administrator with deep knowledge of Linux and Unix-based systems.
