@@ -1,5 +1,9 @@
 # gptsh
 
+<p align="center">
+  <img src="./files/banner.png" alt="gptsh Banner">
+</p>
+
 A modern, modular shell assistant powered by LLMs with first-class Model Context Protocol (MCP) support.
 
 **Meet your shell copilot — the AI bestie for anyone who lives in the terminal.**
