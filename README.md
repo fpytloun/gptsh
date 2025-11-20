@@ -48,10 +48,10 @@ You can easily use it with a single/default agent and a Claude-like
 Or you can define multiple agents with different roles and tools and use them as
 needed.
 
-Or you can set up a more complex environment with multiple agents (e.g.,
+Or you can set up a more complex environment with multiple subagents (e.g.,
 Software Developer, QA Engineer) and one agent (Manager) that receives the user
-prompt, orchestrates work, and delegates tasks to these agents. Even an agent can be
-invoked as a tool from another agent.
+prompt, orchestrates work, and delegates tasks to these agents. Even an agent
+can be invoked as a tool from another agent.
 
 ```mermaid
 flowchart TD
@@ -130,8 +130,9 @@ This will put executables into `~/.local/bin` so make sure it is in your `$PATH`
 
 ```bash
 export PATH="${PATH}:~/.local/bin"
+``````
 
-**⚠️ Warning: macOS + Python 3.13 build issue with pasteboard==0.4.0**
+**Warning: macOS + Python 3.13 build issue with pasteboard==0.4.0**
 
 Installing gptsh-cli can fail on macOS with Python 3.13 due to an upstream C extension compatibility issue in pasteboard==0.4.0:
 
