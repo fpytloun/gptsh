@@ -576,6 +576,51 @@ prompt:
   hint: true
 ```
 
+### Instructions Configuration
+
+You can configure instruction files to be automatically loaded into session on startup. This is useful for providing context, guidelines, or documentation that the LLM should always have available.
+
+Instructions are specified as file paths and support `~` expansion for home directory. If instructions file does not exists, it is ignored.
+
+**Global Instructions:**
+```yaml
+# Apply to all agents
+instructions:
+  - AGENTS.md
+```
+
+**Per-Agent Instructions:**
+```yaml
+instructions: []  # Global instructions (can be empty)
+
+agents:
+  default:
+    model: gpt-4.1
+  
+  developer:
+    model: gpt-5
+    instructions:
+      - AGENTS.md          # Specific instructions for this agent
+      - docs/architecture.md
+      - docs/code-style.md
+  
+  simple:
+    instructions: []       # This agent has no instructions
+```
+
+**Precedence:**
+- Agent-level `instructions` overrides global `instructions`
+- Empty list `[]` explicitly disables instructions for that agent
+- Missing files are silently skipped (logged at DEBUG level)
+- Files are loaded in order and sent to the LLM on REPL startup
+- Instructions are preserved across turns and included in session history
+
+**Example Use Cases:**
+- Load project documentation (README, ARCHITECTURE, API docs)
+- Provide coding guidelines and standards
+- Include prompt templates or examples
+- Set context about the project domain or goals
+
 Agents at a glance:
 - An agent bundles LLM + tools + prompt. The prompt includes a system prompt and may also include a pre-defined user prompt so you do not have to pass a prompt for routine tasks (e.g., a `changelog` or `committer` agent).
 
@@ -723,7 +768,12 @@ REPL slash-commands:
 - /tools — List discovered MCP tools for current agent
 - /no-tools [on|off] — Toggle or set MCP tool usage for this session
 - /info — Show session/model info and usage
-- /file <path> — Attach a file to the conversation (text inlined; images/PDFs/audio sent as multimodal if model supports)
+- /file <path> — Attach a file to the conversation:
+  - **Text files** (.txt, .md, .json, .yml, etc.): inlined as plain text
+  - **Images** (.png, .jpg, .gif, .webp, .bmp): sent as multimodal content if model supports vision
+  - **PDFs** (.pdf): sent as multimodal content if model supports PDF input
+  - **Audio files** (.mp3, .wav, .ogg, .flac, .m4a): transcribed or sent as multimodal audio if model supports
+  - **Supports files of any size** — even very large images or documents
 - /compact — Summarize and compact history (keeps system prompt, inserts labeled USER summary)
 - /copy — Copy the last assistant message to clipboard (uses native clipboard or OSC52 over SSH)
 - /help — Show available commands
@@ -854,6 +904,71 @@ Copied to clipboard (500 chars) via osc52
 ```
 
 This is useful for quickly retrieving outputs from recent conversations without needing to re-run them or start a new REPL.
+
+### Attaching Files to Conversations
+
+Use the `/file` command in REPL to attach files as context for the LLM. Files are added to the conversation history and available to the LLM in subsequent messages.
+
+**Text File Example:**
+```bash
+gptsh -i
+> /file README.md
+File attached: README.md
+> Now you know the project structure. What's the main purpose?
+```
+
+**Image Example:**
+```bash
+gptsh -i
+> /file screenshot.png
+File attached: screenshot.png
+> What issues do you see in this screenshot?
+# LLM analyzes the image (if model supports vision)
+```
+
+**PDF Example:**
+```bash
+gptsh -i
+> /file documentation.pdf
+File attached: documentation.pdf
+> Summarize the key points from this document
+# LLM reads and analyzes the PDF (if model supports PDF input)
+```
+
+**Audio Example:**
+```bash
+gptsh -i
+> /file meeting-notes.mp3
+File attached: meeting-notes.mp3
+> Transcribe and summarize this audio
+# LLM transcribes or analyzes the audio (if model supports audio)
+```
+
+**Instructions Configuration:**
+
+Pre-load files automatically on REPL startup using the `instructions` config:
+
+```yaml
+# ~/.config/gptsh/config.yml
+instructions:
+  - README.md
+  - docs/architecture.md
+
+agents:
+  developer:
+    instructions:
+      - AGENTS.md
+      - docs/coding-standards.md
+```
+
+Files specified in `instructions` are loaded automatically when the REPL starts, providing context for all subsequent turns.
+
+**Features:**
+- **Automatic type detection** — Images, PDFs, audio, and text are handled appropriately
+- **Any file size** — Even very large files (multiple MB) can be attached
+- **Multiple files** — Attach multiple files in sequence; each is added to conversation history
+- **Persistent context** — Files remain in history across turns in the same REPL session
+- **Instructions config** — Pre-load files on startup for consistent context
 
 ## Tool I/O
 

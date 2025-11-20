@@ -349,7 +349,19 @@ async def generate_title(
 
 
 def preload_session_to_chat(doc: Dict[str, Any], chat: "ChatSession") -> None:
-    """Restore history, system prompt, usage, and title from a saved session doc into ChatSession."""
+    """Restore history, system prompt, usage, and title from a saved session doc into ChatSession.
+
+    Only preloads if the chat session history is empty or only has system prompt.
+    Preserves any user-appended messages (like files from /file command).
+    """
+    # Don't overwrite history that already has user content
+    # Only preload if history is empty or only has system prompt
+    existing_hist = getattr(chat, "history", []) or []
+    has_user_content = any(m.get("role") in {"user", "assistant"} for m in existing_hist)
+    if has_user_content:
+        # Session already has content (e.g., from /file command), don't overwrite
+        return
+
     try:
         hist = list(doc.get("messages") or [])
     except Exception:

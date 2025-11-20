@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
@@ -15,6 +16,8 @@ from gptsh.core.session import ChatSession
 from gptsh.core.sessions import preload_session_to_chat, save_after_turn
 from gptsh.interfaces import ProgressReporter
 from gptsh.mcp.manager import MCPManager
+
+_log = logging.getLogger(__name__)
 
 
 class MarkdownBuffer:
@@ -289,6 +292,28 @@ async def run_turn(
             own_session = True
             # Start background resources if we created the session
             await session.start()
+
+            # Load instruction files if configured
+            try:
+                from gptsh.core.utils import load_instruction_files, resolve_instructions
+
+                agent_name = getattr(agent, "name", None) or (
+                    config.get("default_agent") or "default"
+                )
+                instructions = resolve_instructions(config, agent_name)
+                if instructions:
+                    instructions_content = await load_instruction_files(instructions)
+                    if instructions_content.strip():
+                        session.history.append(
+                            {
+                                "role": "user",
+                                "content": instructions_content,
+                                "_instruction": True,
+                            }
+                        )
+            except Exception as e:
+                _log.warning("Failed to load instruction files: %s", e)
+
         buffer = ""
         full_output = ""
         initial_hist_len = len(getattr(session, "history", []))
@@ -455,6 +480,27 @@ async def run_turn_with_persistence(req: RunRequest) -> None:
         )
         await session.start()
         created_session = True
+
+        # Load instruction files if configured
+        try:
+            from gptsh.core.utils import load_instruction_files, resolve_instructions
+
+            agent_name = getattr(req.agent, "name", None) or (
+                req.config.get("default_agent") or "default"
+            )
+            instructions = resolve_instructions(req.config, agent_name)
+            if instructions:
+                instructions_content = await load_instruction_files(instructions)
+                if instructions_content.strip():
+                    session.history.append(
+                        {
+                            "role": "user",
+                            "content": instructions_content,
+                            "_instruction": True,
+                        }
+                    )
+        except Exception as e:
+            _log.warning("Failed to load instruction files: %s", e)
     else:
         # Ensure provided session in REPL uses the current progress reporter
         try:

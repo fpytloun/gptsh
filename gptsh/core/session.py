@@ -72,6 +72,10 @@ class ChatSession:
             from gptsh.core.multimodal import message_to_text as _msg_to_text  # noqa: WPS433
 
             for m in self.history:
+                # Skip instruction messages and system prompts
+                if m.get("_instruction") or m.get("role") == "system":
+                    continue
+
                 if not first_user and m.get("role") == "user":
                     content = m.get("content")
                     if isinstance(content, list):

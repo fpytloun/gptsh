@@ -345,6 +345,35 @@ async def command_file(
             except Exception:
                 mime = "application/octet-stream"
 
+            # For images and PDFs, read full file and return multimodal structure
+            if mime.startswith("image/"):
+                try:
+                    with open(path, "rb") as f:
+                        image_data = f.read()
+                    return {
+                        "type": "image",
+                        "mime": mime,
+                        "data": image_data,
+                        "truncated": False,
+                        "name": path.name,
+                    }
+                except Exception:
+                    pass  # Fall through to marker
+
+            if mime == "application/pdf":
+                try:
+                    with open(path, "rb") as f:
+                        pdf_data = f.read()
+                    return {
+                        "type": "pdf",
+                        "mime": mime,
+                        "data": pdf_data,
+                        "truncated": False,
+                        "name": path.name,
+                    }
+                except Exception:
+                    pass  # Fall through to marker
+
             # Try to transcribe if audio and not too large for Whisper API
             if mime.startswith("audio/") and size <= 25000000:
                 try:
@@ -405,16 +434,34 @@ async def command_file(
             except Exception:
                 pass  # Fall through to marker
 
-        # CRITICAL: Only inline if MIME is text/plain AND passes safety check
+        # Handle different content types
         if mime == "text/plain" and is_probably_text(data):
+            # Plain text: inline content
             try:
                 text = data.decode("utf-8", errors="strict")
                 if truncated:
                     text += "\n[...File truncated. Content exceeded 64KB.]"
                 return f"File: {path.name}\n{text}"
             except UnicodeDecodeError:
-                # Should never happen since is_probably_text checks decode
                 pass
+        elif mime.startswith("image/"):
+            # Image: return multimodal structure for build_user_message
+            return {
+                "type": "image",
+                "mime": mime,
+                "data": data,
+                "truncated": truncated,
+                "name": path.name,
+            }
+        elif mime == "application/pdf":
+            # PDF: return multimodal structure for build_user_message
+            return {
+                "type": "pdf",
+                "mime": mime,
+                "data": data,
+                "truncated": truncated,
+                "name": path.name,
+            }
 
         # Everything else: binary marker
         return f"[Attached file: {path.name} ({mime}, {size} bytes)]"
@@ -829,7 +876,31 @@ async def run_agent_repl_async(
             await sess.start()
             agent.session = sess
         except Exception as e:
-            _log.debug("Failed to initialize ChatSession for REPL preload: %s", e)
+            _log.warning("Failed to initialize ChatSession for REPL preload: %s", e)
+            console_err.print(f"[yellow]Warning: failed to initialize session: {e}[/yellow]")
+
+    # Load instruction files from config if session exists
+    sess = getattr(agent, "session", None)
+    if sess is not None:
+        try:
+            from gptsh.core.utils import load_instruction_files, resolve_instructions
+
+            agent_name = getattr(agent, "name", None) or (config.get("default_agent") or "default")
+            instructions = resolve_instructions(config, agent_name)
+            if instructions:
+                instructions_content = await load_instruction_files(instructions)
+                if instructions_content.strip():
+                    sess.history.append(
+                        {
+                            "role": "user",
+                            "content": instructions_content,
+                            "_instruction": True,
+                        }
+                    )
+                    _log.debug("Loaded %d instruction files into session", len(instructions))
+        except Exception as e:
+            _log.warning("Failed to load instruction files: %s", e)
+
     if (
         preloaded_doc
         and getattr(agent, "session", None) is not None
@@ -1095,23 +1166,50 @@ async def run_agent_repl_async(
             if cmd == "/file":
                 try:
                     file_result = await command_file(arg, agent, config)
-                    # Append as a user message to the active session
+                    # Ensure session exists (create lazily if needed)
                     sess = getattr(agent, "session", None)
-                    if sess is not None:
-                        # Handle both string content and audio attachments
-                        if isinstance(file_result, dict) and file_result.get("type") == "audio":
-                            # Audio attachment - build multimodal message
-                            from gptsh.core.multimodal import build_user_message
 
-                            model = (getattr(agent.llm, "_base", {}) or {}).get("model", "gpt-4o")
-                            message = build_user_message(
-                                text=file_result.get("content"),
-                                attachments=[file_result.get("attachment")],
-                                model=model,
-                            )
-                            sess.history.append(message)
+                    # Append as a user message to the active session
+                    if sess is not None:
+                        # Handle multimodal content (images, PDFs, audio) and text
+                        if isinstance(file_result, dict):
+                            file_type = file_result.get("type")
+                            if file_type in ("image", "pdf"):
+                                # Image or PDF: build multimodal message
+                                from gptsh.core.multimodal import build_user_message
+
+                                model = (getattr(agent.llm, "_base", {}) or {}).get(
+                                    "model", "gpt-4o"
+                                )
+                                attachment = {
+                                    "type": file_type,
+                                    "mime": file_result.get("mime"),
+                                    "data": file_result.get("data"),
+                                }
+                                message = build_user_message(
+                                    text=f"Here's the {file_type} file: {file_result.get('name')}",
+                                    attachments=[attachment],
+                                    model=model,
+                                )
+                                sess.history.append(message)
+                            elif file_type == "audio":
+                                # Audio attachment - build multimodal message
+                                from gptsh.core.multimodal import build_user_message
+
+                                model = (getattr(agent.llm, "_base", {}) or {}).get(
+                                    "model", "gpt-4o"
+                                )
+                                message = build_user_message(
+                                    text=file_result.get("content"),
+                                    attachments=[file_result.get("attachment")],
+                                    model=model,
+                                )
+                                sess.history.append(message)
+                            else:
+                                # Marker or other content
+                                sess.history.append({"role": "user", "content": str(file_result)})
                         else:
-                            # Text content
+                            # String content (text or marker)
                             sess.history.append({"role": "user", "content": str(file_result)})
                         click.echo(f"File attached: {arg}")
                     else:

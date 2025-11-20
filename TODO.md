@@ -69,7 +69,7 @@
 ## Configuration & Agents
 - [ ] Implement log redaction for secrets and sensitive data
 - [ ] Support logging into file
-- [ ] Support for reading instructions (eg. AGENTS.md)
+- [x] Support for reading instructions (eg. AGENTS.md)
 
 ## Workflows
 - [ ] Add support for Workflows.

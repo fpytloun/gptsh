@@ -31,12 +31,14 @@ class AgentConfig:
     output: Optional[str] = None  # text|markdown
     sessions: Dict[str, Any] = field(default_factory=dict)
     autoApprove: Optional[List[str]] = None  # Auto-approve tools by server or tool name
+    instructions: List[str] = field(default_factory=list)  # File paths to load as context
 
 
 @dataclass
 class Defaults:
     default_agent: Optional[str] = None
     default_provider: Optional[str] = None
+    instructions: List[str] = field(default_factory=list)  # File paths to load as context
 
 
 def _as_dict(d: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -46,9 +48,13 @@ def _as_dict(d: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 def map_config_to_models(
     config: Dict[str, Any],
 ) -> Tuple[Defaults, Dict[str, ProviderConfig], Dict[str, AgentConfig]]:
+    instructions = config.get("instructions")
+    if not isinstance(instructions, list):
+        instructions = []
     defaults = Defaults(
         default_agent=config.get("default_agent"),
         default_provider=config.get("default_provider"),
+        instructions=instructions,
     )
     providers_conf = _as_dict(config.get("providers"))
     providers: Dict[str, ProviderConfig] = {}
@@ -67,6 +73,9 @@ def map_config_to_models(
             a = {}
         prompt_cfg = _as_dict(a.get("prompt"))
         auto_approve = a.get("autoApprove")
+        agent_instructions = a.get("instructions")
+        if not isinstance(agent_instructions, list):
+            agent_instructions = []
         agents[name] = AgentConfig(
             name=name,
             provider=a.get("provider"),
@@ -79,6 +88,7 @@ def map_config_to_models(
             output=a.get("output"),
             sessions=_as_dict(a.get("sessions")),
             autoApprove=(auto_approve if isinstance(auto_approve, list) else None),
+            instructions=agent_instructions,
         )
     return defaults, providers, agents
 
